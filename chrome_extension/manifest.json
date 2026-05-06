@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "네이버 경쟁사 모니터링",
+  "version": "4.0",
+  "description": "네이버 스마트스토어 경쟁사 재고를 자동 수집합니다",
+  "permissions": ["cookies", "tabs", "scripting"],
+  "host_permissions": [
+    "*://*.naver.com/*",
+    "http://localhost:5000/*"
+  ],
+  "content_scripts": [{
+    "matches": ["*://*.smartstore.naver.com/*", "*://brand.naver.com/*"],
+    "js": ["content.js"],
+    "run_at": "document_start",
+    "world": "MAIN"
+  }],
+  "action": {
+    "default_popup": "popup.html"
+  }
+}

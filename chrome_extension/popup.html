@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<style>
+  body { font-family: 'Segoe UI', sans-serif; width: 300px; padding: 16px; margin: 0; background: #f8fafc; }
+  h3 { font-size: 13px; font-weight: 700; color: #0f172a; margin: 0 0 14px; display:flex; align-items:center; gap:6px; }
+  .btn {
+    width: 100%; padding: 10px; border: none; border-radius: 8px;
+    font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit;
+    transition: background .15s;
+  }
+  .btn-green  { background: #03c75a; color: #fff; }
+  .btn-green:hover  { background: #02b350; }
+  .btn-gray   { background: #e2e8f0; color: #475569; margin-top: 8px; }
+  .btn-gray:hover   { background: #cbd5e1; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .msg { margin-top: 10px; font-size: 12px; padding: 9px 11px; border-radius: 6px; display: none; line-height: 1.6; }
+  .ok   { background: #dcfce7; color: #166534; }
+  .err  { background: #fee2e2; color: #dc2626; }
+  .info { background: #eff6ff; color: #1e40af; }
+  .divider { height: 1px; background: #e2e8f0; margin: 16px 0; }
+  .progress-bar { height: 4px; background: #e2e8f0; border-radius: 2px; margin-top: 8px; overflow: hidden; display:none; }
+  .progress-fill { height: 100%; background: #03c75a; border-radius: 2px; transition: width .3s; }
+  .tip { font-size: 10px; color: #94a3b8; margin-top: 8px; line-height: 1.6; }
+</style>
+</head>
+<body>
+
+<h3>📊 네이버 경쟁사 모니터링</h3>
+
+<!-- 재고 조회 -->
+<button class="btn btn-green" id="fetch-btn">🔄 경쟁사 재고 전체 조회</button>
+<div class="progress-bar" id="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+<div class="msg" id="fetch-msg"></div>
+
+<!-- 대기 중인 개별 조회 -->
+<div id="queue-section" style="display:none">
+  <div class="divider"></div>
+  <div style="font-size:12px;font-weight:600;color:#0f172a;margin-bottom:6px">⏳ 대기 중인 개별 조회</div>
+  <div class="progress-bar" id="queue-bar"><div class="progress-fill" id="queue-fill"></div></div>
+  <div class="msg" id="queue-msg"></div>
+</div>
+
+<div class="divider"></div>
+
+<!-- 쿠키 전송 -->
+<button class="btn btn-gray" id="cookie-btn">🍪 네이버 로그인 쿠키 전송</button>
+<div class="msg" id="cookie-msg"></div>
+
+<div class="tip">
+  ⚠ 재고 조회 전 네이버에 로그인하세요<br>
+  ⚠ 모니터링 앱(run.bat)이 실행 중이어야 합니다
+</div>
+
+<script src="popup.js"></script>
+</body>
+</html>

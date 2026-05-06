@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>네이버 경쟁사 모니터링 — 로그인</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', -apple-system, sans-serif;
+    background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .card {
+    background: #fff;
+    border-radius: 16px;
+    padding: 40px 40px 36px;
+    width: 360px;
+    box-shadow: 0 24px 64px rgba(0,0,0,.35);
+  }
+  .logo {
+    text-align: center;
+    margin-bottom: 28px;
+  }
+  .logo-icon {
+    width: 52px;
+    height: 52px;
+    background: #03c75a;
+    border-radius: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 12px;
+    font-size: 26px;
+  }
+  .logo-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: #0f172a;
+  }
+  .logo-sub {
+    font-size: 12px;
+    color: #64748b;
+    margin-top: 3px;
+  }
+  label {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    color: #374151;
+    margin-bottom: 6px;
+    margin-top: 16px;
+  }
+  input {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1.5px solid #e2e8f0;
+    border-radius: 8px;
+    font-size: 14px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color .15s;
+    background: #f8fafc;
+  }
+  input:focus { border-color: #03c75a; background: #fff; }
+  .btn-login {
+    width: 100%;
+    margin-top: 24px;
+    padding: 11px;
+    background: #03c75a;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s, transform .1s;
+    font-family: inherit;
+  }
+  .btn-login:hover { background: #02b350; }
+  .btn-login:active { transform: scale(.98); }
+  .error {
+    margin-top: 12px;
+    padding: 10px 12px;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 8px;
+    font-size: 12px;
+    color: #dc2626;
+    display: none;
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">
+    <div class="logo-icon">📊</div>
+    <div class="logo-title">네이버 경쟁사 모니터링</div>
+    <div class="logo-sub">Naver Smart Store Stock Monitor</div>
+  </div>
+  <label>아이디</label>
+  <input type="text" id="username" placeholder="아이디 입력" autocomplete="username">
+  <label>비밀번호</label>
+  <input type="password" id="password" placeholder="비밀번호 입력" autocomplete="current-password">
+  <div class="error" id="err"></div>
+  <button class="btn-login" id="btn" onclick="doLogin()">로그인</button>
+</div>
+<script>
+  document.getElementById('password').addEventListener('keydown', e => {
+    if (e.key === 'Enter') doLogin();
+  });
+
+  async function doLogin() {
+    const btn = document.getElementById('btn');
+    const err = document.getElementById('err');
+    const username = document.getElementById('username').value.trim();
+    const password = document.getElementById('password').value;
+    if (!username || !password) {
+      showErr('아이디와 비밀번호를 입력해주세요');
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = '로그인 중...';
+    err.style.display = 'none';
+    try {
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({username, password})
+      });
+      const data = await res.json();
+      if (data.ok) {
+        location.href = '/';
+      } else {
+        showErr(data.error || '로그인 실패');
+      }
+    } catch {
+      showErr('서버 연결 오류');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '로그인';
+    }
+  }
+
+  function showErr(msg) {
+    const err = document.getElementById('err');
+    err.textContent = msg;
+    err.style.display = 'block';
+  }
+</script>
+</body>
+</html>
