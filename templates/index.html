@@ -158,79 +158,139 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); min-
 }
 .card-title { font-size: 13px; font-weight: 600; flex: 1; letter-spacing: -.1px; }
 
-/* ── Table ── */
+/* ── Monitor Grid Table ── */
 .table-wrap { overflow-x: auto; }
-table.monitor {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-  min-width: 600px;
-}
-table.monitor th {
-  padding: 9px 14px;
-  text-align: center;
-  font-weight: 500;
-  font-size: 11px;
-  color: var(--text3);
-  background: var(--surface2);
-  border-bottom: 1px solid var(--border);
-  white-space: nowrap;
-  position: sticky;
-  top: 0;
-  letter-spacing: .2px;
-}
-table.monitor th:first-child { text-align: left; min-width: 160px; position: sticky; left: 0; z-index: 2; background: var(--surface2); }
-table.monitor td {
-  padding: 0;
-  border-bottom: 1px solid var(--border);
-  vertical-align: top;
-}
-table.monitor td:first-child { position: sticky; left: 0; background: var(--surface); z-index: 1; }
-.comp-row > td:first-child { padding: 11px 14px; }
-.comp-row { cursor: pointer; }
-.comp-row:hover > td { background: var(--surface2) !important; }
-.comp-row.expanded > td { background: var(--accent-bg) !important; }
-.comp-name { font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 6px; color: var(--text); }
-.comp-url { font-size: 10px; color: var(--text3); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
-.expand-icon { font-size: 9px; transition: transform .2s; flex-shrink: 0; color: var(--text3); }
-.comp-row.expanded .expand-icon { transform: rotate(180deg); color: var(--accent); }
-.cell-val { padding: 10px 14px; text-align: center; }
-.stock-num { font-size: 13px; font-weight: 600; font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--text); }
-.stock-delta { font-size: 10px; margin-top: 3px; font-family: var(--mono); font-variant-numeric: tabular-nums; }
-.delta-pos { color: var(--green); font-weight: 600; }
-.delta-neg { color: var(--danger); font-weight: 600; }
-.stock-err { font-size: 10px; color: var(--danger); }
-.stock-empty { color: var(--text3); font-size: 11px; }
+.monitor-wrap { min-width: 600px; }
 
-/* ── Options expand row ── */
-.opt-expand-row { display: none; }
-.opt-expand-row.open { display: table-row; }
-.opt-expand-td {
-  background: var(--surface2) !important;
-  padding: 0 !important;
-  border-bottom: 2px solid var(--accent) !important;
+.m-row {
+  display: grid;
+  align-items: center;
+  padding: 0 20px;
+  border-bottom: 1px solid #f1f3f5;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background .1s;
 }
-.opt-inner { padding: 12px 20px 16px 28px; }
-.opt-title { font-size: 10px; font-weight: 600; color: var(--text3); margin-bottom: 10px; text-transform: uppercase; letter-spacing: .6px; }
-.opt-table { width: 100%; border-collapse: collapse; font-size: 11px; }
-.opt-table th {
-  padding: 5px 10px;
-  text-align: center;
+.m-row:hover { background: #fafbfc; }
+.m-row.m-head {
+  background: #fafbfc;
   color: var(--text3);
+  font-size: 11px;
   font-weight: 500;
+  padding: 9px 20px;
+  cursor: default;
   border-bottom: 1px solid var(--border);
-  background: none;
-  position: static;
-  font-size: 10px;
-  letter-spacing: .2px;
+  position: sticky;
+  top: 52px;
+  z-index: 5;
 }
-.opt-table th:first-child { text-align: left; }
-.opt-table td { padding: 5px 10px; text-align: center; color: var(--text2); border-bottom: 1px solid var(--border); font-family: var(--mono); }
-.opt-table td:first-child { text-align: left; color: var(--text); font-weight: 500; font-family: var(--sans); }
-.opt-table tr:last-child td { border-bottom: none; }
-.opt-total { font-weight: 700; background: var(--accent-bg) !important; }
-.opt-total td { color: var(--green) !important; }
-.opt-total td:first-child { color: var(--text) !important; }
+.m-row.m-head:hover { background: #fafbfc; }
+.m-row.m-expanded { background: #f6fff9; }
+
+/* 날짜 셀: 숫자(1fr) + 델타(48px) */
+.date-cell {
+  display: grid;
+  grid-template-columns: 1fr 48px;
+  align-items: start;
+  font-variant-numeric: tabular-nums;
+  padding: 11px 0;
+}
+.date-cell .d-label { text-align: right; padding-right: 4px; font-size: 11px; }
+.date-cell .d-num {
+  text-align: right;
+  padding-right: 4px;
+  font-size: 15px;
+  font-weight: 600;
+  font-family: var(--mono);
+  color: var(--text);
+  line-height: 1.2;
+}
+.date-cell .d-num.mute { color: var(--text3); font-size: 12px; font-weight: 400; }
+.date-cell .d-num.err  { color: var(--danger); font-size: 11px; font-weight: 400; }
+.date-cell .d-pill { margin-top: 4px; text-align: right; padding-right: 4px; }
+.date-cell .d-delta {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #E8590C;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  padding-top: 1px;
+  white-space: nowrap;
+}
+
+/* 업체명 셀 */
+.biz-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 0;
+  font-weight: 500;
+  color: var(--text);
+}
+.biz-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: #c1c7cd;
+  flex-shrink: 0;
+  transition: background .15s;
+}
+.m-row.m-expanded .biz-dot { background: var(--accent); }
+.expand-arr {
+  font-size: 10px;
+  color: var(--text3);
+  transition: transform .2s;
+  flex-shrink: 0;
+}
+.m-row.m-expanded .expand-arr { transform: rotate(180deg); color: var(--accent); }
+
+/* pill 뱃지 */
+.d-pill-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.d-pill-tag.sale    { background: #FFF1E6; color: #E8590C; }
+.d-pill-tag.restock { background: #EFF6FF; color: #2563EB; }
+
+/* 조회 버튼 셀 */
+.m-action { display: flex; flex-direction: column; gap: 3px; align-items: center; padding: 8px 0; }
+
+/* Options detail */
+.m-detail { display: none; border-bottom: 2px solid var(--accent); }
+.m-detail.open { display: block; }
+.m-opt-head {
+  background: #fcfcfd;
+  color: #9aa0a6;
+  font-size: 11px;
+  padding: 7px 20px;
+  cursor: default;
+  border-bottom: 1px solid #f1f3f5;
+}
+.m-opt-head:hover { background: #fcfcfd; }
+.m-opt-row {
+  background: #fcfcfd;
+  font-size: 12.5px;
+  padding: 0 20px;
+  cursor: default;
+}
+.m-opt-row:hover { background: #f9f9fa; }
+.m-opt-row .date-cell .d-num { font-size: 13px; font-weight: 400; }
+.m-opt-total {
+  background: #f3faf5 !important;
+  font-weight: 700;
+  border-top: 1px solid #d1fae5;
+  cursor: default;
+}
+.m-opt-total:hover { background: #f3faf5 !important; }
+.m-opt-total .date-cell .d-num { color: #1E7E34; }
+.opt-name { padding-left: 20px; color: #4b5563; font-size: 12.5px; padding-top: 8px; padding-bottom: 8px; }
+.m-opt-total .opt-name { color: var(--text); }
 
 /* ── Empty state ── */
 .empty-state { text-align: center; padding: 60px 24px; color: var(--text3); }
@@ -429,17 +489,6 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
 
       <!-- KPI Cards -->
       <div class="kpi-grid" id="kpi-grid" style="display:none"></div>
-
-      <!-- Chart Card -->
-      <div class="card chart-card" id="chart-card" style="display:none">
-        <div class="card-header" style="padding:12px 18px">
-          <div class="card-title">재고 추이</div>
-          <div style="font-size:11px;color:var(--text3)">날짜별 총 재고 수량 변화</div>
-        </div>
-        <div class="chart-wrap">
-          <canvas id="stock-chart"></canvas>
-        </div>
-      </div>
 
       <!-- Table Card -->
       <div class="card" id="monitor-card">
@@ -774,20 +823,14 @@ function renderTable(data) {
   const wrap = document.getElementById('table-wrap');
   const { dates, competitors } = data;
 
-  // Update last fetched
   if (data.last_fetched) {
     const dt = new Date(data.last_fetched);
     document.getElementById('last-updated').textContent =
       `마지막 조회: ${dt.toLocaleDateString('ko-KR')} ${dt.toLocaleTimeString('ko-KR', {hour:'2-digit',minute:'2-digit'})}`;
   }
 
-  document.getElementById('monitor-count').textContent =
-    `경쟁사 ${competitors.length}명`;
-
-  // Build sorted dates for KPI/chart
-  let allSortedDates = [...dates].sort();
+  document.getElementById('monitor-count').textContent = `경쟁사 ${competitors.length}명`;
   renderKPIs(data);
-  renderChart(data, allSortedDates);
 
   if (competitors.length === 0) {
     wrap.innerHTML = `<div class="empty-state">
@@ -798,7 +841,6 @@ function renderTable(data) {
     return;
   }
 
-  // Build date columns (newest first), optionally hide all-failed columns
   let sortedDates = [...dates].sort().reverse();
   if (document.getElementById('hide-fail-cols').checked) {
     sortedDates = sortedDates.filter(d =>
@@ -809,99 +851,89 @@ function renderTable(data) {
     );
   }
 
-  let thead = '<tr><th>업체명</th>';
+  const colTpl = `280px repeat(${sortedDates.length}, 1fr) 90px`;
+  let html = `<div class="monitor-wrap">`;
+
+  // Header row
+  html += `<div class="m-row m-head" style="grid-template-columns:${colTpl}">`;
+  html += `<div>업체명</div>`;
   sortedDates.forEach(d => {
     const dt = new Date(d + 'T00:00:00');
-    const label = `${dt.getMonth()+1}/${dt.getDate()}<br><span style="font-weight:400;font-size:10px">${['일','월','화','수','목','금','토'][dt.getDay()]}</span>`;
-    thead += `<th>${label}</th>`;
+    const dow = ['일','월','화','수','목','금','토'][dt.getDay()];
+    html += `<div class="date-cell"><div class="d-label">${dt.getMonth()+1}/${dt.getDate()}<br>${dow}</div><div></div></div>`;
   });
-  thead += '<th>개별 조회</th></tr>';
+  html += `<div style="text-align:center">조회</div></div>`;
 
-  let tbody = '';
+  // Data rows
   competitors.forEach(comp => {
     const isExpanded = expandedRows.has(comp.id);
-
-    // Main row
-    tbody += `<tr class="comp-row${isExpanded ? ' expanded' : ''}" onclick="toggleExpand('${comp.id}')">
-      <td>
-        <div class="comp-name">
-          <span class="expand-icon">▾</span>
-          ${escHtml(comp.name)}
-        </div>
-      </td>`;
+    html += `<div class="m-row${isExpanded ? ' m-expanded' : ''}" data-cid="${comp.id}" style="grid-template-columns:${colTpl}" onclick="toggleExpand('${comp.id}')">`;
+    html += `<div class="biz-name"><span class="biz-dot"></span>${escHtml(comp.name)}<span class="expand-arr">▾</span></div>`;
 
     sortedDates.forEach(d => {
       const day = comp.days[d];
-      tbody += `<td><div class="cell-val-inner">`;
       if (!day) {
-        tbody += `<span class="stock-empty">—</span>`;
+        html += `<div class="date-cell"><div class="d-num mute">—</div><div></div></div>`;
       } else if (day.error) {
-        tbody += `<span class="stock-err" title="${escHtml(day.error)}" style="font-size:11px">조회 실패</span>`;
+        html += `<div class="date-cell"><div class="d-num err" title="${escHtml(day.error)}">실패</div><div></div></div>`;
       } else {
         const total = day.total;
         const sales = day.sales;
         const totalStr = total !== null ? total.toLocaleString() : '—';
-        tbody += `<div class="stock-num" style="font-size:14px">${totalStr}</div>`;
-        if (sales !== null && sales !== 0) {
-          if (sales > 0) {
-            tbody += `<div style="margin-top:4px"><span class="stock-tag sold">▼ ${sales.toLocaleString()} 판매</span></div>`;
-          } else {
-            tbody += `<div style="margin-top:4px"><span class="stock-tag stock">▲ ${Math.abs(sales).toLocaleString()} 입고</span></div>`;
-          }
-        } else if (sales === 0) {
-          tbody += `<div style="margin-top:4px;font-size:10px;color:var(--text3)">변동없음</div>`;
+        let pillHtml = '';
+        if (sales !== null && sales > 0) {
+          pillHtml = `<div class="d-pill"><span class="d-pill-tag sale">▼${sales.toLocaleString()}</span></div>`;
+        } else if (sales !== null && sales < 0) {
+          pillHtml = `<div class="d-pill"><span class="d-pill-tag restock">▲${Math.abs(sales).toLocaleString()}</span></div>`;
         }
+        let deltaHtml = '';
+        if (sales !== null && sales > 0) {
+          deltaHtml = `<div class="d-delta">[-${sales.toLocaleString()}]</div>`;
+        } else if (sales !== null && sales < 0) {
+          deltaHtml = `<div class="d-delta" style="color:#2563EB">[+${Math.abs(sales).toLocaleString()}]</div>`;
+        }
+        html += `<div class="date-cell"><div><div class="d-num">${totalStr}</div>${pillHtml}</div>${deltaHtml}</div>`;
       }
-      tbody += `</div></td>`;
     });
 
-    tbody += `<td style="text-align:center;padding:8px 10px;white-space:nowrap">
-      <button onclick="event.stopPropagation();fetchSingle('${comp.id}','${escHtml(comp.name)}')"
-        title="개별 재고 조회 (확장 프로그램)"
-        class="btn btn-sm" style="padding:3px 9px;font-size:11px">조회</button>
-      <button onclick="event.stopPropagation();window.open('${escHtml(comp.url)}','_blank')"
-        title="상품 페이지 열기"
-        class="btn btn-sm" style="padding:3px 9px;font-size:11px;margin-left:3px">↗</button>
-    </td></tr>`;
+    html += `<div class="m-action" onclick="event.stopPropagation()">
+      <button class="btn btn-sm" onclick="fetchSingle('${comp.id}','${escHtml(comp.name)}')" title="개별 재고 조회">조회</button>
+      <button class="btn btn-sm" onclick="window.open('${escHtml(comp.url)}','_blank')" title="상품 페이지 열기">↗</button>
+    </div></div>`;
 
-    // Options expand row
-    const colspan = sortedDates.length + 2;
-    tbody += `<tr class="opt-expand-row${isExpanded ? ' open' : ''}" id="opt-${comp.id}">
-      <td class="opt-expand-td" colspan="${colspan}">
-        <div class="opt-inner">
-          <div class="opt-title">옵션별 재고 상세</div>
-          ${renderOptionsDetail(comp, sortedDates)}
-        </div>
-      </td>
-    </tr>`;
+    html += `<div class="m-detail${isExpanded ? ' open' : ''}" id="opt-${comp.id}">${renderOptionsDetailGrid(comp, sortedDates, colTpl)}</div>`;
   });
 
-  wrap.innerHTML = `<table class="monitor"><thead>${thead}</thead><tbody>${tbody}</tbody></table>`;
+  html += `</div>`;
+  wrap.innerHTML = html;
 }
 
-function renderOptionsDetail(comp, sortedDates) {
-  // Gather all option names across all dates
+function renderOptionsDetailGrid(comp, sortedDates, colTpl) {
   const optionNames = new Set();
   sortedDates.forEach(d => {
     const day = comp.days[d];
-    if (day && day.options) {
-      day.options.forEach(o => optionNames.add(o.name));
-    }
+    if (day && day.options) day.options.forEach(o => optionNames.add(o.name));
   });
 
   if (optionNames.size === 0) {
-    return '<div style="color:var(--text3);font-size:12px">옵션 데이터 없음</div>';
+    return '<div style="color:var(--text3);font-size:12px;padding:12px 20px">옵션 데이터 없음</div>';
   }
 
-  let html = '<table class="opt-table"><thead><tr><th>옵션명</th>';
+  let html = '';
+
+  // Options sub-header
+  html += `<div class="m-row m-opt-head" style="grid-template-columns:${colTpl}">`;
+  html += `<div style="padding-left:20px">옵션명</div>`;
   sortedDates.forEach(d => {
     const dt = new Date(d + 'T00:00:00');
-    html += `<th>${dt.getMonth()+1}/${dt.getDate()}</th>`;
+    html += `<div class="date-cell"><div class="d-label">${dt.getMonth()+1}/${dt.getDate()}</div><div></div></div>`;
   });
-  html += '</tr></thead><tbody>';
+  html += `<div></div></div>`;
 
+  // Option name rows
   optionNames.forEach(name => {
-    html += `<tr><td>${escHtml(name)}</td>`;
+    html += `<div class="m-row m-opt-row" style="grid-template-columns:${colTpl}">`;
+    html += `<div class="opt-name">${escHtml(name)}</div>`;
     sortedDates.forEach((d, i) => {
       const day = comp.days[d];
       let qty = null;
@@ -909,38 +941,38 @@ function renderOptionsDetail(comp, sortedDates) {
         const opt = day.options.find(o => o.name === name);
         if (opt != null) qty = opt.qty;
       }
-      let cell = qty !== null ? qty.toLocaleString() : '—';
+      let deltaHtml = '';
       if (qty !== null) {
-        // 실패 날짜를 건너뛰고 가장 가까운 유효 데이터와 비교
         for (let j = i + 1; j < sortedDates.length; j++) {
           const prevDay = comp.days[sortedDates[j]];
           if (prevDay && !prevDay.error && prevDay.options) {
             const prevOpt = prevDay.options.find(o => o.name === name);
             if (prevOpt != null) {
               const delta = qty - prevOpt.qty;
-              if (delta !== 0) {
-                const sign = delta > 0 ? '+' : '';
-                const color = delta < 0 ? '#ef4444' : '#10b981';
-                cell += ` <span style="color:${color};font-size:10px;font-weight:600">[${sign}${delta.toLocaleString()}]</span>`;
+              if (delta < 0) {
+                deltaHtml = `<div class="d-delta">[-${Math.abs(delta)}]</div>`;
+              } else if (delta > 0) {
+                deltaHtml = `<div class="d-delta" style="color:#2563EB">[+${delta}]</div>`;
               }
               break;
             }
           }
         }
       }
-      html += `<td>${cell}</td>`;
+      html += `<div class="date-cell"><div class="d-num${qty === null ? ' mute' : ''}">${qty !== null ? qty.toLocaleString() : '—'}</div>${deltaHtml}</div>`;
     });
-    html += '</tr>';
+    html += `<div></div></div>`;
   });
 
   // Total row
-  html += `<tr class="opt-total"><td>합계</td>`;
+  html += `<div class="m-row m-opt-row m-opt-total" style="grid-template-columns:${colTpl}">`;
+  html += `<div class="opt-name">합계</div>`;
   sortedDates.forEach(d => {
     const day = comp.days[d];
     const total = day && day.total !== null ? day.total.toLocaleString() : '—';
-    html += `<td>${total}</td>`;
+    html += `<div class="date-cell"><div class="d-num">${total}</div><div></div></div>`;
   });
-  html += '</tr></tbody></table>';
+  html += `<div></div></div>`;
 
   return html;
 }
@@ -951,11 +983,11 @@ function toggleExpand(cid) {
   } else {
     expandedRows.add(cid);
   }
-  // Re-render just the row states without full reload
-  const compRow = document.querySelector(`tr.comp-row[onclick*="${cid}"]`);
-  const optRow = document.getElementById(`opt-${cid}`);
-  if (compRow) compRow.classList.toggle('expanded', expandedRows.has(cid));
-  if (optRow) optRow.classList.toggle('open', expandedRows.has(cid));
+  const expanded = expandedRows.has(cid);
+  const compRow = document.querySelector(`.m-row[data-cid="${cid}"]`);
+  const detailRow = document.getElementById(`opt-${cid}`);
+  if (compRow) compRow.classList.toggle('m-expanded', expanded);
+  if (detailRow) detailRow.classList.toggle('open', expanded);
 }
 
 // ─── Fetch ───────────────────────────────────────────────────
