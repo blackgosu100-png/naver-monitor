@@ -4,109 +4,111 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>네이버 경쟁사 모니터링 — 로그인</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Sans+KR:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    font-family: 'Segoe UI', -apple-system, sans-serif;
-    background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%);
+    font-family: 'Inter', 'Noto Sans KR', sans-serif;
+    background: #fafafa;
     min-height: 100vh;
     display: flex;
     align-items: center;
     justify-content: center;
+    font-size: 13px;
   }
   .card {
     background: #fff;
-    border-radius: 16px;
+    border: 1px solid #e4e4e7;
+    border-radius: 8px;
     padding: 40px 40px 36px;
     width: 360px;
-    box-shadow: 0 24px 64px rgba(0,0,0,.35);
+    box-shadow: 0 1px 3px rgb(0 0 0/.07), 0 1px 2px -1px rgb(0 0 0/.06);
   }
-  .logo {
-    text-align: center;
-    margin-bottom: 28px;
-  }
+  .logo { margin-bottom: 28px; }
   .logo-icon {
-    width: 52px;
-    height: 52px;
+    width: 36px; height: 36px;
     background: #03c75a;
-    border-radius: 14px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin: 0 auto 12px;
-    font-size: 26px;
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 14px;
   }
-  .logo-title {
-    font-size: 18px;
-    font-weight: 700;
-    color: #0f172a;
-  }
-  .logo-sub {
-    font-size: 12px;
-    color: #64748b;
-    margin-top: 3px;
-  }
+  .logo-icon svg { width: 18px; height: 18px; color: #fff; }
+  .logo-title { font-size: 18px; font-weight: 600; color: #18181b; letter-spacing: -.3px; }
+  .logo-sub { font-size: 12px; color: #71717a; margin-top: 3px; }
+  .field { margin-top: 14px; }
   label {
     display: block;
     font-size: 12px;
-    font-weight: 600;
-    color: #374151;
-    margin-bottom: 6px;
-    margin-top: 16px;
+    font-weight: 500;
+    color: #18181b;
+    margin-bottom: 5px;
   }
   input {
     width: 100%;
-    padding: 10px 14px;
-    border: 1.5px solid #e2e8f0;
-    border-radius: 8px;
-    font-size: 14px;
+    padding: 8px 11px;
+    border: 1px solid #e4e4e7;
+    border-radius: 6px;
+    font-size: 13px;
     font-family: inherit;
     outline: none;
-    transition: border-color .15s;
-    background: #f8fafc;
+    color: #18181b;
+    background: #fff;
+    transition: border-color .12s, box-shadow .12s;
   }
-  input:focus { border-color: #03c75a; background: #fff; }
+  input:focus { border-color: #86efac; box-shadow: 0 0 0 3px rgba(3,199,90,.08); }
   .btn-login {
     width: 100%;
-    margin-top: 24px;
-    padding: 11px;
-    background: #03c75a;
-    color: #fff;
+    margin-top: 20px;
+    padding: 9px;
+    background: #18181b;
+    color: #fafafa;
     border: none;
-    border-radius: 8px;
-    font-size: 15px;
-    font-weight: 600;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
     cursor: pointer;
-    transition: background .15s, transform .1s;
     font-family: inherit;
+    transition: background .12s;
+    letter-spacing: .1px;
   }
-  .btn-login:hover { background: #02b350; }
-  .btn-login:active { transform: scale(.98); }
+  .btn-login:hover { background: #27272a; }
+  .btn-login:disabled { opacity: .5; cursor: not-allowed; }
   .error {
-    margin-top: 12px;
-    padding: 10px 12px;
+    margin-top: 10px;
+    padding: 8px 11px;
     background: #fef2f2;
-    border: 1px solid #fecaca;
-    border-radius: 8px;
+    border: 1px solid #fca5a5;
+    border-radius: 6px;
     font-size: 12px;
-    color: #dc2626;
+    color: #b91c1c;
     display: none;
   }
+  .divider { height: 1px; background: #e4e4e7; margin: 20px 0; }
+  .hint { font-size: 11px; color: #a1a1aa; text-align: center; }
 </style>
 </head>
 <body>
 <div class="card">
   <div class="logo">
-    <div class="logo-icon">📊</div>
+    <div class="logo-icon">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><polyline points="1,12 5,7 8,9 12,4 15,6"/></svg>
+    </div>
     <div class="logo-title">네이버 경쟁사 모니터링</div>
     <div class="logo-sub">Naver Smart Store Stock Monitor</div>
   </div>
-  <label>아이디</label>
-  <input type="text" id="username" placeholder="아이디 입력" autocomplete="username">
-  <label>비밀번호</label>
-  <input type="password" id="password" placeholder="비밀번호 입력" autocomplete="current-password">
+  <div class="field">
+    <label>아이디</label>
+    <input type="text" id="username" placeholder="아이디 입력" autocomplete="username">
+  </div>
+  <div class="field">
+    <label>비밀번호</label>
+    <input type="password" id="password" placeholder="비밀번호 입력" autocomplete="current-password">
+  </div>
   <div class="error" id="err"></div>
   <button class="btn-login" id="btn" onclick="doLogin()">로그인</button>
+  <div class="divider"></div>
+  <div class="hint">초기 계정: admin / 1234</div>
 </div>
 <script>
   document.getElementById('password').addEventListener('keydown', e => {
@@ -118,10 +120,7 @@
     const err = document.getElementById('err');
     const username = document.getElementById('username').value.trim();
     const password = document.getElementById('password').value;
-    if (!username || !password) {
-      showErr('아이디와 비밀번호를 입력해주세요');
-      return;
-    }
+    if (!username || !password) { showErr('아이디와 비밀번호를 입력해주세요'); return; }
     btn.disabled = true;
     btn.textContent = '로그인 중...';
     err.style.display = 'none';
