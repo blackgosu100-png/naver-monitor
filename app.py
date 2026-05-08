@@ -134,13 +134,13 @@ def _fetch_one(browser, url: str) -> dict:
     def on_response(resp):
         u = resp.url
         ct = resp.headers.get('content-type', '')
-        if 'json' not in ct:
-            return
+        if 'json' in ct and 'naver.com' in u:
+            print(f'[DEBUG] json url: {u}', flush=True)
         is_product_api = (
             ('/i/v2/channels/' in u and '/products/' in u) or
             ('/products/' in u and 'naver.com' in u)
         )
-        if is_product_api:
+        if is_product_api and 'json' in ct:
             print(f'[DEBUG] captured: {u}', flush=True)
             try:
                 captured['product'] = resp.json()
@@ -153,7 +153,7 @@ def _fetch_one(browser, url: str) -> dict:
         page.goto(url, wait_until='domcontentloaded', timeout=30_000)
         page.wait_for_timeout(3_500)
 
-        print(f'[DEBUG] captured keys: {list(captured.keys())}', flush=True)
+        print(f'[DEBUG] total captured: {list(captured.keys())}', flush=True)
 
         if 'product' in captured:
             result = _parse_product_response(captured['product'])
