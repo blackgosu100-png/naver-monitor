@@ -133,7 +133,15 @@ def _fetch_one(browser, url: str) -> dict:
 
     def on_response(resp):
         u = resp.url
-        if '/i/v2/channels/' in u and '/products/' in u:
+        ct = resp.headers.get('content-type', '')
+        if 'json' not in ct:
+            return
+        is_product_api = (
+            ('/i/v2/channels/' in u and '/products/' in u) or
+            ('/products/' in u and 'naver.com' in u)
+        )
+        if is_product_api:
+            print(f'[DEBUG] captured: {u}', flush=True)
             try:
                 captured['product'] = resp.json()
             except Exception:
@@ -143,7 +151,9 @@ def _fetch_one(browser, url: str) -> dict:
 
     try:
         page.goto(url, wait_until='domcontentloaded', timeout=30_000)
-        page.wait_for_timeout(2_500)
+        page.wait_for_timeout(3_500)
+
+        print(f'[DEBUG] captured keys: {list(captured.keys())}', flush=True)
 
         if 'product' in captured:
             result = _parse_product_response(captured['product'])
