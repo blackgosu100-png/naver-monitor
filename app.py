@@ -123,7 +123,7 @@ def _fetch_one(browser, url: str) -> dict:
         user_agent=(
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
             'AppleWebKit/537.36 (KHTML, like Gecko) '
-            'Chrome/124.0.0.0 Safari/537.36'
+            'Chrome/136.0.0.0 Safari/537.36'
         ),
         locale='ko-KR',
         timezone_id='Asia/Seoul',
@@ -136,6 +136,7 @@ def _fetch_one(browser, url: str) -> dict:
         },
     )
     page = context.new_page()
+    page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
     captured: dict = {}
 
     def on_response(resp):
@@ -157,8 +158,9 @@ def _fetch_one(browser, url: str) -> dict:
     page.on('response', on_response)
 
     try:
-        page.goto(url, wait_until='domcontentloaded', timeout=30_000)
-        page.wait_for_timeout(5_000)
+        page.goto(url, wait_until='networkidle', timeout=30_000,
+                  referer='https://search.naver.com/')
+        page.wait_for_timeout(2_000)
 
         print(f'[DEBUG] page url: {page.url}', flush=True)
         print(f'[DEBUG] page title: {page.title()}', flush=True)
@@ -196,8 +198,13 @@ def _fetch_one(browser, url: str) -> dict:
 def _launch_browser(pw):
     return pw.chromium.launch(
         headless=True,
-        args=['--no-sandbox', '--disable-setuid-sandbox',
-              '--disable-dev-shm-usage', '--disable-gpu'],
+        args=[
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu',
+            '--disable-blink-features=AutomationControlled',
+        ],
     )
 
 def fetch_all():
