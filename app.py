@@ -151,8 +151,10 @@ def _fetch_one(browser, url: str) -> dict:
 
     try:
         page.goto(url, wait_until='domcontentloaded', timeout=30_000)
-        page.wait_for_timeout(3_500)
+        page.wait_for_timeout(5_000)
 
+        print(f'[DEBUG] page url: {page.url}', flush=True)
+        print(f'[DEBUG] page title: {page.title()}', flush=True)
         print(f'[DEBUG] total captured: {list(captured.keys())}', flush=True)
 
         if 'product' in captured:
