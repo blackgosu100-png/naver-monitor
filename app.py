@@ -126,7 +126,14 @@ def _fetch_one(browser, url: str) -> dict:
             'Chrome/124.0.0.0 Safari/537.36'
         ),
         locale='ko-KR',
-        extra_http_headers={'Accept-Language': 'ko-KR,ko;q=0.9'},
+        timezone_id='Asia/Seoul',
+        geolocation={'latitude': 37.5665, 'longitude': 126.9780},
+        permissions=['geolocation'],
+        viewport={'width': 1280, 'height': 800},
+        extra_http_headers={
+            'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        },
     )
     page = context.new_page()
     captured: dict = {}
