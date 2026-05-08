@@ -429,7 +429,10 @@ def api_ext_queue():
 # ─── 시작 ─────────────────────────────────────────────────────
 if __name__ == '__main__':
     scheduler.start()
-    _update_scheduler()
+    try:
+        _update_scheduler()
+    except Exception as e:
+        print(f'스케줄러 초기화 실패 (무시): {e}')
     port = int(os.environ.get('PORT', 5000))
     print(f'서버 시작 → http://localhost:{port}')
     app.run(host='0.0.0.0', port=port, debug=False)
