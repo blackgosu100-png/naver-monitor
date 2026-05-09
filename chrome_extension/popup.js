@@ -110,14 +110,9 @@ async function checkAndProcessQueue() {
       var tabId = null;
       try {
         tabId = await openAndWait(comp.url);
-        await new Promise(function(res) { setTimeout(res, 4000); });
-        var cacheResult = await chrome.scripting.executeScript({
-          target: { tabId: tabId },
-          world: 'MAIN',
-          func: readStockFromCache,
-          args: [parsed.pid]
+        var cr = await waitForCache(tabId, parsed.pid, 15000, function(msg) {
+          showMsg('queue-msg', '처리 중 (' + (i + 1) + '/' + queue.length + '): ' + comp.name + ' — ' + msg, 'info');
         });
-        var cr = cacheResult && cacheResult[0] && cacheResult[0].result;
         if (cr && cr.ok) {
           results.push({ id: comp.id, name: comp.name, total: cr.total, options: cr.options, error: null, fetched_at: new Date().toISOString() });
         } else {
@@ -128,6 +123,9 @@ async function checkAndProcessQueue() {
       } finally {
         if (tabId !== null) chrome.tabs.remove(tabId, function() {});
       }
+
+      // 상품 사이 3초 대기 — 연속 요청으로 인한 재인증 방지
+      if (i < queue.length - 1) await new Promise(function(r) { setTimeout(r, 3000); });
     }
 
     qFill.style.width = '90%';
@@ -194,17 +192,11 @@ document.getElementById('fetch-btn').addEventListener('click', async function() 
         // 상품 페이지를 탭으로 열기 (content.js가 자동으로 fetch 후킹)
         tabId = await openAndWait(comp.url);
 
-        // Naver SPA가 상품 API를 호출하고 응답을 받을 시간 확보
-        await new Promise(function(r) { setTimeout(r, 4000); });
-
-        // 캐시에서 재고 데이터 읽기
-        var cacheResult = await chrome.scripting.executeScript({
-          target: { tabId: tabId },
-          world: 'MAIN',
-          func: readStockFromCache,
-          args: [parsed.pid]
+        // 캐시에 데이터가 들어올 때까지 폴링 (인증 페이지 감지 시 자동 대기 연장)
+        var _i = i, _len = competitors.length, _name = comp.name;
+        var cr = await waitForCache(tabId, parsed.pid, 15000, function(msg) {
+          showMsg('fetch-msg', '조회 중 (' + (_i + 1) + '/' + _len + '): ' + _name + ' — ' + msg, 'info');
         });
-        var cr = cacheResult && cacheResult[0] && cacheResult[0].result;
 
         if (cr && cr.ok) {
           results.push({
@@ -220,6 +212,9 @@ document.getElementById('fetch-btn').addEventListener('click', async function() 
       } finally {
         if (tabId !== null) chrome.tabs.remove(tabId, function() {});
       }
+
+      // 상품 사이 3초 대기 — 연속 요청으로 인한 재인증 방지
+      if (i < competitors.length - 1) await new Promise(function(r) { setTimeout(r, 3000); });
     }
 
     fill.style.width = '90%';
@@ -251,6 +246,75 @@ document.getElementById('fetch-btn').addEventListener('click', async function() 
     btn.disabled = false;
   }
 });
+
+// ─── 캐시 폴링 ────────────────────────────────────────────────
+// 인증 페이지 감지 시: 탭 앞으로 + 팝업 메시지 + 타임아웃 카운트 완전 정지
+// 상품 페이지로 복귀 시 폴링 재개, 전체 타임아웃 2분
+async function waitForCache(tabId, pid, timeout, onStatus) {
+  var elapsed = 0;         // 실제 경과 시간 (인증 대기 중엔 누적 안 함)
+  var verifying = false;
+
+  while (elapsed < timeout) {
+    // 탭이 어느 URL에 있는지 확인
+    var tab;
+    try { tab = await chrome.tabs.get(tabId); } catch(e) {
+      return { ok: false, error: '탭이 닫힘' };
+    }
+    var currentUrl = tab.url || '';
+
+    // 상품 페이지가 아닌 경우 → 인증/리다이렉트 페이지 (타임아웃 카운트 정지)
+    if (!currentUrl.includes('/products/')) {
+      if (!verifying) {
+        verifying = true;
+        chrome.tabs.update(tabId, { active: true }); // 탭 앞으로
+        if (onStatus) onStatus('⚠️ 전화번호 입력해주세요 — 완료 후 자동 재개됩니다');
+      }
+      await new Promise(function(r) { setTimeout(r, 1000); });
+      // elapsed 누적 없음 → 타임아웃 카운트 멈춤
+      continue;
+    }
+
+    // 인증 완료 후 상품 페이지로 돌아온 경우
+    if (verifying) {
+      verifying = false;
+      if (onStatus) onStatus('인증 완료 — 재고 데이터 로딩 중...');
+      await new Promise(function(r) { setTimeout(r, 2000); }); // 페이지 로드 여유
+      elapsed += 2000;
+      continue;
+    }
+
+    // 캐시 읽기
+    var res;
+    try {
+      res = await chrome.scripting.executeScript({
+        target: { tabId: tabId },
+        world: 'MAIN',
+        func: readStockFromCache,
+        args: [pid]
+      });
+    } catch(e) {
+      return { ok: false, error: '스크립트 실행 실패: ' + String(e) };
+    }
+    var cr = res && res[0] && res[0].result;
+    if (cr && cr.ok) return cr;
+
+    await new Promise(function(r) { setTimeout(r, 1000); });
+    elapsed += 1000;
+  }
+
+  // 타임아웃 — 마지막 결과 그대로 반환
+  try {
+    var res = await chrome.scripting.executeScript({
+      target: { tabId: tabId },
+      world: 'MAIN',
+      func: readStockFromCache,
+      args: [pid]
+    });
+    return (res && res[0] && res[0].result) || { ok: false, error: '타임아웃' };
+  } catch(e) {
+    return { ok: false, error: '타임아웃' };
+  }
+}
 
 // 팝업 열릴 때 대기 큐 자동 확인
 checkAndProcessQueue();
