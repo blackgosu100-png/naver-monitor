@@ -18,7 +18,7 @@ function openAndWait(url) {
       reject(new Error('탭 로딩 타임아웃 (30초)'));
     }, 30000);
 
-    chrome.tabs.create({ url: url, active: false }, function(tab) {
+    chrome.tabs.create({ url: url, active: true }, function(tab) {
       if (chrome.runtime.lastError) {
         clearTimeout(timer);
         reject(new Error(chrome.runtime.lastError.message));
@@ -85,7 +85,7 @@ async function checkAndProcessQueue() {
   var qBar = document.getElementById('queue-bar');
   var qFill = document.getElementById('queue-fill');
   try {
-    var r = await fetch('http://localhost:5000/api/public/queue');
+    var r = await fetch('http://localhost:5001/api/public/queue');
     if (!r.ok) return;
     var data = await r.json();
     var queue = data.queue || [];
@@ -129,13 +129,13 @@ async function checkAndProcessQueue() {
     }
 
     qFill.style.width = '90%';
-    await fetch('http://localhost:5000/api/stock-data', {
+    await fetch('http://localhost:5001/api/stock-data', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ results: results })
     });
 
-    await fetch('http://localhost:5000/api/public/queue', {
+    await fetch('http://localhost:5001/api/public/queue', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids: queue.map(function(c) { return c.id; }) })
@@ -148,7 +148,7 @@ async function checkAndProcessQueue() {
     if (errItems.length) msg += '\n❌ ' + errItems.map(function(res) { return res.name + '(' + res.error + ')'; }).join(', ');
     showMsg('queue-msg', msg, okCount === queue.length ? 'ok' : 'info');
 
-    chrome.tabs.query({ url: 'http://localhost:5000/*' }, function(tabs) {
+    chrome.tabs.query({ url: 'http://localhost:5001/*' }, function(tabs) {
       if (tabs.length) chrome.tabs.reload(tabs[0].id);
     });
   } catch(e) {
@@ -157,92 +157,67 @@ async function checkAndProcessQueue() {
 }
 
 // ─── 경쟁사 재고 조회 버튼 ────────────────────────────────────
+// ─── 팝업 열릴 때 백그라운드 상태 폴링 ───────────────────────
+var statusPoller = null;
+
+async function pollStatus() {
+  var data = await chrome.storage.local.get('fetchStatus');
+  var s = data.fetchStatus;
+  if (!s) return;
+
+  var bar = document.getElementById('progress-bar');
+  var fill = document.getElementById('progress-fill');
+
+  if (s.running) {
+    document.getElementById('fetch-btn').disabled = true;
+    bar.style.display = 'block';
+    var pct = s.total > 0 ? Math.round(((s.current - 0.5) / s.total) * 85) : 0;
+    fill.style.width = pct + '%';
+    var label = s.name ? '조회 중 (' + s.current + '/' + s.total + '): ' + s.name + (s.msg ? ' — ' + s.msg : '') : s.msg || '';
+    showMsg('fetch-msg', label, 'info');
+  } else if (s.done) {
+    document.getElementById('fetch-btn').disabled = false;
+    fill.style.width = '100%';
+    var okCount = (s.results || []).filter(function(r) { return !r.error; }).length;
+    showMsg('fetch-msg', s.msg || '완료', okCount === (s.results || []).length ? 'ok' : 'info');
+    chrome.storage.local.remove('fetchStatus');
+    if (statusPoller) { clearInterval(statusPoller); statusPoller = null; }
+  }
+}
+
+chrome.storage.local.get('fetchStatus', function(data) {
+  if (data.fetchStatus && data.fetchStatus.running) {
+    statusPoller = setInterval(pollStatus, 800);
+    pollStatus();
+  }
+});
+
+// ─── 경쟁사 재고 조회 버튼 ────────────────────────────────────
 document.getElementById('fetch-btn').addEventListener('click', async function() {
   var btn = document.getElementById('fetch-btn');
   var bar = document.getElementById('progress-bar');
   var fill = document.getElementById('progress-fill');
-  btn.disabled = true;
-  bar.style.display = 'block';
-  fill.style.width = '0%';
-  showMsg('fetch-msg', '앱 서버에서 경쟁사 목록 로드 중...', 'info');
 
   try {
-    var listResp = await fetch('http://localhost:5000/api/public/competitors');
+    var listResp = await fetch('http://localhost:5001/api/public/competitors');
     if (!listResp.ok) throw new Error('앱 서버 연결 실패 — run.bat이 실행 중인지 확인하세요');
     var listData = await listResp.json();
     var competitors = listData.competitors || [];
     if (competitors.length === 0) throw new Error('등록된 경쟁사가 없습니다. 앱 설정에서 추가해주세요.');
 
-    var results = [];
+    btn.disabled = true;
+    bar.style.display = 'block';
+    fill.style.width = '0%';
+    showMsg('fetch-msg', '조회 시작 중... (팝업을 닫아도 계속 실행됩니다)', 'info');
 
-    for (var i = 0; i < competitors.length; i++) {
-      var comp = competitors[i];
-      var parsed = parseNaverUrl(comp.url);
+    chrome.runtime.sendMessage({ type: 'START_FETCH', competitors: competitors });
 
-      showMsg('fetch-msg', '조회 중 (' + (i + 1) + '/' + competitors.length + '): ' + comp.name, 'info');
-      fill.style.width = Math.round(((i + 0.5) / competitors.length) * 85) + '%';
-
-      if (!parsed) {
-        results.push({ id: comp.id, name: comp.name, error: 'URL 형식 오류' });
-        continue;
-      }
-
-      var tabId = null;
-      try {
-        // 상품 페이지를 탭으로 열기 (content.js가 자동으로 fetch 후킹)
-        tabId = await openAndWait(comp.url);
-
-        // 캐시에 데이터가 들어올 때까지 폴링 (인증 페이지 감지 시 자동 대기 연장)
-        var _i = i, _len = competitors.length, _name = comp.name;
-        var cr = await waitForCache(tabId, parsed.pid, 15000, function(msg) {
-          showMsg('fetch-msg', '조회 중 (' + (_i + 1) + '/' + _len + '): ' + _name + ' — ' + msg, 'info');
-        });
-
-        if (cr && cr.ok) {
-          results.push({
-            id: comp.id, name: comp.name,
-            total: cr.total, options: cr.options,
-            error: null, fetched_at: new Date().toISOString()
-          });
-        } else {
-          results.push({ id: comp.id, name: comp.name, error: (cr && cr.error) || '데이터 없음' });
-        }
-      } catch(e) {
-        results.push({ id: comp.id, name: comp.name, error: String(e) });
-      } finally {
-        if (tabId !== null) chrome.tabs.remove(tabId, function() {});
-      }
-
-      // 상품 사이 3초 대기 — 연속 요청으로 인한 재인증 방지
-      if (i < competitors.length - 1) await new Promise(function(r) { setTimeout(r, 3000); });
-    }
-
-    fill.style.width = '90%';
-    showMsg('fetch-msg', '결과 저장 중...', 'info');
-
-    var saveResp = await fetch('http://localhost:5000/api/stock-data', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ results: results })
-    });
-    if (!saveResp.ok) throw new Error('결과 저장 실패');
-
-    fill.style.width = '100%';
-    var okCount = results.filter(function(r) { return !r.error; }).length;
-    var errItems = results.filter(function(r) { return r.error; });
-    var msg = '✅ 완료! ' + okCount + '/' + results.length + ' 성공';
-    if (errItems.length) {
-      msg += '\n❌ 실패: ' + errItems.map(function(r) { return r.name + '(' + r.error + ')'; }).join(', ');
-    }
-    showMsg('fetch-msg', msg, okCount === results.length ? 'ok' : 'info');
-
-    chrome.tabs.query({ url: 'http://localhost:5000/*' }, function(tabs) {
-      if (tabs.length) chrome.tabs.reload(tabs[0].id);
-    });
+    // 상태 폴링 시작
+    if (statusPoller) clearInterval(statusPoller);
+    statusPoller = setInterval(pollStatus, 800);
 
   } catch(e) {
     showMsg('fetch-msg', '❌ ' + e.message, 'err');
-  } finally {
     btn.disabled = false;
   }
 });
@@ -337,7 +312,7 @@ document.getElementById('cookie-btn').addEventListener('click', function() {
     catch(e) { showMsg('cookie-msg', '인코딩 오류: ' + e, 'err'); btn.disabled = false; return; }
 
     chrome.tabs.create(
-      { url: 'http://localhost:5000/cookie-import?data=' + encodeURIComponent(encoded) },
+      { url: 'http://localhost:5001/cookie-import?data=' + encodeURIComponent(encoded) },
       function() {
         showMsg('cookie-msg', '✅ 새 탭에서 저장 완료!', 'ok');
         btn.disabled = false;

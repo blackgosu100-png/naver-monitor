@@ -9,6 +9,25 @@ from apscheduler.schedulers.background import BackgroundScheduler
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'naver-monitor-dev-secret-2024')
 
+@app.after_request
+def add_cors(response):
+    origin = request.headers.get('Origin', '')
+    if origin.startswith('chrome-extension://'):
+        response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, DELETE, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    return response
+
+@app.route('/api/public/<path:p>', methods=['OPTIONS'])
+@app.route('/api/stock-data', methods=['OPTIONS'])
+def cors_preflight(p=''):
+    origin = request.headers.get('Origin', '')
+    resp = app.make_default_options_response()
+    resp.headers['Access-Control-Allow-Origin'] = origin
+    resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, DELETE, OPTIONS'
+    resp.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    return resp
+
 # ─── Supabase REST 클라이언트 (SDK 없이 httpx 직접 호출) ───────
 SUPABASE_URL = os.environ.get('SUPABASE_URL', '').rstrip('/')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY', '')
@@ -451,6 +470,37 @@ def api_cookie():
 @login_required
 def api_ext_queue():
     return jsonify({'error': 'Playwright 모드에서는 개별 조회 버튼을 사용하세요'}), 400
+
+# ─── 크롬 확장프로그램용 Public API (인증 불필요) ────────────────
+
+@app.route('/api/public/competitors')
+def api_public_competitors():
+    return jsonify({'competitors': db_get_competitors()})
+
+@app.route('/api/public/queue', methods=['GET'])
+def api_public_queue_get():
+    return jsonify({'queue': []})
+
+@app.route('/api/public/queue', methods=['DELETE'])
+def api_public_queue_delete():
+    return jsonify({'ok': True})
+
+@app.route('/api/stock-data', methods=['POST'])
+def api_stock_data():
+    body = request.get_json() or {}
+    results = body.get('results', [])
+    today = date.today().isoformat()
+    for r in results:
+        cid = r.get('id')
+        if not cid:
+            continue
+        db_save_stock(cid, today, {
+            'total':      r.get('total'),
+            'options':    r.get('options', []),
+            'error':      r.get('error'),
+            'fetched_at': r.get('fetched_at', datetime.now().isoformat()),
+        })
+    return jsonify({'ok': True})
 
 # ─── 시작 ─────────────────────────────────────────────────────
 if __name__ == '__main__':
