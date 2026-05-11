@@ -6,6 +6,52 @@ function showMsg(id, text, cls) {
   el.style.display = 'block';
 }
 
+var DEFAULT_SERVER = 'http://localhost:5001';
+
+async function getAuthState() {
+  var data = await chrome.storage.local.get(['serverUrl', 'accessToken']);
+  return {
+    serverUrl: (data.serverUrl || DEFAULT_SERVER).replace(/\/$/, ''),
+    accessToken: data.accessToken || ''
+  };
+}
+
+async function apiFetch(path, options) {
+  var state = await getAuthState();
+  if (!state.accessToken) throw new Error('서비스 로그인이 필요합니다.');
+  options = options || {};
+  options.headers = Object.assign({}, options.headers || {}, {
+    'Authorization': 'Bearer ' + state.accessToken
+  });
+  return fetch(state.serverUrl + path, options);
+}
+
+async function signInToService() {
+  var serverUrl = document.getElementById('server-url').value.trim().replace(/\/$/, '') || DEFAULT_SERVER;
+  var email = document.getElementById('login-email').value.trim();
+  var password = document.getElementById('login-password').value;
+  if (!email || !password) throw new Error('이메일과 비밀번호를 입력해주세요.');
+
+  var cfgRes = await fetch(serverUrl + '/api/auth-config');
+  if (!cfgRes.ok) throw new Error('서버 연결에 실패했습니다.');
+  var cfg = await cfgRes.json();
+  var authRes = await fetch(cfg.supabase_url + '/auth/v1/token?grant_type=password', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'apikey': cfg.supabase_anon_key
+    },
+    body: JSON.stringify({ email: email, password: password })
+  });
+  var authData = await authRes.json();
+  if (!authRes.ok) throw new Error(authData.error_description || authData.msg || '로그인에 실패했습니다.');
+  await chrome.storage.local.set({
+    serverUrl: serverUrl,
+    accessToken: authData.access_token,
+    refreshToken: authData.refresh_token
+  });
+}
+
 function parseNaverUrl(url) {
   var m = url.match(/(?:smartstore|brand)\.naver\.com\/([^/?#]+)\/products\/(\d+)/);
   return m ? { slug: m[1], pid: m[2] } : null;
@@ -85,7 +131,7 @@ async function checkAndProcessQueue() {
   var qBar = document.getElementById('queue-bar');
   var qFill = document.getElementById('queue-fill');
   try {
-    var r = await fetch('http://localhost:5001/api/public/queue');
+    var r = await apiFetch('/api/public/queue');
     if (!r.ok) return;
     var data = await r.json();
     var queue = data.queue || [];
@@ -129,13 +175,13 @@ async function checkAndProcessQueue() {
     }
 
     qFill.style.width = '90%';
-    await fetch('http://localhost:5001/api/stock-data', {
+    await apiFetch('/api/stock-data', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ results: results })
     });
 
-    await fetch('http://localhost:5001/api/public/queue', {
+    await apiFetch('/api/public/queue', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids: queue.map(function(c) { return c.id; }) })
@@ -148,7 +194,8 @@ async function checkAndProcessQueue() {
     if (errItems.length) msg += '\n❌ ' + errItems.map(function(res) { return res.name + '(' + res.error + ')'; }).join(', ');
     showMsg('queue-msg', msg, okCount === queue.length ? 'ok' : 'info');
 
-    chrome.tabs.query({ url: 'http://localhost:5001/*' }, function(tabs) {
+    var state = await getAuthState();
+    chrome.tabs.query({ url: state.serverUrl + '/*' }, function(tabs) {
       if (tabs.length) chrome.tabs.reload(tabs[0].id);
     });
   } catch(e) {
@@ -193,13 +240,31 @@ chrome.storage.local.get('fetchStatus', function(data) {
 });
 
 // ─── 경쟁사 재고 조회 버튼 ────────────────────────────────────
+chrome.storage.local.get(['serverUrl'], function(data) {
+  document.getElementById('server-url').value = data.serverUrl || DEFAULT_SERVER;
+});
+
+document.getElementById('login-btn').addEventListener('click', async function() {
+  var btn = document.getElementById('login-btn');
+  btn.disabled = true;
+  showMsg('login-msg', '로그인 중...', 'info');
+  try {
+    await signInToService();
+    showMsg('login-msg', '서비스 로그인 완료', 'ok');
+  } catch(e) {
+    showMsg('login-msg', String(e.message || e), 'err');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 document.getElementById('fetch-btn').addEventListener('click', async function() {
   var btn = document.getElementById('fetch-btn');
   var bar = document.getElementById('progress-bar');
   var fill = document.getElementById('progress-fill');
 
   try {
-    var listResp = await fetch('http://localhost:5001/api/public/competitors');
+    var listResp = await apiFetch('/api/public/competitors');
     if (!listResp.ok) throw new Error('앱 서버 연결 실패 — run.bat이 실행 중인지 확인하세요');
     var listData = await listResp.json();
     var competitors = listData.competitors || [];
@@ -312,7 +377,7 @@ document.getElementById('cookie-btn').addEventListener('click', function() {
     catch(e) { showMsg('cookie-msg', '인코딩 오류: ' + e, 'err'); btn.disabled = false; return; }
 
     chrome.tabs.create(
-      { url: 'http://localhost:5001/cookie-import?data=' + encodeURIComponent(encoded) },
+      { url: (document.getElementById('server-url').value.trim().replace(/\/$/, '') || DEFAULT_SERVER) + '/cookie-import?data=' + encodeURIComponent(encoded) },
       function() {
         showMsg('cookie-msg', '✅ 새 탭에서 저장 완료!', 'ok');
         btn.disabled = false;

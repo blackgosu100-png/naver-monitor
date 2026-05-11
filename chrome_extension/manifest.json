@@ -6,6 +6,8 @@
   "permissions": ["cookies", "tabs", "scripting", "storage"],
   "host_permissions": [
     "*://*.naver.com/*",
+    "https://*.up.railway.app/*",
+    "https://*.railway.app/*",
     "http://localhost:5000/*",
     "http://localhost:5001/*"
   ],

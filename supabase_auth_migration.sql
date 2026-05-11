@@ -1,40 +1,40 @@
--- Run this in the Supabase SQL Editor.
--- Supabase Auth users are stored in auth.users; app data is separated by user_id.
+-- Use this when upgrading an existing single-admin database to Supabase Auth.
+-- For a fresh project, run supabase_schema.sql instead.
 
-CREATE TABLE IF NOT EXISTS competitors (
-    id          TEXT PRIMARY KEY,
-    user_id     UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-    name        TEXT NOT NULL,
-    url         TEXT NOT NULL,
-    created_at  TIMESTAMPTZ DEFAULT NOW()
-);
+ALTER TABLE competitors
+    ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE;
+
+ALTER TABLE stock_history
+    ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE;
+
+ALTER TABLE app_settings
+    ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE;
+
+-- Optional: assign old data to one existing teacher account before enabling NOT NULL.
+-- Replace the UUID below with the teacher user id from Authentication > Users.
+--
+-- UPDATE competitors SET user_id = '00000000-0000-0000-0000-000000000000' WHERE user_id IS NULL;
+-- UPDATE stock_history SET user_id = '00000000-0000-0000-0000-000000000000' WHERE user_id IS NULL;
+-- UPDATE app_settings SET user_id = '00000000-0000-0000-0000-000000000000' WHERE user_id IS NULL;
+
+ALTER TABLE stock_history
+    DROP CONSTRAINT IF EXISTS uq_comp_date;
+
+ALTER TABLE stock_history
+    ADD CONSTRAINT uq_user_comp_date UNIQUE(user_id, competitor_id, fetch_date);
+
+ALTER TABLE app_settings
+    DROP CONSTRAINT IF EXISTS app_settings_pkey;
+
+ALTER TABLE app_settings
+    ADD CONSTRAINT app_settings_pkey PRIMARY KEY(user_id, key);
 
 CREATE INDEX IF NOT EXISTS idx_competitors_user_id
     ON competitors(user_id);
 
-CREATE TABLE IF NOT EXISTS stock_history (
-    id              BIGSERIAL PRIMARY KEY,
-    user_id         UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-    competitor_id   TEXT NOT NULL REFERENCES competitors(id) ON DELETE CASCADE,
-    fetch_date      DATE NOT NULL,
-    total           INTEGER,
-    options         JSONB DEFAULT '[]',
-    error           TEXT,
-    fetched_at      TIMESTAMPTZ DEFAULT NOW(),
-    CONSTRAINT uq_user_comp_date UNIQUE(user_id, competitor_id, fetch_date)
-);
-
 CREATE INDEX IF NOT EXISTS idx_stock_history_user_date
     ON stock_history(user_id, fetch_date);
 
-CREATE TABLE IF NOT EXISTS app_settings (
-    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-    key     TEXT NOT NULL,
-    value   TEXT NOT NULL DEFAULT '',
-    PRIMARY KEY (user_id, key)
-);
-
--- Optional hardening if you later expose tables directly through Supabase clients.
 ALTER TABLE competitors ENABLE ROW LEVEL SECURITY;
 ALTER TABLE stock_history ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_settings ENABLE ROW LEVEL SECURITY;

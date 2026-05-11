@@ -3,9 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>네이버 경쟁사 모니터링 — 로그인</title>
+<title>네이버 경쟁사 모니터링 로그인</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Sans+KR:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -16,16 +17,17 @@
     align-items: center;
     justify-content: center;
     font-size: 13px;
+    color: #18181b;
   }
   .card {
     background: #fff;
     border: 1px solid #e4e4e7;
     border-radius: 8px;
-    padding: 40px 40px 36px;
-    width: 360px;
+    padding: 38px 38px 34px;
+    width: 380px;
     box-shadow: 0 1px 3px rgb(0 0 0/.07), 0 1px 2px -1px rgb(0 0 0/.06);
   }
-  .logo { margin-bottom: 28px; }
+  .logo { margin-bottom: 26px; }
   .logo-icon {
     width: 36px; height: 36px;
     background: #03c75a;
@@ -34,14 +36,24 @@
     margin-bottom: 14px;
   }
   .logo-icon svg { width: 18px; height: 18px; color: #fff; }
-  .logo-title { font-size: 18px; font-weight: 600; color: #18181b; letter-spacing: -.3px; }
+  .logo-title { font-size: 18px; font-weight: 600; letter-spacing: -.3px; }
   .logo-sub { font-size: 12px; color: #71717a; margin-top: 3px; }
+  .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 18px; }
+  .tab {
+    border: 1px solid #e4e4e7;
+    background: #fff;
+    border-radius: 6px;
+    padding: 8px;
+    font: inherit;
+    color: #71717a;
+    cursor: pointer;
+  }
+  .tab.active { background: #18181b; border-color: #18181b; color: #fff; }
   .field { margin-top: 14px; }
   label {
     display: block;
     font-size: 12px;
     font-weight: 500;
-    color: #18181b;
     margin-bottom: 5px;
   }
   input {
@@ -61,31 +73,27 @@
     width: 100%;
     margin-top: 20px;
     padding: 9px;
-    background: #18181b;
-    color: #fafafa;
+    background: #03c75a;
+    color: #fff;
     border: none;
     border-radius: 6px;
     font-size: 13px;
-    font-weight: 500;
+    font-weight: 600;
     cursor: pointer;
     font-family: inherit;
-    transition: background .12s;
-    letter-spacing: .1px;
   }
-  .btn-login:hover { background: #27272a; }
   .btn-login:disabled { opacity: .5; cursor: not-allowed; }
-  .error {
+  .msg {
     margin-top: 10px;
     padding: 8px 11px;
-    background: #fef2f2;
-    border: 1px solid #fca5a5;
     border-radius: 6px;
     font-size: 12px;
-    color: #b91c1c;
     display: none;
+    line-height: 1.5;
   }
-  .divider { height: 1px; background: #e4e4e7; margin: 20px 0; }
-  .hint { font-size: 11px; color: #a1a1aa; text-align: center; }
+  .msg.err { background: #fef2f2; border: 1px solid #fca5a5; color: #b91c1c; }
+  .msg.ok { background: #f0fdf4; border: 1px solid #86efac; color: #15803d; }
+  .hint { font-size: 11px; color: #a1a1aa; text-align: center; margin-top: 16px; line-height: 1.6; }
 </style>
 </head>
 <body>
@@ -95,60 +103,88 @@
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><polyline points="1,12 5,7 8,9 12,4 15,6"/></svg>
     </div>
     <div class="logo-title">네이버 경쟁사 모니터링</div>
-    <div class="logo-sub">Naver Smart Store Stock Monitor</div>
+    <div class="logo-sub">수강생 계정으로 로그인하세요</div>
   </div>
+
+  <div class="tabs">
+    <button class="tab active" id="tab-login" onclick="setMode('login')">로그인</button>
+    <button class="tab" id="tab-signup" onclick="setMode('signup')">회원가입</button>
+  </div>
+
   <div class="field">
-    <label>아이디</label>
-    <input type="text" id="username" placeholder="아이디 입력" autocomplete="username">
+    <label>이메일</label>
+    <input type="email" id="email" placeholder="student@example.com" autocomplete="email">
   </div>
   <div class="field">
     <label>비밀번호</label>
     <input type="password" id="password" placeholder="비밀번호 입력" autocomplete="current-password">
   </div>
-  <div class="error" id="err"></div>
-  <button class="btn-login" id="btn" onclick="doLogin()">로그인</button>
-  <div class="divider"></div>
-  <div class="hint">초기 계정: admin / 1234</div>
+  <div class="msg" id="msg"></div>
+  <button class="btn-login" id="btn" onclick="submitAuth()">로그인</button>
+  <div class="hint">회원가입 후 이메일 확인이 켜져 있으면 받은 편지함의 인증 링크를 먼저 눌러주세요.</div>
 </div>
+
 <script>
-  document.getElementById('password').addEventListener('keydown', e => {
-    if (e.key === 'Enter') doLogin();
-  });
+let mode = 'login';
+let supabaseClient = null;
 
-  async function doLogin() {
-    const btn = document.getElementById('btn');
-    const err = document.getElementById('err');
-    const username = document.getElementById('username').value.trim();
-    const password = document.getElementById('password').value;
-    if (!username || !password) { showErr('아이디와 비밀번호를 입력해주세요'); return; }
-    btn.disabled = true;
-    btn.textContent = '로그인 중...';
-    err.style.display = 'none';
-    try {
-      const res = await fetch('/api/login', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({username, password})
-      });
-      const data = await res.json();
-      if (data.ok) {
-        location.href = '/';
-      } else {
-        showErr(data.error || '로그인 실패');
-      }
-    } catch {
-      showErr('서버 연결 오류');
-    } finally {
-      btn.disabled = false;
-      btn.textContent = '로그인';
+document.getElementById('password').addEventListener('keydown', e => {
+  if (e.key === 'Enter') submitAuth();
+});
+
+init();
+
+async function init() {
+  const cfg = await fetch('/api/auth-config').then(r => r.json());
+  supabaseClient = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+  const { data } = await supabaseClient.auth.getSession();
+  if (data.session) location.href = '/';
+}
+
+function setMode(next) {
+  mode = next;
+  document.getElementById('tab-login').className = 'tab' + (mode === 'login' ? ' active' : '');
+  document.getElementById('tab-signup').className = 'tab' + (mode === 'signup' ? ' active' : '');
+  document.getElementById('btn').textContent = mode === 'login' ? '로그인' : '회원가입';
+  hideMsg();
+}
+
+async function submitAuth() {
+  const btn = document.getElementById('btn');
+  const email = document.getElementById('email').value.trim();
+  const password = document.getElementById('password').value;
+  if (!email || !password) { showMsg('이메일과 비밀번호를 입력해주세요.', 'err'); return; }
+  btn.disabled = true;
+  btn.textContent = mode === 'login' ? '로그인 중...' : '가입 중...';
+  try {
+    const result = mode === 'login'
+      ? await supabaseClient.auth.signInWithPassword({ email, password })
+      : await supabaseClient.auth.signUp({ email, password });
+    if (result.error) throw result.error;
+    if (mode === 'signup' && !result.data.session) {
+      showMsg('가입 확인 메일을 보냈습니다. 이메일 인증 후 로그인해주세요.', 'ok');
+      setMode('login');
+      return;
     }
+    location.href = '/';
+  } catch (e) {
+    showMsg(e.message || '인증에 실패했습니다.', 'err');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = mode === 'login' ? '로그인' : '회원가입';
   }
+}
 
-  function showErr(msg) {
-    const err = document.getElementById('err');
-    err.textContent = msg;
-    err.style.display = 'block';
-  }
+function showMsg(text, cls) {
+  const el = document.getElementById('msg');
+  el.textContent = text;
+  el.className = 'msg ' + cls;
+  el.style.display = 'block';
+}
+
+function hideMsg() {
+  document.getElementById('msg').style.display = 'none';
+}
 </script>
 </body>
 </html>

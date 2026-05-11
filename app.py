@@ -1,9 +1,9 @@
-import json, re, hashlib, threading, time, random, os
+import json, re, hashlib, threading, time, random, os, uuid
 from datetime import datetime, date, timedelta
 from functools import wraps
 
 import httpx
-from flask import Flask, request, jsonify, session, render_template, redirect
+from flask import Flask, request, jsonify, session, render_template, redirect, g
 from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
@@ -15,7 +15,7 @@ def add_cors(response):
     if origin.startswith('chrome-extension://'):
         response.headers['Access-Control-Allow-Origin'] = origin
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, DELETE, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
     return response
 
 @app.route('/api/public/<path:p>', methods=['OPTIONS'])
@@ -25,12 +25,13 @@ def cors_preflight(p=''):
     resp = app.make_default_options_response()
     resp.headers['Access-Control-Allow-Origin'] = origin
     resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, DELETE, OPTIONS'
-    resp.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    resp.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
     return resp
 
 # ─── Supabase REST 클라이언트 (SDK 없이 httpx 직접 호출) ───────
 SUPABASE_URL = os.environ.get('SUPABASE_URL', '').rstrip('/')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY', '')
+SUPABASE_ANON_KEY = os.environ.get('SUPABASE_ANON_KEY', '')
 
 def _sb_headers(prefer: str = 'return=representation') -> dict:
     return {
@@ -62,16 +63,16 @@ def sb_upsert(table: str, data: dict, on_conflict: str) -> None:
     )
     r.raise_for_status()
 
-def sb_update(table: str, data: dict, col: str, val: str) -> None:
+def sb_update(table: str, data: dict, col: str, val: str, extra_query: str = '') -> None:
     r = httpx.patch(
-        f'{_sb_url(table)}?{col}=eq.{val}',
+        f'{_sb_url(table)}?{col}=eq.{val}{extra_query}',
         json=data, headers=_sb_headers('return=minimal'),
     )
     r.raise_for_status()
 
-def sb_delete(table: str, col: str, val: str) -> None:
+def sb_delete(table: str, col: str, val: str, extra_query: str = '') -> None:
     r = httpx.delete(
-        f'{_sb_url(table)}?{col}=eq.{val}',
+        f'{_sb_url(table)}?{col}=eq.{val}{extra_query}',
         headers=_sb_headers('return=minimal'),
     )
     r.raise_for_status()
@@ -226,10 +227,10 @@ def _launch_browser(pw):
         ],
     )
 
-def fetch_all():
+def fetch_all(user_id: str):
     """스케줄러 / 전체 조회 버튼에서 호출"""
     from playwright.sync_api import sync_playwright
-    competitors = db_get_competitors()
+    competitors = db_get_competitors(user_id)
     if not competitors:
         return
     today = date.today().isoformat()
@@ -238,7 +239,7 @@ def fetch_all():
             browser = _launch_browser(pw)
             for comp in competitors:
                 result = _fetch_one(browser, comp['url'])
-                db_save_stock(comp['id'], today, result)
+                db_save_stock(user_id, comp['id'], today, result)
                 time.sleep(random.uniform(1.5, 3.0))
             browser.close()
 
@@ -253,32 +254,33 @@ def fetch_single(comp: dict) -> dict:
 
 # ─── DB 헬퍼 (Supabase REST) ──────────────────────────────────
 
-def db_get_competitors() -> list:
-    return sb_select('competitors', '?order=created_at')
+def db_get_competitors(user_id: str) -> list:
+    return sb_select('competitors', f'?user_id=eq.{user_id}&order=created_at')
 
-def db_save_stock(cid: str, fetch_date: str, result: dict):
+def db_save_stock(user_id: str, cid: str, fetch_date: str, result: dict):
     sb_upsert('stock_history', {
+        'user_id':       user_id,
         'competitor_id': cid,
         'fetch_date':    fetch_date,
         'total':         result.get('total'),
         'options':       result.get('options', []),
         'error':         result.get('error'),
         'fetched_at':    result.get('fetched_at', datetime.now().isoformat()),
-    }, on_conflict='competitor_id,fetch_date')
+    }, on_conflict='user_id,competitor_id,fetch_date')
 
-def db_get_history(days: int = 14):
+def db_get_history(user_id: str, days: int = 14):
     start = (date.today() - timedelta(days=days)).isoformat()
-    competitors = db_get_competitors()
+    competitors = db_get_competitors(user_id)
     rows = sb_select(
         'stock_history',
         f'?select=competitor_id,fetch_date,total,options,error,fetched_at'
-        f'&fetch_date=gte.{start}&order=fetch_date',
+        f'&user_id=eq.{user_id}&fetch_date=gte.{start}&order=fetch_date',
     )
     return competitors, rows
 
-def db_get_schedule() -> dict:
+def db_get_schedule(user_id: str) -> dict:
     keys = 'schedule_enabled,schedule_hour,schedule_minute'
-    rows = sb_select('app_settings', f'?key=in.({keys})')
+    rows = sb_select('app_settings', f'?user_id=eq.{user_id}&key=in.({keys})')
     s = {row['key']: row['value'] for row in rows}
     return {
         'enabled': s.get('schedule_enabled', 'false') == 'true',
@@ -286,60 +288,85 @@ def db_get_schedule() -> dict:
         'minute':  int(s.get('schedule_minute', 0)),
     }
 
-def db_save_schedule(enabled: bool, hour: int, minute: int):
+def db_save_schedule(user_id: str, enabled: bool, hour: int, minute: int):
     for key, val in [
         ('schedule_enabled', str(enabled).lower()),
         ('schedule_hour',    str(hour)),
         ('schedule_minute',  str(minute)),
     ]:
-        sb_upsert('app_settings', {'key': key, 'value': val}, on_conflict='key')
+        sb_upsert('app_settings', {'user_id': user_id, 'key': key, 'value': val}, on_conflict='user_id,key')
 
 # ─── 스케줄러 ─────────────────────────────────────────────────
 scheduler = BackgroundScheduler(timezone='Asia/Seoul')
 
-def _update_scheduler():
-    s = db_get_schedule()
+def _update_scheduler(user_id: str):
+    s = db_get_schedule(user_id)
+    job_id = f'daily_fetch_{user_id}'
     try:
-        scheduler.remove_job('daily_fetch')
+        scheduler.remove_job(job_id)
     except Exception:
         pass
     if s['enabled']:
         scheduler.add_job(fetch_all, 'cron',
                           hour=s['hour'], minute=s['minute'],
-                          id='daily_fetch')
+                          id=job_id, args=[user_id])
 
 # ─── Auth 데코레이터 ──────────────────────────────────────────
+def _bearer_token() -> str:
+    auth = request.headers.get('Authorization', '')
+    if auth.lower().startswith('bearer '):
+        return auth.split(' ', 1)[1].strip()
+    return ''
+
+def _verify_supabase_user(token: str) -> dict | None:
+    if not token or not SUPABASE_URL or not SUPABASE_ANON_KEY:
+        return None
+    try:
+        r = httpx.get(
+            f'{SUPABASE_URL}/auth/v1/user',
+            headers={'apikey': SUPABASE_ANON_KEY, 'Authorization': f'Bearer {token}'},
+            timeout=10,
+        )
+        if r.status_code != 200:
+            return None
+        return r.json()
+    except Exception:
+        return None
+
 def login_required(f):
     @wraps(f)
     def dec(*args, **kwargs):
-        if not session.get('logged_in'):
-            if request.is_json or request.path.startswith('/api/'):
-                return jsonify({'error': 'Unauthorized'}), 401
-            return redirect('/login')
+        user = _verify_supabase_user(_bearer_token())
+        if not user or not user.get('id'):
+            return jsonify({'error': 'Unauthorized'}), 401
+        g.user = user
+        g.user_id = user['id']
         return f(*args, **kwargs)
     return dec
 
 # ─── 라우트 ───────────────────────────────────────────────────
 
 @app.route('/')
-@login_required
 def index():
     return render_template('index.html')
 
 @app.route('/login')
 def login_page():
-    if session.get('logged_in'):
-        return redirect('/')
     return render_template('login.html')
+
+@app.route('/api/auth-config')
+def api_auth_config():
+    return jsonify({
+        'supabase_url': SUPABASE_URL,
+        'supabase_anon_key': SUPABASE_ANON_KEY,
+    })
 
 @app.route('/api/login', methods=['POST'])
 def api_login():
     body = request.get_json() or {}
     if (body.get('username') == ADMIN_USERNAME
             and _hash(body.get('password', '')) == ADMIN_PASSWORD_HASH):
-        session['logged_in'] = True
-        session['username']  = ADMIN_USERNAME
-        return jsonify({'ok': True})
+        return jsonify({'error': 'Supabase Auth login is required'}), 410
     return jsonify({'error': '아이디 또는 비밀번호가 올바르지 않습니다'}), 401
 
 @app.route('/api/logout', methods=['POST'])
@@ -350,10 +377,12 @@ def api_logout():
 @app.route('/api/config')
 @login_required
 def api_config():
+    email = g.user.get('email') or g.user.get('phone') or g.user_id
     return jsonify({
-        'username':    session.get('username', ADMIN_USERNAME),
-        'competitors': db_get_competitors(),
-        'schedule':    db_get_schedule(),
+        'username':    email,
+        'user_id':     g.user_id,
+        'competitors': db_get_competitors(g.user_id),
+        'schedule':    db_get_schedule(g.user_id),
     })
 
 @app.route('/api/competitors', methods=['POST'])
@@ -366,8 +395,8 @@ def api_add_competitor():
         return jsonify({'error': '이름과 URL을 입력해주세요'}), 400
     if not re.search(r'(?:smartstore|brand)\.naver\.com/.+/products/\d+', url):
         return jsonify({'error': 'smartstore.naver.com 또는 brand.naver.com URL이어야 합니다'}), 400
-    cid = f"c{int(time.time() * 1000)}"
-    sb_insert('competitors', {'id': cid, 'name': name, 'url': url})
+    cid = f"c{uuid.uuid4().hex}"
+    sb_insert('competitors', {'id': cid, 'user_id': g.user_id, 'name': name, 'url': url})
     return jsonify({'ok': True, 'id': cid})
 
 @app.route('/api/competitors/<cid>', methods=['PUT'])
@@ -376,20 +405,20 @@ def api_update_competitor(cid):
     body   = request.get_json() or {}
     update = {k: body[k].strip() for k in ('name', 'url') if body.get(k)}
     if update:
-        sb_update('competitors', update, 'id', cid)
+        sb_update('competitors', update, 'id', cid, f'&user_id=eq.{g.user_id}')
     return jsonify({'ok': True})
 
 @app.route('/api/competitors/<cid>', methods=['DELETE'])
 @login_required
 def api_delete_competitor(cid):
-    sb_delete('competitors', 'id', cid)
+    sb_delete('competitors', 'id', cid, f'&user_id=eq.{g.user_id}')
     return jsonify({'ok': True})
 
 @app.route('/api/history')
 @login_required
 def api_history():
     days = min(int(request.args.get('days', 14)), 60)
-    competitors, rows = db_get_history(days)
+    competitors, rows = db_get_history(g.user_id, days)
 
     dates = sorted({row['fetch_date'] for row in rows})
 
@@ -434,14 +463,14 @@ def api_fetch():
     body = request.get_json() or {}
     cid  = body.get('id')
     if cid:
-        competitors = db_get_competitors()
+        competitors = db_get_competitors(g.user_id)
         comp = next((c for c in competitors if c['id'] == cid), None)
         if not comp:
             return jsonify({'error': '경쟁사를 찾을 수 없습니다'}), 404
         result = fetch_single(comp)
-        db_save_stock(cid, date.today().isoformat(), result)
+        db_save_stock(g.user_id, cid, date.today().isoformat(), result)
     else:
-        fetch_all()
+        fetch_all(g.user_id)
     return jsonify({'ok': True})
 
 @app.route('/api/schedule', methods=['PUT'])
@@ -451,8 +480,8 @@ def api_schedule():
     enabled = bool(body.get('enabled', False))
     hour    = max(0, min(23, int(body.get('hour', 9))))
     minute  = max(0, min(59, int(body.get('minute', 0))))
-    db_save_schedule(enabled, hour, minute)
-    _update_scheduler()
+    db_save_schedule(g.user_id, enabled, hour, minute)
+    _update_scheduler(g.user_id)
     return jsonify({'ok': True})
 
 @app.route('/api/credentials', methods=['PUT'])
@@ -474,18 +503,22 @@ def api_ext_queue():
 # ─── 크롬 확장프로그램용 Public API (인증 불필요) ────────────────
 
 @app.route('/api/public/competitors')
+@login_required
 def api_public_competitors():
-    return jsonify({'competitors': db_get_competitors()})
+    return jsonify({'competitors': db_get_competitors(g.user_id)})
 
 @app.route('/api/public/queue', methods=['GET'])
+@login_required
 def api_public_queue_get():
     return jsonify({'queue': []})
 
 @app.route('/api/public/queue', methods=['DELETE'])
+@login_required
 def api_public_queue_delete():
     return jsonify({'ok': True})
 
 @app.route('/api/stock-data', methods=['POST'])
+@login_required
 def api_stock_data():
     body = request.get_json() or {}
     results = body.get('results', [])
@@ -494,7 +527,7 @@ def api_stock_data():
         cid = r.get('id')
         if not cid:
             continue
-        db_save_stock(cid, today, {
+        db_save_stock(g.user_id, cid, today, {
             'total':      r.get('total'),
             'options':    r.get('options', []),
             'error':      r.get('error'),
@@ -506,7 +539,7 @@ def api_stock_data():
 if __name__ == '__main__':
     scheduler.start()
     try:
-        _update_scheduler()
+        pass
     except Exception as e:
         print(f'스케줄러 초기화 실패 (무시): {e}')
     port = int(os.environ.get('PORT', 5000))

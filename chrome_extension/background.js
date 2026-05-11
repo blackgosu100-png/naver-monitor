@@ -1,6 +1,23 @@
 // 백그라운드 서비스 워커 — 팝업이 닫혀도 조회 계속 실행
 
-const SERVER = 'http://localhost:5001';
+const DEFAULT_SERVER = 'http://localhost:5001';
+
+async function getAuthState() {
+  var data = await chrome.storage.local.get(['serverUrl', 'accessToken']);
+  return {
+    serverUrl: (data.serverUrl || DEFAULT_SERVER).replace(/\/$/, ''),
+    accessToken: data.accessToken || ''
+  };
+}
+
+async function apiFetch(path, options) {
+  var state = await getAuthState();
+  options = options || {};
+  options.headers = Object.assign({}, options.headers || {}, {
+    'Authorization': 'Bearer ' + state.accessToken
+  });
+  return fetch(state.serverUrl + path, options);
+}
 
 function parseNaverUrl(url) {
   var m = url.match(/(?:smartstore|brand)\.naver\.com\/([^/?#]+)\/products\/(\d+)/);
@@ -153,7 +170,7 @@ async function runFetch(competitors) {
 
   // 결과 서버에 저장
   try {
-    await fetch(`${SERVER}/api/stock-data`, {
+    await apiFetch('/api/stock-data', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ results })
@@ -168,7 +185,8 @@ async function runFetch(competitors) {
   await setStatus({ running: false, done: true, msg, results });
 
   // 대시보드 탭 새로고침
-  chrome.tabs.query({ url: `${SERVER}/*` }, (tabs) => {
+  var state = await getAuthState();
+  chrome.tabs.query({ url: `${state.serverUrl}/*` }, (tabs) => {
     if (tabs.length) chrome.tabs.reload(tabs[0].id);
   });
 }

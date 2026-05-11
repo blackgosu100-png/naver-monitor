@@ -2,8 +2,8 @@
 cd /d "%~dp0"
 echo ====================================================
 echo   네이버 경쟁사 모니터링 시작
-echo   http://localhost:5000
-echo   초기 계정: admin / 1234
+echo   http://localhost:5001
+echo   Supabase Auth 계정으로 로그인
 echo ====================================================
 echo.
 
@@ -30,6 +30,8 @@ if errorlevel 1 (
 
 set SUPABASE_URL=https://itarmufbqvkmdkxhrkfy.supabase.co
 set SUPABASE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml0YXJtdWZicXZrbWRreGhya2Z5Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODE2NDgwOCwiZXhwIjoyMDkzNzQwODA4fQ.kvvCisVSHV7j1CSJzvwHxWEXfqjZqjK1hJZjobb7BCk
+REM Supabase Project Settings > API > anon public key
+set SUPABASE_ANON_KEY=
 
 start "" "chrome.exe" "http://localhost:5001"
 set PORT=5001
