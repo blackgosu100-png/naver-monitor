@@ -6,7 +6,6 @@
 <title>네이버 경쟁사 모니터링 로그인</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Sans+KR:wght@400;500;600&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -126,7 +125,6 @@
 
 <script>
 let mode = 'login';
-let supabaseClient = null;
 
 document.getElementById('password').addEventListener('keydown', e => {
   if (e.key === 'Enter') submitAuth();
@@ -135,10 +133,7 @@ document.getElementById('password').addEventListener('keydown', e => {
 init();
 
 async function init() {
-  const cfg = await fetch('/api/auth-config').then(r => r.json());
-  supabaseClient = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
-  const { data } = await supabaseClient.auth.getSession();
-  if (data.session) location.href = '/';
+  if (localStorage.getItem('naverMonitorAccessToken')) location.href = '/';
 }
 
 function setMode(next) {
@@ -157,15 +152,20 @@ async function submitAuth() {
   btn.disabled = true;
   btn.textContent = mode === 'login' ? '로그인 중...' : '가입 중...';
   try {
-    const result = mode === 'login'
-      ? await supabaseClient.auth.signInWithPassword({ email, password })
-      : await supabaseClient.auth.signUp({ email, password });
-    if (result.error) throw result.error;
-    if (mode === 'signup' && !result.data.session) {
+    const res = await fetch(mode === 'login' ? '/api/auth/login' : '/api/auth/signup', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ email, password })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '인증에 실패했습니다.');
+    if (mode === 'signup' && !data.access_token) {
       showMsg('가입 확인 메일을 보냈습니다. 이메일 인증 후 로그인해주세요.', 'ok');
       setMode('login');
       return;
     }
+    localStorage.setItem('naverMonitorAccessToken', data.access_token);
+    if (data.refresh_token) localStorage.setItem('naverMonitorRefreshToken', data.refresh_token);
     location.href = '/';
   } catch (e) {
     showMsg(e.message || '인증에 실패했습니다.', 'err');

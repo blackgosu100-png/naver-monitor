@@ -7,7 +7,6 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Sans+KR:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 :root {
   --bg:      #fafafa;
@@ -652,15 +651,11 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
 
 <script>
 const nativeFetch = window.fetch.bind(window);
-let supabaseClient = null;
-let authSession = null;
+let accessToken = '';
 
 async function initAuth() {
-  const cfg = await nativeFetch('/api/auth-config').then(r => r.json());
-  supabaseClient = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
-  const { data } = await supabaseClient.auth.getSession();
-  authSession = data.session;
-  if (!authSession) {
+  accessToken = localStorage.getItem('naverMonitorAccessToken') || '';
+  if (!accessToken) {
     location.href = '/login';
     throw new Error('login required');
   }
@@ -672,15 +667,14 @@ async function authFetch(input, init = {}) {
   const isApi = url && (url.startsWith('/api/') || url.startsWith(location.origin + '/api/'));
   if (!isApi || url.includes('/api/auth-config')) return nativeFetch(input, init);
 
-  const { data } = await supabaseClient.auth.getSession();
-  authSession = data.session;
-  if (!authSession) {
+  accessToken = localStorage.getItem('naverMonitorAccessToken') || '';
+  if (!accessToken) {
     location.href = '/login';
     throw new Error('login required');
   }
 
   const headers = new Headers(init.headers || {});
-  headers.set('Authorization', `Bearer ${authSession.access_token}`);
+  headers.set('Authorization', `Bearer ${accessToken}`);
   const res = await nativeFetch(input, { ...init, headers });
   if (res.status === 401) location.href = '/login';
   return res;
@@ -1264,7 +1258,8 @@ async function clearCookie() {
 
 // ─── Logout ──────────────────────────────────────────────────
 async function doLogout() {
-  if (supabaseClient) await supabaseClient.auth.signOut();
+  localStorage.removeItem('naverMonitorAccessToken');
+  localStorage.removeItem('naverMonitorRefreshToken');
   await fetch('/api/logout', {method:'POST'});
   location.href = '/login';
 }

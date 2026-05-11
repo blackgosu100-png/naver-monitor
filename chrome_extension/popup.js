@@ -32,19 +32,13 @@ async function signInToService() {
   var password = document.getElementById('login-password').value;
   if (!email || !password) throw new Error('이메일과 비밀번호를 입력해주세요.');
 
-  var cfgRes = await fetch(serverUrl + '/api/auth-config');
-  if (!cfgRes.ok) throw new Error('서버 연결에 실패했습니다.');
-  var cfg = await cfgRes.json();
-  var authRes = await fetch(cfg.supabase_url + '/auth/v1/token?grant_type=password', {
+  var authRes = await fetch(serverUrl + '/api/auth/login', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'apikey': cfg.supabase_anon_key
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email: email, password: password })
   });
   var authData = await authRes.json();
-  if (!authRes.ok) throw new Error(authData.error_description || authData.msg || '로그인에 실패했습니다.');
+  if (!authRes.ok) throw new Error(authData.error || '로그인에 실패했습니다.');
   await chrome.storage.local.set({
     serverUrl: serverUrl,
     accessToken: authData.access_token,

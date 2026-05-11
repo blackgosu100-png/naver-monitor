@@ -30,8 +30,6 @@ if errorlevel 1 (
 
 set SUPABASE_URL=https://itarmufbqvkmdkxhrkfy.supabase.co
 set SUPABASE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml0YXJtdWZicXZrbWRreGhya2Z5Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODE2NDgwOCwiZXhwIjoyMDkzNzQwODA4fQ.kvvCisVSHV7j1CSJzvwHxWEXfqjZqjK1hJZjobb7BCk
-REM Supabase Project Settings > API > anon public key
-set SUPABASE_ANON_KEY=
 
 start "" "chrome.exe" "http://localhost:5001"
 set PORT=5001

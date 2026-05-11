@@ -319,12 +319,13 @@ def _bearer_token() -> str:
     return ''
 
 def _verify_supabase_user(token: str) -> dict | None:
-    if not token or not SUPABASE_URL or not SUPABASE_ANON_KEY:
+    auth_key = SUPABASE_ANON_KEY or SUPABASE_KEY
+    if not token or not SUPABASE_URL or not auth_key:
         return None
     try:
         r = httpx.get(
             f'{SUPABASE_URL}/auth/v1/user',
-            headers={'apikey': SUPABASE_ANON_KEY, 'Authorization': f'Bearer {token}'},
+            headers={'apikey': auth_key, 'Authorization': f'Bearer {token}'},
             timeout=10,
         )
         if r.status_code != 200:
@@ -358,8 +359,43 @@ def login_page():
 def api_auth_config():
     return jsonify({
         'supabase_url': SUPABASE_URL,
-        'supabase_anon_key': SUPABASE_ANON_KEY,
+        'uses_server_auth': True,
     })
+
+@app.route('/api/auth/login', methods=['POST'])
+def api_auth_login():
+    body = request.get_json() or {}
+    email = (body.get('email') or '').strip()
+    password = body.get('password') or ''
+    if not email or not password:
+        return jsonify({'error': 'Email and password are required'}), 400
+    r = httpx.post(
+        f'{SUPABASE_URL}/auth/v1/token?grant_type=password',
+        headers={'apikey': SUPABASE_KEY, 'Content-Type': 'application/json'},
+        json={'email': email, 'password': password},
+        timeout=20,
+    )
+    if r.status_code >= 400:
+        return jsonify({'error': r.json().get('msg') or r.json().get('error_description') or 'Login failed'}), 401
+    return jsonify(r.json())
+
+@app.route('/api/auth/signup', methods=['POST'])
+def api_auth_signup():
+    body = request.get_json() or {}
+    email = (body.get('email') or '').strip()
+    password = body.get('password') or ''
+    if not email or not password:
+        return jsonify({'error': 'Email and password are required'}), 400
+    r = httpx.post(
+        f'{SUPABASE_URL}/auth/v1/signup',
+        headers={'apikey': SUPABASE_KEY, 'Content-Type': 'application/json'},
+        json={'email': email, 'password': password},
+        timeout=20,
+    )
+    if r.status_code >= 400:
+        data = r.json()
+        return jsonify({'error': data.get('msg') or data.get('error_description') or 'Signup failed'}), 400
+    return jsonify(r.json())
 
 @app.route('/api/login', methods=['POST'])
 def api_login():
