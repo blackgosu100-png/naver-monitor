@@ -1050,16 +1050,16 @@ function toggleExpand(cid) {
 
 // ─── Fetch ───────────────────────────────────────────────────
 async function fetchAll() {
-  showLoading('전체 경쟁사 재고 조회 중...');
+  showLoading('확장 프로그램 조회 대기열 등록 중...');
   const btn = document.getElementById('fetch-btn');
   btn.disabled = true;
   try {
-    const r = await fetch('/api/fetch', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+    const r = await fetch('/api/ext/queue', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+    const data = await r.json().catch(() => ({}));
     if (r.ok) {
-      await loadHistory();
-      showToast('✅ 전체 조회 완료');
+      showToast(`⏳ ${data.count || 0}개 대기 등록 — 크롬 확장 아이콘을 클릭하세요`);
     } else {
-      showToast('조회 실패');
+      showToast(data.error || '대기 등록 실패');
     }
   } catch {
     showToast('서버 오류');

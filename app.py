@@ -306,6 +306,56 @@ def db_save_schedule(user_id: str, enabled: bool, hour: int, minute: int):
     ]:
         sb_upsert('app_settings', {'user_id': user_id, 'key': key, 'value': val}, on_conflict='user_id,key')
 
+def db_get_ext_queue_ids(user_id: str) -> list:
+    rows = sb_select('app_settings', f'?user_id=eq.{user_id}&key=eq.ext_queue_ids&limit=1')
+    if not rows:
+        return []
+    try:
+        ids = json.loads(rows[0].get('value') or '[]')
+    except Exception:
+        return []
+    return [str(cid) for cid in ids if cid]
+
+def db_save_ext_queue_ids(user_id: str, ids: list):
+    sb_upsert(
+        'app_settings',
+        {'user_id': user_id, 'key': 'ext_queue_ids', 'value': json.dumps(ids, ensure_ascii=False)},
+        on_conflict='user_id,key',
+    )
+
+def db_get_ext_queue(user_id: str) -> list:
+    queued_ids = db_get_ext_queue_ids(user_id)
+    if not queued_ids:
+        return []
+    competitors = db_get_competitors(user_id)
+    by_id = {comp['id']: comp for comp in competitors}
+    return [by_id[cid] for cid in queued_ids if cid in by_id]
+
+def db_queue_competitors(user_id: str, cid: str | None = None) -> list:
+    competitors = db_get_competitors(user_id)
+    valid_ids = [comp['id'] for comp in competitors]
+    if cid:
+        if cid not in valid_ids:
+            raise ValueError('경쟁사를 찾을 수 없습니다')
+        target_ids = [cid]
+    else:
+        target_ids = valid_ids
+
+    queued_ids = db_get_ext_queue_ids(user_id)
+    for target_id in target_ids:
+        if target_id not in queued_ids:
+            queued_ids.append(target_id)
+    db_save_ext_queue_ids(user_id, queued_ids)
+    return [comp for comp in competitors if comp['id'] in target_ids]
+
+def db_remove_ext_queue_ids(user_id: str, ids: list | None = None):
+    if ids is None:
+        db_save_ext_queue_ids(user_id, [])
+        return
+    remove_ids = {str(cid) for cid in ids}
+    queued_ids = [cid for cid in db_get_ext_queue_ids(user_id) if cid not in remove_ids]
+    db_save_ext_queue_ids(user_id, queued_ids)
+
 # ─── 스케줄러 ─────────────────────────────────────────────────
 scheduler = BackgroundScheduler(timezone='Asia/Seoul')
 
@@ -573,12 +623,18 @@ def api_credentials():
 @app.route('/api/cookie')
 @login_required
 def api_cookie():
-    return jsonify({'has_cookie': False, 'preview': '', 'ext_path': ''})
+    ext_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'chrome_extension'))
+    return jsonify({'has_cookie': False, 'preview': '', 'ext_path': ext_path})
 
 @app.route('/api/ext/queue', methods=['POST'])
 @login_required
 def api_ext_queue():
-    return jsonify({'error': 'Playwright 모드에서는 개별 조회 버튼을 사용하세요'}), 400
+    body = request.get_json() or {}
+    try:
+        queued = db_queue_competitors(g.user_id, body.get('id'))
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 404
+    return jsonify({'ok': True, 'count': len(queued)})
 
 # ─── 크롬 확장프로그램용 Public API (인증 불필요) ────────────────
 
@@ -590,11 +646,14 @@ def api_public_competitors():
 @app.route('/api/public/queue', methods=['GET'])
 @login_required
 def api_public_queue_get():
-    return jsonify({'queue': []})
+    return jsonify({'queue': db_get_ext_queue(g.user_id)})
 
 @app.route('/api/public/queue', methods=['DELETE'])
 @login_required
 def api_public_queue_delete():
+    body = request.get_json(silent=True) or {}
+    ids = body.get('ids')
+    db_remove_ext_queue_ids(g.user_id, ids if isinstance(ids, list) else None)
     return jsonify({'ok': True})
 
 @app.route('/api/stock-data', methods=['POST'])
