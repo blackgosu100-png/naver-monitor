@@ -609,7 +609,13 @@ def api_history():
 
     for comp in competitors:
         cid   = comp['id']
-        entry = {'id': cid, 'name': comp['name'], 'url': comp['url'], 'days': {}}
+        entry = {
+            'id': cid,
+            'name': comp['name'],
+            'url': comp['url'],
+            'image_url': comp.get('image_url') or '',
+            'days': {},
+        }
         prev_total = None
 
         for d in dates:
