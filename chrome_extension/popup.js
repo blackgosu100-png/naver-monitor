@@ -376,9 +376,6 @@ async function waitForCache(tabId, pid, timeout, onStatus) {
   }
 }
 
-// 팝업 열릴 때 대기 큐 자동 확인
-checkAndProcessQueue();
-
 // ─── 쿠키 전송 버튼 ───────────────────────────────────────────
 document.getElementById('cookie-btn').addEventListener('click', function() {
   var btn = document.getElementById('cookie-btn');
