@@ -15,6 +15,7 @@
 4. 필요하면 이메일 인증 여부를 수업 운영 방식에 맞게 설정합니다.
 5. Project Settings > API에서 아래 값을 확인합니다.
    - `Project URL`
+   - `anon public key`
    - `service_role key`
 
 ## 서버 환경변수
@@ -23,12 +24,14 @@
 
 ```text
 SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=anon_public_key
 SUPABASE_KEY=service_role_key
 SECRET_KEY=random_long_secret
 PORT=5001
 ```
 
 `SUPABASE_KEY`는 서버에서만 사용합니다. 크롬 확장이나 프론트에는 service role key가 내려가지 않습니다.
+Auth 로그인/회원가입/토큰 갱신은 서버가 프록시하며, `SUPABASE_ANON_KEY`가 있으면 Auth 요청에는 anon key를 사용합니다.
 
 ## 수강생 사용 흐름
 

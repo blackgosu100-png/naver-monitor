@@ -3,11 +3,29 @@
 const DEFAULT_SERVER = 'http://localhost:5001';
 
 async function getAuthState() {
-  var data = await chrome.storage.local.get(['serverUrl', 'accessToken']);
+  var data = await chrome.storage.local.get(['serverUrl', 'accessToken', 'refreshToken']);
   return {
     serverUrl: (data.serverUrl || DEFAULT_SERVER).replace(/\/$/, ''),
-    accessToken: data.accessToken || ''
+    accessToken: data.accessToken || '',
+    refreshToken: data.refreshToken || ''
   };
+}
+
+async function refreshServiceToken(state) {
+  if (!state.refreshToken) return null;
+  var res = await fetch(state.serverUrl + '/api/auth/refresh', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refresh_token: state.refreshToken })
+  });
+  if (!res.ok) return null;
+  var data = await res.json();
+  if (!data.access_token) return null;
+  await chrome.storage.local.set({
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token || state.refreshToken
+  });
+  return data.access_token;
 }
 
 async function apiFetch(path, options) {
@@ -16,7 +34,15 @@ async function apiFetch(path, options) {
   options.headers = Object.assign({}, options.headers || {}, {
     'Authorization': 'Bearer ' + state.accessToken
   });
-  return fetch(state.serverUrl + path, options);
+  var res = await fetch(state.serverUrl + path, options);
+  if (res.status === 401) {
+    var newToken = await refreshServiceToken(state);
+    if (newToken) {
+      options.headers.Authorization = 'Bearer ' + newToken;
+      res = await fetch(state.serverUrl + path, options);
+    }
+  }
+  return res;
 }
 
 function parseNaverUrl(url) {

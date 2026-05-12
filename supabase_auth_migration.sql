@@ -35,6 +35,12 @@ CREATE INDEX IF NOT EXISTS idx_competitors_user_id
 CREATE INDEX IF NOT EXISTS idx_stock_history_user_date
     ON stock_history(user_id, fetch_date);
 
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON TABLE competitors TO anon, authenticated, service_role;
+GRANT ALL ON TABLE stock_history TO anon, authenticated, service_role;
+GRANT ALL ON TABLE app_settings TO anon, authenticated, service_role;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
+
 ALTER TABLE competitors ENABLE ROW LEVEL SECURITY;
 ALTER TABLE stock_history ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_settings ENABLE ROW LEVEL SECURITY;

@@ -662,6 +662,23 @@ async function initAuth() {
   window.fetch = authFetch;
 }
 
+async function refreshSession() {
+  const refreshToken = localStorage.getItem('naverMonitorRefreshToken') || '';
+  if (!refreshToken) return false;
+  const res = await nativeFetch('/api/auth/refresh', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({refresh_token: refreshToken})
+  });
+  if (!res.ok) return false;
+  const data = await res.json();
+  if (!data.access_token) return false;
+  localStorage.setItem('naverMonitorAccessToken', data.access_token);
+  if (data.refresh_token) localStorage.setItem('naverMonitorRefreshToken', data.refresh_token);
+  accessToken = data.access_token;
+  return true;
+}
+
 async function authFetch(input, init = {}) {
   const url = typeof input === 'string' ? input : input.url;
   const isApi = url && (url.startsWith('/api/') || url.startsWith(location.origin + '/api/'));
@@ -675,8 +692,19 @@ async function authFetch(input, init = {}) {
 
   const headers = new Headers(init.headers || {});
   headers.set('Authorization', `Bearer ${accessToken}`);
-  const res = await nativeFetch(input, { ...init, headers });
-  if (res.status === 401) location.href = '/login';
+  let res = await nativeFetch(input, { ...init, headers });
+  if (res.status === 401 && !url.includes('/api/auth/')) {
+    const refreshed = await refreshSession();
+    if (refreshed) {
+      headers.set('Authorization', `Bearer ${accessToken}`);
+      res = await nativeFetch(input, { ...init, headers });
+    }
+  }
+  if (res.status === 401) {
+    localStorage.removeItem('naverMonitorAccessToken');
+    localStorage.removeItem('naverMonitorRefreshToken');
+    location.href = '/login';
+  }
   return res;
 }
 // ─── State ───────────────────────────────────────────────────
@@ -1258,9 +1286,9 @@ async function clearCookie() {
 
 // ─── Logout ──────────────────────────────────────────────────
 async function doLogout() {
+  await nativeFetch('/api/logout', {method:'POST'});
   localStorage.removeItem('naverMonitorAccessToken');
   localStorage.removeItem('naverMonitorRefreshToken');
-  await fetch('/api/logout', {method:'POST'});
   location.href = '/login';
 }
 

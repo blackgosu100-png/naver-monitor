@@ -15,13 +15,14 @@ run.bat  # 서버 시작 + 크롬 자동 실행 (http://localhost:5001)
 
 ## 환경변수 (run.bat에 포함)
 - `SUPABASE_URL` — https://itarmufbqvkmdkxhrkfy.supabase.co
+- `SUPABASE_ANON_KEY` — Auth 프록시용 anon public JWT
 - `SUPABASE_KEY` — service_role JWT
 - `PORT` — 5001
 
 ## Supabase 테이블
-- `competitors` — id, name, url, created_at
-- `stock_history` — competitor_id, fetch_date, total, options(json), error, fetched_at
-- `app_settings` — key, value (스케줄 설정)
+- `competitors` — id, user_id, name, url, created_at
+- `stock_history` — user_id, competitor_id, fetch_date, total, options(json), error, fetched_at
+- `app_settings` — user_id, key, value (스케줄 설정)
 
 ## 크롬 확장프로그램 작동 방식
 1. popup에서 버튼 클릭 → background.js에 START_FETCH 메시지

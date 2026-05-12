@@ -318,8 +318,18 @@ def _bearer_token() -> str:
         return auth.split(' ', 1)[1].strip()
     return ''
 
+def _auth_api_key() -> str:
+    return SUPABASE_ANON_KEY or SUPABASE_KEY
+
+def _auth_error(response, fallback: str) -> str:
+    try:
+        data = response.json()
+    except Exception:
+        return fallback
+    return data.get('msg') or data.get('error_description') or data.get('error') or fallback
+
 def _verify_supabase_user(token: str) -> dict | None:
-    auth_key = SUPABASE_ANON_KEY or SUPABASE_KEY
+    auth_key = _auth_api_key()
     if not token or not SUPABASE_URL or not auth_key:
         return None
     try:
@@ -369,14 +379,17 @@ def api_auth_login():
     password = body.get('password') or ''
     if not email or not password:
         return jsonify({'error': 'Email and password are required'}), 400
+    auth_key = _auth_api_key()
+    if not SUPABASE_URL or not auth_key:
+        return jsonify({'error': 'Supabase auth is not configured'}), 500
     r = httpx.post(
         f'{SUPABASE_URL}/auth/v1/token?grant_type=password',
-        headers={'apikey': SUPABASE_KEY, 'Content-Type': 'application/json'},
+        headers={'apikey': auth_key, 'Content-Type': 'application/json'},
         json={'email': email, 'password': password},
         timeout=20,
     )
     if r.status_code >= 400:
-        return jsonify({'error': r.json().get('msg') or r.json().get('error_description') or 'Login failed'}), 401
+        return jsonify({'error': _auth_error(r, 'Login failed')}), 401
     return jsonify(r.json())
 
 @app.route('/api/auth/signup', methods=['POST'])
@@ -386,15 +399,36 @@ def api_auth_signup():
     password = body.get('password') or ''
     if not email or not password:
         return jsonify({'error': 'Email and password are required'}), 400
+    auth_key = _auth_api_key()
+    if not SUPABASE_URL or not auth_key:
+        return jsonify({'error': 'Supabase auth is not configured'}), 500
     r = httpx.post(
         f'{SUPABASE_URL}/auth/v1/signup',
-        headers={'apikey': SUPABASE_KEY, 'Content-Type': 'application/json'},
+        headers={'apikey': auth_key, 'Content-Type': 'application/json'},
         json={'email': email, 'password': password},
         timeout=20,
     )
     if r.status_code >= 400:
-        data = r.json()
-        return jsonify({'error': data.get('msg') or data.get('error_description') or 'Signup failed'}), 400
+        return jsonify({'error': _auth_error(r, 'Signup failed')}), 400
+    return jsonify(r.json())
+
+@app.route('/api/auth/refresh', methods=['POST'])
+def api_auth_refresh():
+    body = request.get_json() or {}
+    refresh_token = body.get('refresh_token') or ''
+    if not refresh_token:
+        return jsonify({'error': 'Refresh token is required'}), 400
+    auth_key = _auth_api_key()
+    if not SUPABASE_URL or not auth_key:
+        return jsonify({'error': 'Supabase auth is not configured'}), 500
+    r = httpx.post(
+        f'{SUPABASE_URL}/auth/v1/token?grant_type=refresh_token',
+        headers={'apikey': auth_key, 'Content-Type': 'application/json'},
+        json={'refresh_token': refresh_token},
+        timeout=20,
+    )
+    if r.status_code >= 400:
+        return jsonify({'error': _auth_error(r, 'Session refresh failed')}), 401
     return jsonify(r.json())
 
 @app.route('/api/login', methods=['POST'])

@@ -34,6 +34,12 @@ CREATE TABLE IF NOT EXISTS app_settings (
     PRIMARY KEY (user_id, key)
 );
 
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON TABLE competitors TO anon, authenticated, service_role;
+GRANT ALL ON TABLE stock_history TO anon, authenticated, service_role;
+GRANT ALL ON TABLE app_settings TO anon, authenticated, service_role;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
+
 -- Optional hardening if you later expose tables directly through Supabase clients.
 ALTER TABLE competitors ENABLE ROW LEVEL SECURITY;
 ALTER TABLE stock_history ENABLE ROW LEVEL SECURITY;
