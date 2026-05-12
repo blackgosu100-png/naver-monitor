@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>관리자 — 수강생 관리</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Sans+KR:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:#fafafa; --surface:#fff; --surface2:#f4f4f5;
+  --border:#e4e4e7; --border2:#d4d4d8;
+  --text:#18181b; --text2:#71717a; --text3:#a1a1aa;
+  --sidebar:#18181b; --sidebar-hover:#27272a;
+  --accent:#03c75a; --accent-bg:#f0fdf4; --accent-border:#86efac;
+  --danger:#b91c1c; --danger-bg:#fef2f2; --danger-border:#fca5a5;
+  --amber:#b45309; --amber-bg:#fffbeb;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Noto Sans KR','Inter',system-ui,sans-serif;
+  background: var(--bg); color: var(--text); line-height: 1.5;
+  display: flex; min-height: 100vh;
+}
+code, .mono { font-family: 'JetBrains Mono', monospace; }
+
+/* ─── Sidebar ─────────────── */
+.sidebar {
+  width: 240px; background: var(--sidebar); color: #e4e4e7;
+  display: flex; flex-direction: column; padding: 24px 0;
+}
+.sidebar h1 { font-size: 18px; padding: 0 24px 24px; color: #fafafa; }
+.sidebar .nav-item {
+  padding: 12px 24px; color: #a1a1aa; cursor: pointer;
+  text-decoration: none; display: block; transition: all .15s;
+  font-size: 14px; border-left: 3px solid transparent;
+}
+.sidebar .nav-item:hover { background: var(--sidebar-hover); color: #fafafa; }
+.sidebar .nav-item.active {
+  background: var(--sidebar-hover); color: var(--accent);
+  border-left-color: var(--accent);
+}
+.sidebar .nav-foot { margin-top: auto; padding: 24px; font-size: 12px; color: #71717a; }
+.sidebar .nav-foot a { color: #a1a1aa; text-decoration: none; }
+.sidebar .nav-foot a:hover { color: #fafafa; }
+
+/* ─── Main ─────────────── */
+main { flex: 1; padding: 32px 40px; max-width: 1280px; }
+h2 { font-size: 24px; margin-bottom: 4px; }
+.muted { color: var(--text2); font-size: 13px; }
+
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin: 24px 0 20px; }
+.tab {
+  padding: 10px 16px; background: none; border: none; cursor: pointer;
+  font-size: 14px; color: var(--text2); border-bottom: 2px solid transparent;
+  font-family: inherit;
+}
+.tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 500; }
+
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 20px; margin-bottom: 16px;
+}
+.card h3 { font-size: 15px; margin-bottom: 12px; }
+
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+input, textarea, select {
+  font-family: inherit; font-size: 14px;
+  padding: 8px 10px; border: 1px solid var(--border2); border-radius: 6px;
+  background: #fff; color: var(--text); outline: none;
+}
+input:focus, textarea:focus { border-color: var(--accent); }
+textarea { width: 100%; min-height: 80px; resize: vertical; }
+
+button {
+  font-family: inherit; font-size: 13px; font-weight: 500;
+  padding: 8px 14px; border: 1px solid var(--border2);
+  background: #fff; color: var(--text); border-radius: 6px; cursor: pointer;
+  transition: all .15s;
+}
+button:hover { background: var(--surface2); }
+button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+button.primary:hover { background: #02b350; }
+button.danger { color: var(--danger); border-color: var(--danger-border); background: var(--danger-bg); }
+button.danger:hover { background: #fde8e8; }
+button.sm { padding: 4px 8px; font-size: 12px; }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+th { font-weight: 500; color: var(--text2); background: var(--surface2); font-size: 12px; }
+tr:hover td { background: #fafafa; }
+td.actions { white-space: nowrap; }
+td.actions button { margin-left: 4px; }
+
+.badge {
+  display: inline-block; padding: 2px 8px; font-size: 11px;
+  border-radius: 4px; font-weight: 500;
+}
+.badge.active { background: var(--accent-bg); color: var(--accent); border: 1px solid var(--accent-border); }
+.badge.blocked { background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger-border); }
+.badge.expired { background: var(--amber-bg); color: var(--amber); }
+
+.section { display: none; }
+.section.active { display: block; }
+
+.empty { padding: 40px 20px; text-align: center; color: var(--text3); font-size: 13px; }
+.toast {
+  position: fixed; bottom: 24px; right: 24px;
+  background: var(--text); color: #fff; padding: 12px 16px;
+  border-radius: 6px; font-size: 13px; opacity: 0; transition: opacity .25s;
+  z-index: 1000; pointer-events: none;
+}
+.toast.show { opacity: 1; }
+
+label.small { font-size: 12px; color: var(--text2); display: block; margin-bottom: 4px; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.grid-4 { display: grid; grid-template-columns: 2fr 1fr 1fr 1.2fr; gap: 8px; }
+</style>
+</head>
+<body>
+
+<aside class="sidebar">
+  <h1>네이버 모니터링</h1>
+  <a class="nav-item" href="/">📊 모니터링</a>
+  <a class="nav-item active" href="/admin/users">👥 수강생 관리</a>
+  <div class="nav-foot">
+    <a href="#" onclick="logout(); return false;">로그아웃</a>
+  </div>
+</aside>
+
+<main>
+  <h2>수강생 관리</h2>
+  <div class="muted">승인된 네이버 ID만 로컬앱을 사용할 수 있습니다.</div>
+
+  <div class="tabs">
+    <button class="tab active" data-tab="users">수강생 목록</button>
+    <button class="tab" data-tab="bulk">일괄 추가</button>
+    <button class="tab" data-tab="usage">사용 로그</button>
+    <button class="tab" data-tab="notices">공지사항</button>
+  </div>
+
+  <!-- ─── 수강생 목록 ─── -->
+  <section class="section active" id="sec-users">
+    <div class="card">
+      <h3>신규 수강생 추가</h3>
+      <div class="grid-4">
+        <input id="newNaverId" placeholder="네이버 ID (영문/숫자/_/-)">
+        <input id="newName" placeholder="이름 (선택)">
+        <input id="newExpires" type="date" placeholder="만료일 (선택)">
+        <button class="primary" onclick="addUser()">추가</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>승인된 수강생 <span id="userCount" class="muted"></span></h3>
+      <table id="usersTable">
+        <thead>
+          <tr>
+            <th>네이버 ID</th>
+            <th>이름</th>
+            <th>만료일</th>
+            <th>메모</th>
+            <th>상태</th>
+            <th>등록일</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ─── 일괄 추가 ─── -->
+  <section class="section" id="sec-bulk">
+    <div class="card">
+      <h3>일괄 추가</h3>
+      <p class="muted" style="margin-bottom:12px">
+        한 줄에 한 명. 형식: <code>네이버ID</code> 또는 <code>네이버ID,이름,만료일(YYYY-MM-DD)</code>
+      </p>
+      <textarea id="bulkText" placeholder="student01
+student02,홍길동
+student03,김영희,2026-12-31"></textarea>
+      <div class="row" style="margin-top:8px">
+        <button class="primary" onclick="bulkAdd()">일괄 추가</button>
+      </div>
+      <div id="bulkResult" style="margin-top:12px; font-size:13px;"></div>
+    </div>
+  </section>
+
+  <!-- ─── 사용 로그 ─── -->
+  <section class="section" id="sec-usage">
+    <div class="card">
+      <h3>최근 사용 로그 <button class="sm" style="margin-left:8px" onclick="loadUsage()">새로고침</button></h3>
+      <table id="usageTable">
+        <thead>
+          <tr><th>시각</th><th>네이버 ID</th><th>이벤트</th><th>IP</th><th>버전</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ─── 공지사항 ─── -->
+  <section class="section" id="sec-notices">
+    <div class="card">
+      <h3>새 공지 작성</h3>
+      <div class="grid-2">
+        <input id="noticeTitle" placeholder="제목">
+        <button class="primary" onclick="addNotice()">발행</button>
+      </div>
+      <textarea id="noticeBody" style="margin-top:8px" placeholder="내용"></textarea>
+    </div>
+    <div class="card">
+      <h3>공지 목록</h3>
+      <table id="noticesTable">
+        <thead><tr><th>제목</th><th>활성</th><th>작성일</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ─── 공통 ─── */
+const api = async (path, opts = {}) => {
+  const r = await fetch(path, {
+    headers: {'Content-Type': 'application/json'},
+    ...opts,
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  if (r.status === 401) { location.href = '/login'; return; }
+  return r.json();
+};
+const toast = msg => {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2200);
+};
+const escapeHtml = s => (s ?? '').toString().replace(/[&<>"']/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+/* ─── 탭 ─── */
+document.querySelectorAll('.tab').forEach(t => {
+  t.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('.section').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    document.getElementById('sec-' + t.dataset.tab).classList.add('active');
+    if (t.dataset.tab === 'usage')   loadUsage();
+    if (t.dataset.tab === 'notices') loadNotices();
+  });
+});
+
+/* ─── 수강생 ─── */
+async function loadUsers() {
+  const { users } = await api('/api/admin/users');
+  document.getElementById('userCount').textContent = `(${users.length}명)`;
+  const today = new Date().toISOString().slice(0,10);
+  const tbody = document.querySelector('#usersTable tbody');
+  if (!users.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">등록된 수강생이 없습니다</td></tr>';
+    return;
+  }
+  tbody.innerHTML = users.map(u => {
+    const expired = u.expires_at && u.expires_at < today;
+    const badge = u.blocked
+      ? '<span class="badge blocked">차단</span>'
+      : expired
+        ? '<span class="badge expired">만료</span>'
+        : '<span class="badge active">활성</span>';
+    return `
+      <tr>
+        <td class="mono"><b>${escapeHtml(u.naver_id)}</b></td>
+        <td>${escapeHtml(u.display_name || '-')}</td>
+        <td><input type="date" value="${u.expires_at || ''}" onchange="updateUser('${u.naver_id}', {expires_at: this.value || null})" style="font-size:12px; padding:4px 6px;"></td>
+        <td><input value="${escapeHtml(u.memo || '')}" placeholder="메모" onblur="updateUser('${u.naver_id}', {memo: this.value})" style="font-size:12px; padding:4px 6px; width:100%"></td>
+        <td>${badge}</td>
+        <td class="mono" style="color:var(--text3); font-size:12px">${(u.created_at||'').slice(0,10)}</td>
+        <td class="actions">
+          <button class="sm" onclick="updateUser('${u.naver_id}', {blocked: ${!u.blocked}})">${u.blocked ? '해제' : '차단'}</button>
+          <button class="sm danger" onclick="deleteUser('${u.naver_id}')">삭제</button>
+        </td>
+      </tr>`;
+  }).join('');
+}
+
+async function addUser() {
+  const naver_id   = document.getElementById('newNaverId').value.trim();
+  const display    = document.getElementById('newName').value.trim();
+  const expires_at = document.getElementById('newExpires').value || null;
+  if (!naver_id) { toast('네이버 ID를 입력하세요'); return; }
+  const r = await api('/api/admin/users', {
+    method: 'POST',
+    body: { naver_id, display_name: display, expires_at },
+  });
+  if (r.error) { toast(r.error); return; }
+  document.getElementById('newNaverId').value = '';
+  document.getElementById('newName').value    = '';
+  document.getElementById('newExpires').value = '';
+  toast('추가됨');
+  loadUsers();
+}
+
+async function updateUser(naver_id, fields) {
+  const r = await api(`/api/admin/users/${encodeURIComponent(naver_id)}`, { method: 'PUT', body: fields });
+  if (r.error) { toast(r.error); return; }
+  loadUsers();
+}
+
+async function deleteUser(naver_id) {
+  if (!confirm(`${naver_id}을(를) 삭제하시겠습니까?`)) return;
+  await api(`/api/admin/users/${encodeURIComponent(naver_id)}`, { method: 'DELETE' });
+  toast('삭제됨');
+  loadUsers();
+}
+
+async function bulkAdd() {
+  const text = document.getElementById('bulkText').value;
+  if (!text.trim()) { toast('내용을 입력하세요'); return; }
+  const r = await api('/api/admin/users/bulk', { method: 'POST', body: { text } });
+  const box = document.getElementById('bulkResult');
+  let html = `<div style="color:var(--accent)">${r.added.length}명 추가 완료</div>`;
+  if (r.errors && r.errors.length) {
+    html += '<div style="color:var(--danger); margin-top:6px">' + r.errors.map(escapeHtml).join('<br>') + '</div>';
+  }
+  box.innerHTML = html;
+  document.getElementById('bulkText').value = '';
+  loadUsers();
+}
+
+/* ─── 사용 로그 ─── */
+async function loadUsage() {
+  const { logs } = await api('/api/admin/usage?limit=200');
+  const tbody = document.querySelector('#usageTable tbody');
+  if (!logs.length) { tbody.innerHTML = '<tr><td colspan="5" class="empty">로그 없음</td></tr>'; return; }
+  tbody.innerHTML = logs.map(l => `
+    <tr>
+      <td class="mono" style="font-size:12px">${(l.created_at||'').replace('T',' ').slice(0,19)}</td>
+      <td class="mono">${escapeHtml(l.naver_id)}</td>
+      <td>${escapeHtml(l.event)}</td>
+      <td class="mono" style="color:var(--text2); font-size:12px">${escapeHtml(l.ip || '-')}</td>
+      <td class="mono" style="font-size:12px">${escapeHtml(l.app_version || '-')}</td>
+    </tr>`).join('');
+}
+
+/* ─── 공지 ─── */
+async function loadNotices() {
+  const { notices } = await api('/api/admin/notices');
+  const tbody = document.querySelector('#noticesTable tbody');
+  if (!notices.length) { tbody.innerHTML = '<tr><td colspan="4" class="empty">공지 없음</td></tr>'; return; }
+  tbody.innerHTML = notices.map(n => `
+    <tr>
+      <td><b>${escapeHtml(n.title)}</b><div class="muted" style="margin-top:4px">${escapeHtml(n.body)}</div></td>
+      <td><button class="sm" onclick="toggleNotice(${n.id}, ${!n.active})">${n.active ? '활성' : '비활성'}</button></td>
+      <td class="mono" style="font-size:12px; color:var(--text3)">${(n.created_at||'').slice(0,10)}</td>
+      <td class="actions"><button class="sm danger" onclick="deleteNotice(${n.id})">삭제</button></td>
+    </tr>`).join('');
+}
+
+async function addNotice() {
+  const title = document.getElementById('noticeTitle').value.trim();
+  const body  = document.getElementById('noticeBody').value.trim();
+  if (!title) { toast('제목을 입력하세요'); return; }
+  const r = await api('/api/admin/notices', { method: 'POST', body: { title, body } });
+  if (r.error) { toast(r.error); return; }
+  document.getElementById('noticeTitle').value = '';
+  document.getElementById('noticeBody').value  = '';
+  toast('발행됨');
+  loadNotices();
+}
+
+async function toggleNotice(id, active) {
+  await api(`/api/admin/notices/${id}`, { method: 'PUT', body: { active } });
+  loadNotices();
+}
+
+async function deleteNotice(id) {
+  if (!confirm('삭제하시겠습니까?')) return;
+  await api(`/api/admin/notices/${id}`, { method: 'DELETE' });
+  loadNotices();
+}
+
+async function logout() {
+  await api('/api/logout', { method: 'POST' });
+  location.href = '/login';
+}
+
+loadUsers();
+</script>
+</body>
+</html>

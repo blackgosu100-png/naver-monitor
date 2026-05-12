@@ -275,6 +275,61 @@ def db_save_schedule(enabled: bool, hour: int, minute: int):
     ]:
         sb_upsert('app_settings', {'key': key, 'value': val}, on_conflict='key')
 
+# ─── 관리자 페이지용 DB 함수 (수강생 화이트리스트 / 사용로그 / 공지) ──
+
+def db_list_approved_users() -> list:
+    return sb_select('approved_users', '?order=created_at.desc')
+
+def db_add_approved_user(naver_id: str, display_name: str = '',
+                          memo: str = '', expires_at: str | None = None) -> None:
+    sb_upsert('approved_users', {
+        'naver_id':     naver_id,
+        'display_name': display_name,
+        'memo':         memo,
+        'expires_at':   expires_at,
+        'blocked':      False,
+    }, on_conflict='naver_id')
+
+def db_update_approved_user(naver_id: str, fields: dict) -> None:
+    if fields:
+        sb_update('approved_users', fields, 'naver_id', naver_id)
+
+def db_delete_approved_user(naver_id: str) -> None:
+    sb_delete('approved_users', 'naver_id', naver_id)
+
+def db_get_approved_user(naver_id: str) -> dict | None:
+    rows = sb_select('approved_users', f'?naver_id=eq.{naver_id}&limit=1')
+    return rows[0] if rows else None
+
+def db_log_usage(naver_id: str, event: str, ip: str = '',
+                  user_agent: str = '', app_version: str = '') -> None:
+    sb_insert('usage_logs', {
+        'naver_id':    naver_id,
+        'event':       event,
+        'ip':          ip[:64],
+        'user_agent':  user_agent[:256],
+        'app_version': app_version[:32],
+    })
+
+def db_recent_usage(limit: int = 200) -> list:
+    return sb_select('usage_logs', f'?order=created_at.desc&limit={limit}')
+
+def db_active_notice() -> dict | None:
+    rows = sb_select('notices', '?active=eq.true&order=created_at.desc&limit=1')
+    return rows[0] if rows else None
+
+def db_list_notices() -> list:
+    return sb_select('notices', '?order=created_at.desc')
+
+def db_add_notice(title: str, body: str) -> None:
+    sb_insert('notices', {'title': title, 'body': body, 'active': True})
+
+def db_set_notice_active(notice_id: int, active: bool) -> None:
+    sb_update('notices', {'active': active}, 'id', str(notice_id))
+
+def db_delete_notice(notice_id: int) -> None:
+    sb_delete('notices', 'id', str(notice_id))
+
 # ─── 스케줄러 ─────────────────────────────────────────────────
 scheduler = BackgroundScheduler(timezone='Asia/Seoul')
 
@@ -451,6 +506,185 @@ def api_cookie():
 @login_required
 def api_ext_queue():
     return jsonify({'error': 'Playwright 모드에서는 개별 조회 버튼을 사용하세요'}), 400
+
+# ═══════════════════════════════════════════════════════════════
+# 관리자 페이지: 수강생 화이트리스트 관리
+# ═══════════════════════════════════════════════════════════════
+
+@app.route('/admin/users')
+@login_required
+def admin_users_page():
+    return render_template('admin_users.html')
+
+@app.route('/api/admin/users', methods=['GET'])
+@login_required
+def api_admin_list_users():
+    return jsonify({'users': db_list_approved_users()})
+
+@app.route('/api/admin/users', methods=['POST'])
+@login_required
+def api_admin_add_user():
+    body = request.get_json() or {}
+    naver_id = (body.get('naver_id') or '').strip().lower()
+    if not naver_id:
+        return jsonify({'error': '네이버 ID를 입력해주세요'}), 400
+    if not re.fullmatch(r'[a-z0-9_\-]{3,30}', naver_id):
+        return jsonify({'error': '네이버 ID 형식이 올바르지 않습니다 (영문/숫자/_/-, 3~30자)'}), 400
+    db_add_approved_user(
+        naver_id     = naver_id,
+        display_name = (body.get('display_name') or '').strip()[:64],
+        memo         = (body.get('memo') or '').strip()[:200],
+        expires_at   = (body.get('expires_at') or None),
+    )
+    return jsonify({'ok': True})
+
+@app.route('/api/admin/users/bulk', methods=['POST'])
+@login_required
+def api_admin_bulk_add_users():
+    """CSV 붙여넣기: 한 줄에 하나, 'naver_id,display_name,expires_at' 또는 'naver_id'만"""
+    body = request.get_json() or {}
+    text = (body.get('text') or '').strip()
+    added, errors = [], []
+    for i, line in enumerate(text.splitlines(), 1):
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        parts  = [p.strip() for p in line.split(',')]
+        naver  = parts[0].lower()
+        if not re.fullmatch(r'[a-z0-9_\-]{3,30}', naver):
+            errors.append(f'{i}행: ID 형식 오류 ({naver})')
+            continue
+        db_add_approved_user(
+            naver_id     = naver,
+            display_name = parts[1] if len(parts) > 1 else '',
+            memo         = '',
+            expires_at   = parts[2] if len(parts) > 2 and parts[2] else None,
+        )
+        added.append(naver)
+    return jsonify({'added': added, 'errors': errors})
+
+@app.route('/api/admin/users/<naver_id>', methods=['PUT'])
+@login_required
+def api_admin_update_user(naver_id):
+    body = request.get_json() or {}
+    fields = {}
+    for key in ('display_name', 'memo', 'expires_at'):
+        if key in body:
+            v = body[key]
+            fields[key] = (v.strip() if isinstance(v, str) else v) or None
+    if 'blocked' in body:
+        fields['blocked'] = bool(body['blocked'])
+    db_update_approved_user(naver_id, fields)
+    return jsonify({'ok': True})
+
+@app.route('/api/admin/users/<naver_id>', methods=['DELETE'])
+@login_required
+def api_admin_delete_user(naver_id):
+    db_delete_approved_user(naver_id)
+    return jsonify({'ok': True})
+
+@app.route('/api/admin/usage', methods=['GET'])
+@login_required
+def api_admin_usage():
+    limit = min(int(request.args.get('limit', 200)), 1000)
+    return jsonify({'logs': db_recent_usage(limit)})
+
+@app.route('/api/admin/notices', methods=['GET'])
+@login_required
+def api_admin_list_notices():
+    return jsonify({'notices': db_list_notices()})
+
+@app.route('/api/admin/notices', methods=['POST'])
+@login_required
+def api_admin_add_notice():
+    body  = request.get_json() or {}
+    title = (body.get('title') or '').strip()[:200]
+    text  = (body.get('body')  or '').strip()[:2000]
+    if not title:
+        return jsonify({'error': '제목을 입력해주세요'}), 400
+    db_add_notice(title, text)
+    return jsonify({'ok': True})
+
+@app.route('/api/admin/notices/<int:nid>', methods=['PUT'])
+@login_required
+def api_admin_toggle_notice(nid):
+    body   = request.get_json() or {}
+    active = bool(body.get('active', True))
+    db_set_notice_active(nid, active)
+    return jsonify({'ok': True})
+
+@app.route('/api/admin/notices/<int:nid>', methods=['DELETE'])
+@login_required
+def api_admin_delete_notice(nid):
+    db_delete_notice(nid)
+    return jsonify({'ok': True})
+
+# ═══════════════════════════════════════════════════════════════
+# 라이선스 API (수강생 PC의 로컬앱이 호출 — 인증 불필요)
+# ═══════════════════════════════════════════════════════════════
+
+def _client_ip() -> str:
+    return (request.headers.get('X-Forwarded-For', '').split(',')[0].strip()
+            or request.remote_addr or '')
+
+@app.route('/api/verify', methods=['POST'])
+def api_verify():
+    """수강생 앱 시작 시 호출. 네이버 ID가 화이트리스트에 있는지 검증."""
+    body     = request.get_json(silent=True) or {}
+    naver_id = (body.get('naver_id') or '').strip().lower()
+    version  = (body.get('version')  or '').strip()
+    if not naver_id:
+        return jsonify({'valid': False, 'reason': 'naver_id가 필요합니다'}), 400
+
+    user = db_get_approved_user(naver_id)
+    try:
+        db_log_usage(naver_id, 'verify',
+                     _client_ip(),
+                     request.headers.get('User-Agent', ''),
+                     version)
+    except Exception:
+        pass
+
+    if not user:
+        return jsonify({'valid': False, 'reason': '승인되지 않은 ID입니다. 강사에게 문의하세요.'})
+    if user.get('blocked'):
+        return jsonify({'valid': False, 'reason': '차단된 계정입니다. 강사에게 문의하세요.'})
+    exp = user.get('expires_at')
+    if exp and exp < date.today().isoformat():
+        return jsonify({'valid': False, 'reason': f'사용 기간이 만료되었습니다 ({exp}).'})
+
+    notice = db_active_notice()
+    return jsonify({
+        'valid':        True,
+        'display_name': user.get('display_name') or naver_id,
+        'expires_at':   exp,
+        'notice':       {'title': notice['title'], 'body': notice['body']} if notice else None,
+    })
+
+@app.route('/api/heartbeat', methods=['POST'])
+def api_heartbeat():
+    """수강생 앱이 24시간마다 호출 — 살아있다는 신호 + 화이트리스트 재확인"""
+    body     = request.get_json(silent=True) or {}
+    naver_id = (body.get('naver_id') or '').strip().lower()
+    version  = (body.get('version')  or '').strip()
+    if not naver_id:
+        return jsonify({'valid': False}), 400
+
+    user = db_get_approved_user(naver_id)
+    try:
+        db_log_usage(naver_id, 'heartbeat',
+                     _client_ip(),
+                     request.headers.get('User-Agent', ''),
+                     version)
+    except Exception:
+        pass
+
+    if not user or user.get('blocked'):
+        return jsonify({'valid': False, 'reason': '계정이 비활성화되었습니다'})
+    exp = user.get('expires_at')
+    if exp and exp < date.today().isoformat():
+        return jsonify({'valid': False, 'reason': '사용 기간이 만료되었습니다'})
+    return jsonify({'valid': True, 'expires_at': exp})
 
 # ─── 시작 ─────────────────────────────────────────────────────
 if __name__ == '__main__':
