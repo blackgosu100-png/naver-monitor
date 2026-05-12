@@ -21,6 +21,9 @@ ALTER TABLE stock_history
     DROP CONSTRAINT IF EXISTS uq_comp_date;
 
 ALTER TABLE stock_history
+    DROP CONSTRAINT IF EXISTS uq_user_comp_date;
+
+ALTER TABLE stock_history
     ADD CONSTRAINT uq_user_comp_date UNIQUE(user_id, competitor_id, fetch_date);
 
 ALTER TABLE app_settings
