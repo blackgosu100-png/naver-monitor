@@ -4,6 +4,9 @@
 ALTER TABLE competitors
     ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE;
 
+ALTER TABLE competitors
+    ADD COLUMN IF NOT EXISTS image_url TEXT DEFAULT '';
+
 ALTER TABLE stock_history
     ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE;
 

@@ -1,4 +1,4 @@
-import json, re, hashlib, threading, time, random, os, uuid
+import json, re, hashlib, threading, time, random, os, uuid, html
 from datetime import datetime, date, timedelta
 from functools import wraps
 from zoneinfo import ZoneInfo
@@ -265,6 +265,36 @@ def fetch_single(comp: dict) -> dict:
     return result
 
 # ─── DB 헬퍼 (Supabase REST) ──────────────────────────────────
+
+def fetch_product_image(url: str) -> str:
+    try:
+        r = httpx.get(
+            url,
+            headers={
+                'User-Agent': (
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                    'AppleWebKit/537.36 (KHTML, like Gecko) '
+                    'Chrome/136.0.0.0 Safari/537.36'
+                ),
+                'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+            },
+            follow_redirects=True,
+            timeout=15,
+        )
+        if r.status_code >= 400:
+            return ''
+        match = re.search(
+            r'<meta\s+(?:property|name)=["\']og:image["\']\s+content=["\']([^"\']+)["\']',
+            r.text,
+            re.I,
+        ) or re.search(
+            r'<meta\s+content=["\']([^"\']+)["\']\s+(?:property|name)=["\']og:image["\']',
+            r.text,
+            re.I,
+        )
+        return html.unescape(match.group(1).strip()) if match else ''
+    except Exception:
+        return ''
 
 def db_get_competitors(user_id: str) -> list:
     return sb_select('competitors', f'?user_id=eq.{user_id}&order=created_at')
@@ -533,7 +563,14 @@ def api_add_competitor():
     if not re.search(r'(?:smartstore|brand)\.naver\.com/.+/products/\d+', url):
         return jsonify({'error': 'smartstore.naver.com 또는 brand.naver.com URL이어야 합니다'}), 400
     cid = f"c{uuid.uuid4().hex}"
-    sb_insert('competitors', {'id': cid, 'user_id': g.user_id, 'name': name, 'url': url})
+    image_url = fetch_product_image(url)
+    sb_insert('competitors', {
+        'id': cid,
+        'user_id': g.user_id,
+        'name': name,
+        'url': url,
+        'image_url': image_url,
+    })
     return jsonify({'ok': True, 'id': cid})
 
 @app.route('/api/competitors/<cid>', methods=['PUT'])
@@ -541,6 +578,8 @@ def api_add_competitor():
 def api_update_competitor(cid):
     body   = request.get_json() or {}
     update = {k: body[k].strip() for k in ('name', 'url') if body.get(k)}
+    if 'url' in update:
+        update['image_url'] = fetch_product_image(update['url'])
     if update:
         sb_update('competitors', update, 'id', cid, f'&user_id=eq.{g.user_id}')
     return jsonify({'ok': True})
@@ -674,6 +713,9 @@ def api_stock_data():
         cid = r.get('id')
         if not cid:
             continue
+        image_url = (r.get('image_url') or '').strip()
+        if image_url:
+            sb_update('competitors', {'image_url': image_url}, 'id', cid, f'&user_id=eq.{g.user_id}')
         db_save_stock(g.user_id, cid, fetch_date, {
             'total':      r.get('total'),
             'options':    r.get('options', []),

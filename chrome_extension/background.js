@@ -62,10 +62,22 @@ function readStockFromCache(pid) {
     }
     return null;
   }
+  function getImageUrl(data) {
+    var meta = document.querySelector('meta[property="og:image"], meta[name="og:image"]');
+    if (meta && meta.content) return meta.content;
+    var keys = ['representativeImageUrl', 'imageUrl', 'thumbnailUrl', 'productImageUrl'];
+    for (var i = 0; i < keys.length; i++) {
+      var found = deepFind(data, keys[i]);
+      if (typeof found === 'string' && found) return found;
+    }
+    var img = document.querySelector('img[src*="phinf"], img[src*="shopping"], img[src*="shop-phinf"]');
+    return img && img.src ? img.src : '';
+  }
   if (typeof window.__naverStockCache === 'undefined')
     return { ok: false, error: 'hook미설치' };
   var data = window.__naverStockCache[pid];
   if (!data) return { ok: false, error: '캐시 없음 (SSR/XHR 데이터 미수신)' };
+  var imageUrl = getImageUrl(data);
   var combos = deepFind(data, 'optionCombinations') || [];
   var options = combos.map(function(c) {
     var parts = [c.optionName1, c.optionName2, c.optionName3].filter(Boolean);
@@ -77,7 +89,7 @@ function readStockFromCache(pid) {
   }
   if (options.length === 0) return { ok: false, error: '재고 데이터 없음' };
   var total = options.reduce(function(s, o) { return s + o.qty; }, 0);
-  return { ok: true, options: options, total: total };
+  return { ok: true, options: options, total: total, image_url: imageUrl };
 }
 
 async function setStatus(status) {
@@ -181,7 +193,7 @@ async function runFetch(competitors) {
       });
 
       if (cr && cr.ok) {
-        results.push({ id: comp.id, name: comp.name, total: cr.total, options: cr.options, error: null, fetched_at: new Date().toISOString() });
+        results.push({ id: comp.id, name: comp.name, total: cr.total, options: cr.options, image_url: cr.image_url || '', error: null, fetched_at: new Date().toISOString() });
       } else {
         results.push({ id: comp.id, name: comp.name, error: (cr && cr.error) || '데이터 없음' });
       }

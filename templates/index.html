@@ -327,6 +327,32 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); min-
   transition: border-color .12s;
 }
 .comp-list-item:hover { border-color: var(--border2); }
+.product-thumb {
+  width: 38px;
+  height: 38px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.product-thumb.placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text3);
+  font-size: 11px;
+  font-weight: 600;
+}
+.biz-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.biz-cell-main {
+  min-width: 0;
+}
 .comp-list-name { font-size: 13px; font-weight: 600; min-width: 120px; color: var(--text); }
 .comp-list-url { font-size: 11px; color: var(--text3); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .comp-list-actions { display: flex; gap: 4px; flex-shrink: 0; }
@@ -730,6 +756,13 @@ function snapshotLabel(key, compact = false) {
   return compact ? `${datePart} ${timePart}` : `${datePart}<br>${timePart}`;
 }
 
+function productThumb(comp) {
+  if (comp.image_url) {
+    return `<img class="product-thumb" src="${escHtml(comp.image_url)}" alt="">`;
+  }
+  return '<span class="product-thumb placeholder">IMG</span>';
+}
+
 function renderKPIs(data) {
   const el = document.getElementById('kpi-grid');
   if (!el) return;
@@ -942,7 +975,7 @@ function renderTable(data) {
   competitors.forEach(comp => {
     const isExpanded = expandedRows.has(comp.id);
     html += `<div class="m-row${isExpanded ? ' m-expanded' : ''}" data-cid="${comp.id}" style="grid-template-columns:${colTpl}" onclick="toggleExpand('${comp.id}')">`;
-    html += `<div class="biz-name"><span class="biz-dot"></span>${escHtml(comp.name)}<span class="expand-arr">▾</span></div>`;
+    html += `<div class="biz-name"><div class="biz-cell">${productThumb(comp)}<div class="biz-cell-main"><span class="biz-dot"></span>${escHtml(comp.name)}<span class="expand-arr">▾</span></div></div></div>`;
 
     sortedDates.forEach(d => {
       const day = comp.days[d];
@@ -1111,6 +1144,7 @@ function renderCompList(competitors) {
   }
   el.innerHTML = competitors.map(c => `
     <div class="comp-list-item" id="cli-${c.id}">
+      ${productThumb(c)}
       <div class="comp-list-name">${escHtml(c.name)}</div>
       <div class="comp-list-url" title="${escHtml(c.url)}">${escHtml(c.url)}</div>
       <div class="comp-list-actions">

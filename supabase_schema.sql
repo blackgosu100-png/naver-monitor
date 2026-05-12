@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS competitors (
     user_id     UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
     name        TEXT NOT NULL,
     url         TEXT NOT NULL,
+    image_url   TEXT DEFAULT '',
     created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
