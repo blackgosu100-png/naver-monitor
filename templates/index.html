@@ -714,6 +714,22 @@ let expandedRows = new Set();
 let chartInstance = null;
 
 // ─── KPI ─────────────────────────────────────────────────────
+function snapshotDate(key) {
+  const raw = String(key || '');
+  return raw.includes(' ') ? raw.replace(' ', 'T') : raw + 'T00:00:00';
+}
+
+function snapshotLabel(key, compact = false) {
+  const raw = String(key || '');
+  if (!raw) return '—';
+  const dt = new Date(snapshotDate(raw));
+  const datePart = `${dt.getMonth()+1}/${dt.getDate()}`;
+  const hasTime = raw.length > 10;
+  if (!hasTime) return datePart;
+  const timePart = raw.slice(11, 16);
+  return compact ? `${datePart} ${timePart}` : `${datePart}<br>${timePart}`;
+}
+
 function renderKPIs(data) {
   const el = document.getElementById('kpi-grid');
   if (!el) return;
@@ -735,7 +751,7 @@ function renderKPIs(data) {
     }
   });
   const successRate = competitors.length > 0 ? Math.round(successCount / competitors.length * 100) : 0;
-  const dateLabel = latestDate ? latestDate.slice(5).replace('-', '/') + ' 기준' : '—';
+  const dateLabel = latestDate ? snapshotLabel(latestDate, true) + ' 기준' : '—';
 
   el.style.display = 'grid';
   el.innerHTML = `
@@ -774,7 +790,7 @@ function renderChart(data, sortedDates) {
   if (!competitors.length || sortedDates.length < 2) { card.style.display = 'none'; return; }
   card.style.display = '';
 
-  const labels = sortedDates.map(d => { const dt = new Date(d+'T00:00:00'); return `${dt.getMonth()+1}/${dt.getDate()}`; });
+  const labels = sortedDates.map(d => snapshotLabel(d, true));
 
   const datasets = competitors.map((comp, i) => {
     const color = CHART_COLORS[i % CHART_COLORS.length];
@@ -916,9 +932,9 @@ function renderTable(data) {
   html += `<div class="m-row m-head" style="grid-template-columns:${colTpl}">`;
   html += `<div>업체명</div>`;
   sortedDates.forEach(d => {
-    const dt = new Date(d + 'T00:00:00');
+    const dt = new Date(snapshotDate(d));
     const dow = ['일','월','화','수','목','금','토'][dt.getDay()];
-    html += `<div class="date-cell"><div class="d-label">${dt.getMonth()+1}/${dt.getDate()}<br>${dow}</div><div></div></div>`;
+    html += `<div class="date-cell"><div class="d-label">${snapshotLabel(d)}<br>${dow}</div><div></div></div>`;
   });
   html += `<div style="text-align:center">조회</div></div>`;
 
@@ -983,8 +999,7 @@ function renderOptionsDetailGrid(comp, sortedDates, colTpl) {
   html += `<div class="m-row m-opt-head" style="grid-template-columns:${colTpl}">`;
   html += `<div style="padding-left:20px">옵션명</div>`;
   sortedDates.forEach(d => {
-    const dt = new Date(d + 'T00:00:00');
-    html += `<div class="date-cell"><div class="d-label">${dt.getMonth()+1}/${dt.getDate()}</div><div></div></div>`;
+    html += `<div class="date-cell"><div class="d-label">${snapshotLabel(d)}</div><div></div></div>`;
   });
   html += `<div></div></div>`;
 

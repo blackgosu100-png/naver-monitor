@@ -17,11 +17,12 @@ CREATE TABLE IF NOT EXISTS stock_history (
     user_id         UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
     competitor_id   TEXT NOT NULL REFERENCES competitors(id) ON DELETE CASCADE,
     fetch_date      DATE NOT NULL,
+    fetch_key       TEXT NOT NULL,
     total           INTEGER,
     options         JSONB DEFAULT '[]',
     error           TEXT,
     fetched_at      TIMESTAMPTZ DEFAULT NOW(),
-    CONSTRAINT uq_user_comp_date UNIQUE(user_id, competitor_id, fetch_date)
+    CONSTRAINT uq_user_comp_fetch_key UNIQUE(user_id, competitor_id, fetch_key)
 );
 
 CREATE INDEX IF NOT EXISTS idx_stock_history_user_date

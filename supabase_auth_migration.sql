@@ -7,6 +7,16 @@ ALTER TABLE competitors
 ALTER TABLE stock_history
     ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE;
 
+ALTER TABLE stock_history
+    ADD COLUMN IF NOT EXISTS fetch_key TEXT;
+
+UPDATE stock_history
+SET fetch_key = fetch_date::TEXT
+WHERE fetch_key IS NULL;
+
+ALTER TABLE stock_history
+    ALTER COLUMN fetch_key SET NOT NULL;
+
 ALTER TABLE app_settings
     ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE;
 
@@ -24,7 +34,10 @@ ALTER TABLE stock_history
     DROP CONSTRAINT IF EXISTS uq_user_comp_date;
 
 ALTER TABLE stock_history
-    ADD CONSTRAINT uq_user_comp_date UNIQUE(user_id, competitor_id, fetch_date);
+    DROP CONSTRAINT IF EXISTS uq_user_comp_fetch_key;
+
+ALTER TABLE stock_history
+    ADD CONSTRAINT uq_user_comp_fetch_key UNIQUE(user_id, competitor_id, fetch_key);
 
 ALTER TABLE app_settings
     DROP CONSTRAINT IF EXISTS app_settings_pkey;

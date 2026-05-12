@@ -1,6 +1,7 @@
 import json, re, hashlib, threading, time, random, os, uuid
 from datetime import datetime, date, timedelta
 from functools import wraps
+from zoneinfo import ZoneInfo
 
 import httpx
 from flask import Flask, request, jsonify, session, render_template, redirect, g
@@ -32,6 +33,7 @@ def cors_preflight(p=''):
 SUPABASE_URL = os.environ.get('SUPABASE_URL', '').rstrip('/')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY', '')
 SUPABASE_ANON_KEY = os.environ.get('SUPABASE_ANON_KEY', '')
+KST = ZoneInfo('Asia/Seoul')
 
 def _sb_headers(prefer: str = 'return=representation') -> dict:
     return {
@@ -243,13 +245,13 @@ def fetch_all(user_id: str):
     competitors = db_get_competitors(user_id)
     if not competitors:
         return
-    today = date.today().isoformat()
+    fetch_date, fetch_key = _stock_snapshot()
     with _pw_lock:
         with sync_playwright() as pw:
             browser = _launch_browser(pw)
             for comp in competitors:
                 result = _fetch_one(browser, comp['url'])
-                db_save_stock(user_id, comp['id'], today, result)
+                db_save_stock(user_id, comp['id'], fetch_date, result, fetch_key)
                 time.sleep(random.uniform(1.5, 3.0))
             browser.close()
 
@@ -267,23 +269,28 @@ def fetch_single(comp: dict) -> dict:
 def db_get_competitors(user_id: str) -> list:
     return sb_select('competitors', f'?user_id=eq.{user_id}&order=created_at')
 
-def db_save_stock(user_id: str, cid: str, fetch_date: str, result: dict):
+def _stock_snapshot(now: datetime | None = None) -> tuple[str, str]:
+    dt = (now or datetime.now(KST)).astimezone(KST)
+    return dt.date().isoformat(), dt.strftime('%Y-%m-%d %H:%M')
+
+def db_save_stock(user_id: str, cid: str, fetch_date: str, result: dict, fetch_key: str | None = None):
     sb_upsert('stock_history', {
         'user_id':       user_id,
         'competitor_id': cid,
         'fetch_date':    fetch_date,
+        'fetch_key':     fetch_key or fetch_date,
         'total':         result.get('total'),
         'options':       result.get('options', []),
         'error':         result.get('error'),
         'fetched_at':    result.get('fetched_at', datetime.now().isoformat()),
-    }, on_conflict='user_id,competitor_id,fetch_date')
+    }, on_conflict='user_id,competitor_id,fetch_key')
 
 def db_get_history(user_id: str, days: int = 14):
     start = (date.today() - timedelta(days=days)).isoformat()
     competitors = db_get_competitors(user_id)
     rows = sb_select(
         'stock_history',
-        f'?select=competitor_id,fetch_date,total,options,error,fetched_at'
+        f'?select=competitor_id,fetch_date,fetch_key,total,options,error,fetched_at'
         f'&user_id=eq.{user_id}&fetch_date=gte.{start}&order=fetch_date',
     )
     return competitors, rows
@@ -550,12 +557,12 @@ def api_history():
     days = min(int(request.args.get('days', 14)), 60)
     competitors, rows = db_get_history(g.user_id, days)
 
-    dates = sorted({row['fetch_date'] for row in rows})
+    dates = sorted({row.get('fetch_key') or row['fetch_date'] for row in rows})
 
-    # {competitor_id: {fetch_date: row}}
+    # {competitor_id: {fetch_key: row}}
     hmap: dict = {}
     for row in rows:
-        hmap.setdefault(row['competitor_id'], {})[row['fetch_date']] = row
+        hmap.setdefault(row['competitor_id'], {})[row.get('fetch_key') or row['fetch_date']] = row
 
     last_fetched = max((r.get('fetched_at', '') for r in rows), default='')
 
@@ -598,7 +605,8 @@ def api_fetch():
         if not comp:
             return jsonify({'error': '경쟁사를 찾을 수 없습니다'}), 404
         result = fetch_single(comp)
-        db_save_stock(g.user_id, cid, date.today().isoformat(), result)
+        fetch_date, fetch_key = _stock_snapshot()
+        db_save_stock(g.user_id, cid, fetch_date, result, fetch_key)
     else:
         fetch_all(g.user_id)
     return jsonify({'ok': True})
@@ -661,17 +669,17 @@ def api_public_queue_delete():
 def api_stock_data():
     body = request.get_json() or {}
     results = body.get('results', [])
-    today = date.today().isoformat()
+    fetch_date, fetch_key = _stock_snapshot()
     for r in results:
         cid = r.get('id')
         if not cid:
             continue
-        db_save_stock(g.user_id, cid, today, {
+        db_save_stock(g.user_id, cid, fetch_date, {
             'total':      r.get('total'),
             'options':    r.get('options', []),
             'error':      r.get('error'),
             'fetched_at': r.get('fetched_at', datetime.now().isoformat()),
-        })
+        }, fetch_key)
     return jsonify({'ok': True})
 
 # ─── 시작 ─────────────────────────────────────────────────────
