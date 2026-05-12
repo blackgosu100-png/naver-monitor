@@ -77,6 +77,16 @@ def sb_delete(table: str, col: str, val: str, extra_query: str = '') -> None:
     )
     r.raise_for_status()
 
+@app.errorhandler(httpx.HTTPStatusError)
+def handle_supabase_error(exc):
+    response = exc.response
+    try:
+        data = response.json()
+    except Exception:
+        data = {}
+    message = data.get('message') or data.get('error') or response.text or 'Database request failed'
+    return jsonify({'error': message}), 500
+
 # ─── Admin 계정 (Railway 환경변수로 설정) ──────────────────────
 ADMIN_USERNAME     = os.environ.get('ADMIN_USERNAME', 'admin')
 ADMIN_PASSWORD_HASH = os.environ.get(

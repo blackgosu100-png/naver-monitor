@@ -26,6 +26,14 @@ ALTER TABLE stock_history
 ALTER TABLE app_settings
     DROP CONSTRAINT IF EXISTS app_settings_pkey;
 
+-- Old single-admin settings have no owner. They are not used after Auth migration,
+-- and must be removed before user_id can become part of the primary key.
+DELETE FROM app_settings
+WHERE user_id IS NULL;
+
+ALTER TABLE app_settings
+    ALTER COLUMN user_id SET NOT NULL;
+
 ALTER TABLE app_settings
     ADD CONSTRAINT app_settings_pkey PRIMARY KEY(user_id, key);
 
