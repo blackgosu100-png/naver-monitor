@@ -1,0 +1,1262 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>네이버 경쟁사 모니터링</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Sans+KR:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+:root {
+  --bg:      #fafafa;
+  --surface: #ffffff;
+  --surface2:#f4f4f5;
+  --border:  #e4e4e7;
+  --border2: #d4d4d8;
+  --text:    #18181b;
+  --text2:   #71717a;
+  --text3:   #a1a1aa;
+  --sidebar:      #18181b;
+  --sidebar-hover:#27272a;
+  --accent:       #03c75a;
+  --accent-bg:    #f0fdf4;
+  --accent-border:#86efac;
+  --danger:       #b91c1c;
+  --danger-bg:    #fef2f2;
+  --danger-border:#fca5a5;
+  --amber:        #b45309;
+  --amber-bg:     #fffbeb;
+  --green:        #16a34a;
+  --mono: 'JetBrains Mono', monospace;
+  --sans: 'Inter', 'Noto Sans KR', sans-serif;
+  --radius:    0.375rem;
+  --radius-lg: 0.5rem;
+  --shadow:    0 1px 3px 0 rgb(0 0 0/.07), 0 1px 2px -1px rgb(0 0 0/.06);
+  --shadow-lg: 0 4px 6px -1px rgb(0 0 0/.08), 0 2px 4px -2px rgb(0 0 0/.06);
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--sans); background: var(--bg); color: var(--text); min-height: 100vh; display: flex; font-size: 13px; line-height: 1.5; }
+
+/* ── Sidebar ── */
+.sidebar {
+  width: 216px;
+  min-height: 100vh;
+  background: var(--sidebar);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  position: fixed;
+  top: 0; left: 0; bottom: 0;
+  z-index: 50;
+}
+.sidebar-logo {
+  padding: 20px 16px 16px;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.sidebar-logo-icon {
+  width: 32px; height: 32px;
+  background: var(--accent);
+  border-radius: var(--radius);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.sidebar-logo-icon svg { width: 16px; height: 16px; color: #fff; }
+.sidebar-logo-title { font-size: 13px; font-weight: 600; color: #fff; letter-spacing: -.2px; line-height: 1.3; }
+.sidebar-logo-sub { font-size: 10px; color: #52525b; margin-top: 1px; }
+.sidebar-nav { flex: 1; padding: 10px 8px; }
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 13px;
+  color: #71717a;
+  transition: background .12s, color .12s;
+  user-select: none;
+  margin-bottom: 1px;
+  font-weight: 500;
+}
+.nav-item:hover { background: var(--sidebar-hover); color: #e4e4e7; }
+.nav-item.active { background: rgba(3,199,90,.12); color: var(--accent); }
+.nav-icon { width: 16px; height: 16px; flex-shrink: 0; opacity: .8; }
+.sidebar-bottom {
+  padding: 10px 8px 12px;
+  border-top: 1px solid rgba(255,255,255,.07);
+}
+.user-info {
+  padding: 6px 10px 8px;
+  font-size: 11px;
+  color: #52525b;
+}
+.user-info strong { color: #a1a1aa; display: block; font-size: 12px; margin-bottom: 1px; }
+
+/* ── Main ── */
+.main { margin-left: 216px; flex: 1; display: flex; flex-direction: column; min-height: 100vh; }
+.topbar {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 24px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 0; z-index: 30;
+  height: 52px;
+}
+.topbar-title { font-size: 14px; font-weight: 600; flex: 1; letter-spacing: -.2px; }
+.topbar-meta { font-size: 11px; color: var(--text3); white-space: nowrap; }
+.content { padding: 24px; flex: 1; }
+
+/* ── Buttons ── */
+.btn {
+  padding: 6px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text2);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: background .12s, border-color .12s, color .12s;
+  font-family: var(--sans);
+  white-space: nowrap;
+  line-height: 1;
+}
+.btn:hover { background: var(--surface2); border-color: var(--border2); color: var(--text); }
+.btn-primary { background: #18181b; color: #fafafa; border-color: #18181b; }
+.btn-primary:hover { background: #27272a; border-color: #27272a; color: #fff; }
+.btn-green { background: var(--accent); color: #fff; border-color: var(--accent); }
+.btn-green:hover { background: #02b350; border-color: #02b350; }
+.btn-danger { background: var(--danger); color: #fff; border-color: var(--danger); }
+.btn-danger:hover { background: #991b1b; border-color: #991b1b; }
+.btn-sm { padding: 4px 10px; font-size: 11px; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+
+/* ── Cards ── */
+.card {
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+.card-header {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.card-title { font-size: 13px; font-weight: 600; flex: 1; letter-spacing: -.1px; }
+
+/* ── Monitor Grid Table ── */
+.table-wrap { overflow-x: auto; }
+.monitor-wrap { min-width: 600px; }
+
+.m-row {
+  display: grid;
+  align-items: center;
+  padding: 0 20px;
+  border-bottom: 1px solid #f1f3f5;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background .1s;
+}
+.m-row:hover { background: #fafbfc; }
+.m-row.m-head {
+  background: #fafbfc;
+  color: var(--text3);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 9px 20px;
+  cursor: default;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 52px;
+  z-index: 5;
+}
+.m-row.m-head:hover { background: #fafbfc; }
+.m-row.m-expanded { background: #f6fff9; }
+
+/* 날짜 셀: 숫자(1fr) + 델타(48px) */
+.date-cell {
+  display: grid;
+  grid-template-columns: 1fr 48px;
+  align-items: start;
+  font-variant-numeric: tabular-nums;
+  padding: 11px 0;
+}
+.date-cell .d-label { text-align: right; padding-right: 4px; font-size: 11px; }
+.date-cell .d-num {
+  text-align: right;
+  padding-right: 4px;
+  font-size: 15px;
+  font-weight: 600;
+  font-family: var(--mono);
+  color: var(--text);
+  line-height: 1.2;
+}
+.date-cell .d-num.mute { color: var(--text3); font-size: 12px; font-weight: 400; }
+.date-cell .d-num.err  { color: var(--danger); font-size: 11px; font-weight: 400; }
+.date-cell .d-pill { margin-top: 4px; text-align: right; padding-right: 4px; }
+.date-cell .d-delta {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #E8590C;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  padding-top: 1px;
+  white-space: nowrap;
+}
+
+/* 업체명 셀 */
+.biz-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 0;
+  font-weight: 500;
+  color: var(--text);
+}
+.biz-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: #c1c7cd;
+  flex-shrink: 0;
+  transition: background .15s;
+}
+.m-row.m-expanded .biz-dot { background: var(--accent); }
+.expand-arr {
+  font-size: 10px;
+  color: var(--text3);
+  transition: transform .2s;
+  flex-shrink: 0;
+}
+.m-row.m-expanded .expand-arr { transform: rotate(180deg); color: var(--accent); }
+
+/* pill 뱃지 */
+.d-pill-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.d-pill-tag.sale    { background: #FFF1E6; color: #E8590C; }
+.d-pill-tag.restock { background: #EFF6FF; color: #2563EB; }
+
+/* 조회 버튼 셀 */
+.m-action { display: flex; flex-direction: column; gap: 3px; align-items: center; padding: 8px 0; }
+
+/* Options detail */
+.m-detail { display: none; border-bottom: 2px solid var(--accent); }
+.m-detail.open { display: block; }
+.m-opt-head {
+  background: #fcfcfd;
+  color: #9aa0a6;
+  font-size: 11px;
+  padding: 7px 20px;
+  cursor: default;
+  border-bottom: 1px solid #f1f3f5;
+}
+.m-opt-head:hover { background: #fcfcfd; }
+.m-opt-row {
+  background: #fcfcfd;
+  font-size: 12.5px;
+  padding: 0 20px;
+  cursor: default;
+}
+.m-opt-row:hover { background: #f9f9fa; }
+.m-opt-row .date-cell .d-num { font-size: 13px; font-weight: 400; }
+.m-opt-total {
+  background: #f3faf5 !important;
+  font-weight: 700;
+  border-top: 1px solid #d1fae5;
+  cursor: default;
+}
+.m-opt-total:hover { background: #f3faf5 !important; }
+.m-opt-total .date-cell .d-num { color: #1E7E34; }
+.opt-name { padding-left: 20px; color: #4b5563; font-size: 12.5px; padding-top: 8px; padding-bottom: 8px; }
+.m-opt-total .opt-name { color: var(--text); }
+
+/* ── Empty state ── */
+.empty-state { text-align: center; padding: 60px 24px; color: var(--text3); }
+.empty-state-icon { font-size: 40px; margin-bottom: 14px; }
+.empty-state-title { font-size: 15px; font-weight: 600; color: var(--text2); margin-bottom: 6px; letter-spacing: -.2px; }
+.empty-state-desc { font-size: 12px; line-height: 1.7; color: var(--text3); }
+
+/* ── Settings ── */
+.settings-section { margin-bottom: 24px; }
+.settings-label { font-size: 12px; font-weight: 600; margin-bottom: 10px; color: var(--text2); display: flex; align-items: center; gap: 6px; letter-spacing: .1px; }
+.input-row { display: flex; gap: 8px; }
+.form-input {
+  padding: 7px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-family: var(--sans);
+  outline: none;
+  background: var(--surface);
+  color: var(--text);
+  transition: border-color .12s, box-shadow .12s;
+}
+.form-input:focus { border-color: #86efac; box-shadow: 0 0 0 3px rgba(3,199,90,.08); }
+.form-input.wide { flex: 1; }
+.comp-list { display: flex; flex-direction: column; gap: 5px; }
+.comp-list-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  background: var(--bg);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  transition: border-color .12s;
+}
+.comp-list-item:hover { border-color: var(--border2); }
+.comp-list-name { font-size: 13px; font-weight: 600; min-width: 120px; color: var(--text); }
+.comp-list-url { font-size: 11px; color: var(--text3); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.comp-list-actions { display: flex; gap: 4px; flex-shrink: 0; }
+
+/* ── Badge ── */
+.badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 9999px; font-size: 10px; font-weight: 600; border: 1px solid transparent; }
+.badge-green { background: var(--accent-bg); color: var(--green); border-color: var(--accent-border); }
+.badge-red { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-border); }
+.badge-gray { background: var(--surface2); color: var(--text3); border-color: var(--border); }
+
+/* ── Toast ── */
+.toast {
+  position: fixed;
+  bottom: 24px; left: 50%;
+  transform: translateX(-50%) translateY(80px);
+  background: var(--text);
+  color: #fafafa;
+  padding: 9px 18px;
+  border-radius: 9999px;
+  font-size: 12px;
+  font-weight: 500;
+  transition: transform .25s cubic-bezier(.34,1.56,.64,1);
+  z-index: 999;
+  pointer-events: none;
+  box-shadow: var(--shadow-lg);
+}
+.toast.show { transform: translateX(-50%) translateY(0); }
+
+/* ── Loading ── */
+.loading-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.4);
+  backdrop-filter: blur(2px);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+.loading-overlay.show { display: flex; }
+.spinner {
+  width: 36px; height: 36px;
+  border: 2.5px solid rgba(255,255,255,.2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin .65s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-text { color: rgba(255,255,255,.8); font-size: 12px; margin-top: 12px; font-weight: 500; }
+
+/* ── KPI Cards ── */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.kpi-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px 18px;
+  box-shadow: var(--shadow);
+  position: relative;
+  overflow: hidden;
+}
+.kpi-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: var(--border);
+}
+.kpi-card.kpi-accent-green::before { background: var(--accent); }
+.kpi-card.kpi-accent-blue::before  { background: #6366f1; }
+.kpi-card.kpi-accent-amber::before { background: #f59e0b; }
+.kpi-card.kpi-accent-red::before   { background: var(--danger); }
+.kpi-label { font-size: 11px; font-weight: 500; color: var(--text3); letter-spacing: .3px; text-transform: uppercase; margin-bottom: 8px; }
+.kpi-value { font-size: 24px; font-weight: 700; font-family: var(--mono); color: var(--text); letter-spacing: -1px; line-height: 1; margin-bottom: 6px; }
+.kpi-value.green { color: #16a34a; }
+.kpi-value.blue  { color: #4f46e5; }
+.kpi-value.amber { color: #d97706; }
+.kpi-value.red   { color: var(--danger); }
+.kpi-sub { font-size: 11px; color: var(--text3); }
+
+/* ── Chart ── */
+.chart-card { margin-bottom: 16px; }
+.chart-wrap { padding: 16px 20px 20px; height: 240px; position: relative; }
+
+/* ── Table enhanced ── */
+.cell-val-inner { padding: 9px 12px; text-align: center; }
+.stock-tag {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 2px 7px; border-radius: 9999px;
+  font-size: 10px; font-weight: 600; font-family: var(--mono);
+}
+.stock-tag.sold  { background: #dcfce7; color: #16a34a; }
+.stock-tag.stock { background: #eff6ff; color: #3b82f6; }
+.stock-tag.warn  { background: var(--amber-bg); color: var(--amber); }
+
+/* ── Misc ── */
+.divider { height: 1px; background: var(--border); margin: 20px 0; }
+select.form-input { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23a1a1aa' d='M6 8L1 3h10z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 28px; }
+</style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <div class="sidebar-logo-icon">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><polyline points="1,12 5,7 8,9 12,4 15,6"/></svg>
+    </div>
+    <div>
+      <div class="sidebar-logo-title">네이버 모니터링</div>
+      <div class="sidebar-logo-sub">Stock Monitor</div>
+    </div>
+  </div>
+  <nav class="sidebar-nav">
+    <div class="nav-item active" id="nav-dashboard" onclick="showView('dashboard')">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
+      대시보드
+    </div>
+    <div class="nav-item" id="nav-settings" onclick="showView('settings')">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="2.5"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41"/></svg>
+      설정
+    </div>
+  </nav>
+  <div class="sidebar-bottom">
+    <div class="user-info" id="user-info"></div>
+    <div class="nav-item" onclick="doLogout()" style="margin-top:2px">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 14H3a1 1 0 01-1-1V3a1 1 0 011-1h3M11 11l3-3-3-3M14 8H6"/></svg>
+      로그아웃
+    </div>
+  </div>
+</aside>
+
+<!-- Main -->
+<main class="main">
+
+  <!-- Dashboard View -->
+  <div id="view-dashboard">
+    <div class="topbar">
+      <div class="topbar-title">재고 현황</div>
+      <div class="topbar-meta" id="last-updated">마지막 조회: —</div>
+      <select class="form-input" id="days-select" onchange="loadHistory()" style="padding:6px 10px;font-size:12px;width:auto">
+        <option value="7">최근 7일</option>
+        <option value="14" selected>최근 14일</option>
+        <option value="30">최근 30일</option>
+      </select>
+      <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text2);cursor:pointer;white-space:nowrap">
+        <input type="checkbox" id="hide-fail-cols" onchange="renderTable(historyData)" style="accent-color:var(--accent)">
+        실패 열 숨기기
+      </label>
+      <button class="btn btn-green" id="fetch-btn" onclick="fetchAll()">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 8A6 6 0 102 8"/><polyline points="14,4 14,8 10,8"/></svg>
+        전체 조회
+      </button>
+    </div>
+    <div class="content">
+
+      <!-- KPI Cards -->
+      <div class="kpi-grid" id="kpi-grid" style="display:none"></div>
+
+      <!-- Table Card -->
+      <div class="card" id="monitor-card">
+        <div class="card-header">
+          <div class="card-title" id="monitor-count">경쟁사 — 명</div>
+          <div style="font-size:11px;color:var(--text3)">행 클릭 시 옵션별 상세 보기</div>
+        </div>
+        <div class="table-wrap" id="table-wrap">
+          <div class="empty-state">
+            <div class="empty-state-icon">🔍</div>
+            <div class="empty-state-title">경쟁사를 추가해주세요</div>
+            <div class="empty-state-desc">설정에서 모니터링할 스마트스토어 상품 URL을 추가하세요</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings View -->
+  <div id="view-settings" style="display:none">
+    <div class="topbar">
+      <div class="topbar-title">설정</div>
+    </div>
+    <div class="content">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;max-width:1000px">
+
+        <!-- Competitor Management -->
+        <div class="card" style="grid-column:1/-1">
+          <div class="card-header">
+            <div class="card-title">📋 경쟁사 URL 관리</div>
+          </div>
+          <div style="padding:20px">
+            <div class="settings-section">
+              <div class="settings-label">새 경쟁사 추가</div>
+              <div class="input-row" style="flex-wrap:wrap;gap:8px">
+                <input class="form-input" id="new-comp-name" placeholder="업체명 (예: 미미쇼핑몰)" style="width:160px">
+                <input class="form-input wide" id="new-comp-url" placeholder="스마트스토어 상품 URL (https://smartstore.naver.com/...)">
+                <button class="btn btn-primary" onclick="addCompetitor()">추가</button>
+              </div>
+            </div>
+            <div class="settings-label" style="margin-top:20px">📌 등록된 경쟁사</div>
+            <div class="comp-list" id="comp-list">
+              <div style="color:var(--text3);font-size:13px;padding:12px 0">아직 등록된 경쟁사가 없습니다</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Schedule -->
+        <div class="card">
+          <div class="card-header"><div class="card-title">⏰ 자동 조회 스케줄</div></div>
+          <div style="padding:20px">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:16px;font-size:13px">
+              <input type="checkbox" id="sched-enabled" onchange="scheduleChanged()" style="width:16px;height:16px;accent-color:var(--accent)">
+              매일 자동 조회 사용
+            </label>
+            <div class="input-row" style="align-items:center">
+              <span style="font-size:13px;color:var(--text2)">조회 시각</span>
+              <input class="form-input" type="number" id="sched-hour" min="0" max="23" value="9" style="width:70px;text-align:center" onchange="scheduleChanged()">
+              <span style="font-size:13px">시</span>
+              <input class="form-input" type="number" id="sched-min" min="0" max="59" value="0" style="width:70px;text-align:center" onchange="scheduleChanged()">
+              <span style="font-size:13px">분</span>
+            </div>
+            <div style="margin-top:12px;font-size:11px;color:var(--text3)">⚠️ 자동 조회는 서버(app.py)가 실행 중일 때만 동작합니다</div>
+          </div>
+        </div>
+
+        <!-- Credentials -->
+        <div class="card">
+          <div class="card-header"><div class="card-title">🔒 계정 정보 변경</div></div>
+          <div style="padding:20px">
+            <div style="display:flex;flex-direction:column;gap:10px">
+              <div>
+                <div style="font-size:11px;color:var(--text3);margin-bottom:5px">아이디</div>
+                <input class="form-input wide" id="new-username" placeholder="새 아이디 (변경 시 입력)">
+              </div>
+              <div>
+                <div style="font-size:11px;color:var(--text3);margin-bottom:5px">현재 비밀번호</div>
+                <input class="form-input wide" id="cur-password" type="password" placeholder="현재 비밀번호">
+              </div>
+              <div>
+                <div style="font-size:11px;color:var(--text3);margin-bottom:5px">새 비밀번호</div>
+                <input class="form-input wide" id="new-password" type="password" placeholder="새 비밀번호 (변경 시 입력)">
+              </div>
+              <button class="btn btn-primary" onclick="updateCredentials()" style="margin-top:4px">변경 저장</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Naver Cookie -->
+        <div class="card" style="grid-column:1/-1">
+          <div class="card-header"><div class="card-title">🍪 네이버 세션 쿠키 (429 차단 우회)</div></div>
+          <div style="padding:20px">
+
+            <div style="margin-bottom:8px;font-size:11px;color:var(--text3);display:flex;align-items:center;gap:8px">
+              <span>현재 상태:</span>
+              <span id="cookie-status" class="badge badge-gray">미설정</span>
+            </div>
+
+            <!-- 탭 버튼 -->
+            <div style="display:flex;gap:4px;margin-bottom:16px">
+              <button id="tab-ext" class="btn btn-primary btn-sm" onclick="switchTab('ext')">🧩 크롬 확장 프로그램 (권장)</button>
+              <button id="tab-manual" class="btn btn-sm" onclick="switchTab('manual')">✏️ 직접 입력</button>
+            </div>
+
+            <!-- 확장 프로그램 탭 -->
+            <div id="tab-content-ext">
+              <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:14px 16px;font-size:12px;line-height:2;color:#166534">
+                <strong>⚡ 최초 1회만 설정하면 버튼 한 번으로 끝납니다</strong><br>
+                <span style="font-size:13px">① Chrome 주소창에 <code style="background:#dcfce7;padding:2px 6px;border-radius:4px">chrome://extensions</code> 입력 → Enter</span><br>
+                <span style="font-size:13px">② 우측 상단 <strong>개발자 모드</strong> 켜기</span><br>
+                <span style="font-size:13px">③ <strong>압축해제된 확장 프로그램 로드</strong> 클릭</span><br>
+                <span style="font-size:13px">④ 아래 폴더 선택:</span><br>
+                <code id="ext-path" style="display:block;background:#dcfce7;padding:6px 10px;border-radius:6px;font-size:11px;word-break:break-all;margin:4px 0 6px;cursor:pointer" onclick="copyExtPath()" title="클릭하여 복사">
+                  (로딩 중...)
+                </code>
+                <span style="font-size:13px">⑤ 설치 후 Chrome 우측 상단 퍼즐 아이콘 → <strong>네이버 쿠키 전송</strong> 클릭 → <strong>쿠키 전송 버튼</strong></span>
+              </div>
+              <div style="margin-top:12px;display:flex;gap:8px">
+                <button class="btn btn-sm" onclick="copyExtPath()">📋 폴더 경로 복사</button>
+                <button class="btn btn-sm" onclick="openExtPage()">🔗 chrome://extensions 열기</button>
+                <button class="btn btn-sm btn-primary" onclick="loadCookie()">🔄 상태 새로고침</button>
+              </div>
+              <div style="margin-top:8px;font-size:11px;color:var(--text3)">확장 프로그램에서 쿠키 전송 후 위 "상태 새로고침" 버튼으로 확인하세요</div>
+            </div>
+
+            <!-- 직접 입력 탭 -->
+            <div id="tab-content-manual" style="display:none">
+              <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 14px;margin-bottom:12px;font-size:12px;line-height:1.8;color:#92400e">
+                Chrome DevTools(F12) → Network 탭 → smartstore.naver.com 요청 클릭 → Headers → <strong>cookie</strong> 값 복사 후 아래 붙여넣기
+              </div>
+              <textarea class="form-input wide" id="cookie-input"
+                placeholder="NID_AUT=...; NID_SES=...; 기타쿠키=값; ..."
+                style="width:100%;min-height:80px;resize:vertical;font-size:11px;font-family:monospace;line-height:1.5"
+              ></textarea>
+              <div style="display:flex;gap:8px;margin-top:10px">
+                <button class="btn btn-primary" onclick="saveCookie()">💾 저장</button>
+                <button class="btn" onclick="clearCookie()">🗑️ 쿠키 삭제</button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<!-- Loading overlay -->
+<div class="loading-overlay" id="loading">
+  <div style="text-align:center">
+    <div class="spinner"></div>
+    <div class="loading-text" id="loading-text">조회 중...</div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ─── State ───────────────────────────────────────────────────
+let historyData = null;
+let schedTimer = null;
+let expandedRows = new Set();
+let chartInstance = null;
+
+// ─── KPI ─────────────────────────────────────────────────────
+function renderKPIs(data) {
+  const el = document.getElementById('kpi-grid');
+  if (!el) return;
+  const { dates, competitors } = data;
+  if (!competitors.length) { el.style.display = 'none'; return; }
+
+  const sortedDates = [...dates].sort();
+  const latestDate = sortedDates[sortedDates.length - 1];
+
+  let totalSales = 0, restockCount = 0, errorCount = 0, successCount = 0;
+  competitors.forEach(comp => {
+    const day = comp.days[latestDate];
+    if (!day) return;
+    if (day.error) { errorCount++; return; }
+    successCount++;
+    if (day.sales !== null) {
+      if (day.sales > 0) totalSales += day.sales;
+      else if (day.sales < 0) restockCount++;
+    }
+  });
+  const successRate = competitors.length > 0 ? Math.round(successCount / competitors.length * 100) : 0;
+  const dateLabel = latestDate ? latestDate.slice(5).replace('-', '/') + ' 기준' : '—';
+
+  el.style.display = 'grid';
+  el.innerHTML = `
+    <div class="kpi-card kpi-accent-green">
+      <div class="kpi-label">모니터링 경쟁사</div>
+      <div class="kpi-value">${competitors.length}<span style="font-size:14px;font-weight:500;color:var(--text3);margin-left:3px">개</span></div>
+      <div class="kpi-sub">등록된 상품 수</div>
+    </div>
+    <div class="kpi-card kpi-accent-blue">
+      <div class="kpi-label">판매 추정 (${dateLabel})</div>
+      <div class="kpi-value blue">${totalSales.toLocaleString()}<span style="font-size:14px;font-weight:500;margin-left:3px">개</span></div>
+      <div class="kpi-sub">전일 대비 재고 감소 합산</div>
+    </div>
+    <div class="kpi-card kpi-accent-amber">
+      <div class="kpi-label">재입고 감지</div>
+      <div class="kpi-value amber">${restockCount}<span style="font-size:14px;font-weight:500;margin-left:3px">건</span></div>
+      <div class="kpi-sub">재고 증가 경쟁사 수</div>
+    </div>
+    <div class="kpi-card ${successRate >= 80 ? 'kpi-accent-green' : 'kpi-accent-red'}">
+      <div class="kpi-label">조회 성공률</div>
+      <div class="kpi-value ${successRate >= 80 ? 'green' : 'red'}">${successRate}<span style="font-size:14px;font-weight:500;margin-left:2px">%</span></div>
+      <div class="kpi-sub">성공 ${successCount}건 · 오류 ${errorCount}건</div>
+    </div>`;
+}
+
+// ─── Chart ───────────────────────────────────────────────────
+const CHART_COLORS = ['#03c75a','#6366f1','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#ec4899','#84cc16','#f97316','#14b8a6'];
+
+function renderChart(data, sortedDates) {
+  const canvas = document.getElementById('stock-chart');
+  const card = document.getElementById('chart-card');
+  if (!canvas || !card) return;
+  if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+
+  const { competitors } = data;
+  if (!competitors.length || sortedDates.length < 2) { card.style.display = 'none'; return; }
+  card.style.display = '';
+
+  const labels = sortedDates.map(d => { const dt = new Date(d+'T00:00:00'); return `${dt.getMonth()+1}/${dt.getDate()}`; });
+
+  const datasets = competitors.map((comp, i) => {
+    const color = CHART_COLORS[i % CHART_COLORS.length];
+    return {
+      label: comp.name,
+      data: sortedDates.map(d => {
+        const day = comp.days[d];
+        return (day && !day.error && day.total !== null) ? day.total : null;
+      }),
+      borderColor: color,
+      backgroundColor: color + '18',
+      borderWidth: 2,
+      pointRadius: 3,
+      pointHoverRadius: 5,
+      pointBackgroundColor: color,
+      tension: 0.35,
+      fill: false,
+      spanGaps: true,
+    };
+  });
+
+  chartInstance = new Chart(canvas, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          position: 'top',
+          labels: { font: { size: 11, family: 'Inter' }, boxWidth: 10, padding: 14, usePointStyle: true }
+        },
+        tooltip: {
+          backgroundColor: '#18181b',
+          titleColor: '#a1a1aa',
+          bodyColor: '#fafafa',
+          padding: 10,
+          cornerRadius: 6,
+          titleFont: { size: 11 },
+          bodyFont: { size: 12, family: 'JetBrains Mono' },
+          callbacks: {
+            label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y !== null ? ctx.parsed.y.toLocaleString() + '개' : '—'}`
+          }
+        }
+      },
+      scales: {
+        x: { grid: { color: '#f4f4f5' }, ticks: { font: { size: 10, family: 'Inter' }, color: '#a1a1aa' }, border: { color: '#e4e4e7' } },
+        y: { grid: { color: '#f4f4f5' }, ticks: { font: { size: 10, family: 'JetBrains Mono' }, color: '#a1a1aa' }, border: { color: '#e4e4e7' }, beginAtZero: false }
+      }
+    }
+  });
+}
+
+// ─── Init ────────────────────────────────────────────────────
+async function init() {
+  await loadConfig();
+  await loadHistory();
+  await loadCookie();
+}
+
+async function loadConfig() {
+  try {
+    const r = await fetch('/api/config');
+    if (r.status === 401) { location.href = '/login'; return; }
+    const cfg = await r.json();
+    document.getElementById('user-info').innerHTML = `<strong>${cfg.username}</strong>로 로그인됨`;
+
+    // Render competitor list in settings
+    renderCompList(cfg.competitors);
+
+    // Schedule settings
+    document.getElementById('sched-enabled').checked = cfg.schedule.enabled;
+    document.getElementById('sched-hour').value = cfg.schedule.hour;
+    document.getElementById('sched-min').value = cfg.schedule.minute;
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+// ─── Views ───────────────────────────────────────────────────
+function showView(view) {
+  document.getElementById('view-dashboard').style.display = view === 'dashboard' ? '' : 'none';
+  document.getElementById('view-settings').style.display = view === 'settings' ? '' : 'none';
+  document.getElementById('nav-dashboard').className = 'nav-item' + (view === 'dashboard' ? ' active' : '');
+  document.getElementById('nav-settings').className = 'nav-item' + (view === 'settings' ? ' active' : '');
+}
+
+// ─── History / Table ─────────────────────────────────────────
+async function loadHistory() {
+  const days = document.getElementById('days-select').value;
+  try {
+    const r = await fetch(`/api/history?days=${days}`);
+    if (r.status === 401) { location.href = '/login'; return; }
+    historyData = await r.json();
+    renderTable(historyData);
+  } catch (e) {
+    showToast('데이터 로드 실패');
+  }
+}
+
+function renderTable(data) {
+  const wrap = document.getElementById('table-wrap');
+  const { dates, competitors } = data;
+
+  if (data.last_fetched) {
+    const dt = new Date(data.last_fetched);
+    document.getElementById('last-updated').textContent =
+      `마지막 조회: ${dt.toLocaleDateString('ko-KR')} ${dt.toLocaleTimeString('ko-KR', {hour:'2-digit',minute:'2-digit'})}`;
+  }
+
+  document.getElementById('monitor-count').textContent = `경쟁사 ${competitors.length}명`;
+  renderKPIs(data);
+
+  if (competitors.length === 0) {
+    wrap.innerHTML = `<div class="empty-state">
+      <div class="empty-state-icon">🔍</div>
+      <div class="empty-state-title">경쟁사를 추가해주세요</div>
+      <div class="empty-state-desc">설정에서 모니터링할 스마트스토어 상품 URL을 추가하세요</div>
+    </div>`;
+    return;
+  }
+
+  let sortedDates = [...dates].sort().reverse();
+  if (document.getElementById('hide-fail-cols').checked) {
+    sortedDates = sortedDates.filter(d =>
+      competitors.some(comp => {
+        const day = comp.days[d];
+        return day && !day.error && day.total !== null;
+      })
+    );
+  }
+
+  const colTpl = `280px repeat(${sortedDates.length}, 1fr) 90px`;
+  let html = `<div class="monitor-wrap">`;
+
+  // Header row
+  html += `<div class="m-row m-head" style="grid-template-columns:${colTpl}">`;
+  html += `<div>업체명</div>`;
+  sortedDates.forEach(d => {
+    const dt = new Date(d + 'T00:00:00');
+    const dow = ['일','월','화','수','목','금','토'][dt.getDay()];
+    html += `<div class="date-cell"><div class="d-label">${dt.getMonth()+1}/${dt.getDate()}<br>${dow}</div><div></div></div>`;
+  });
+  html += `<div style="text-align:center">조회</div></div>`;
+
+  // Data rows
+  competitors.forEach(comp => {
+    const isExpanded = expandedRows.has(comp.id);
+    html += `<div class="m-row${isExpanded ? ' m-expanded' : ''}" data-cid="${comp.id}" style="grid-template-columns:${colTpl}" onclick="toggleExpand('${comp.id}')">`;
+    html += `<div class="biz-name"><span class="biz-dot"></span>${escHtml(comp.name)}<span class="expand-arr">▾</span></div>`;
+
+    sortedDates.forEach(d => {
+      const day = comp.days[d];
+      if (!day) {
+        html += `<div class="date-cell"><div class="d-num mute">—</div><div></div></div>`;
+      } else if (day.error) {
+        html += `<div class="date-cell"><div class="d-num err" title="${escHtml(day.error)}">실패</div><div></div></div>`;
+      } else {
+        const total = day.total;
+        const sales = day.sales;
+        const totalStr = total !== null ? total.toLocaleString() : '—';
+        let pillHtml = '';
+        if (sales !== null && sales > 0) {
+          pillHtml = `<div class="d-pill"><span class="d-pill-tag sale">▼${sales.toLocaleString()}</span></div>`;
+        } else if (sales !== null && sales < 0) {
+          pillHtml = `<div class="d-pill"><span class="d-pill-tag restock">▲${Math.abs(sales).toLocaleString()}</span></div>`;
+        }
+        let deltaHtml = '';
+        if (sales !== null && sales > 0) {
+          deltaHtml = `<div class="d-delta">[-${sales.toLocaleString()}]</div>`;
+        } else if (sales !== null && sales < 0) {
+          deltaHtml = `<div class="d-delta" style="color:#2563EB">[+${Math.abs(sales).toLocaleString()}]</div>`;
+        }
+        html += `<div class="date-cell"><div><div class="d-num">${totalStr}</div>${pillHtml}</div>${deltaHtml}</div>`;
+      }
+    });
+
+    html += `<div class="m-action" onclick="event.stopPropagation()">
+      <button class="btn btn-sm" onclick="fetchSingle('${comp.id}','${escHtml(comp.name)}')" title="개별 재고 조회">조회</button>
+      <button class="btn btn-sm" onclick="window.open('${escHtml(comp.url)}','_blank')" title="상품 페이지 열기">↗</button>
+    </div></div>`;
+
+    html += `<div class="m-detail${isExpanded ? ' open' : ''}" id="opt-${comp.id}">${renderOptionsDetailGrid(comp, sortedDates, colTpl)}</div>`;
+  });
+
+  html += `</div>`;
+  wrap.innerHTML = html;
+}
+
+function renderOptionsDetailGrid(comp, sortedDates, colTpl) {
+  const optionNames = new Set();
+  sortedDates.forEach(d => {
+    const day = comp.days[d];
+    if (day && day.options) day.options.forEach(o => optionNames.add(o.name));
+  });
+
+  if (optionNames.size === 0) {
+    return '<div style="color:var(--text3);font-size:12px;padding:12px 20px">옵션 데이터 없음</div>';
+  }
+
+  let html = '';
+
+  // Options sub-header
+  html += `<div class="m-row m-opt-head" style="grid-template-columns:${colTpl}">`;
+  html += `<div style="padding-left:20px">옵션명</div>`;
+  sortedDates.forEach(d => {
+    const dt = new Date(d + 'T00:00:00');
+    html += `<div class="date-cell"><div class="d-label">${dt.getMonth()+1}/${dt.getDate()}</div><div></div></div>`;
+  });
+  html += `<div></div></div>`;
+
+  // Option name rows
+  optionNames.forEach(name => {
+    html += `<div class="m-row m-opt-row" style="grid-template-columns:${colTpl}">`;
+    html += `<div class="opt-name">${escHtml(name)}</div>`;
+    sortedDates.forEach((d, i) => {
+      const day = comp.days[d];
+      let qty = null;
+      if (day && day.options) {
+        const opt = day.options.find(o => o.name === name);
+        if (opt != null) qty = opt.qty;
+      }
+      let deltaHtml = '';
+      if (qty !== null) {
+        for (let j = i + 1; j < sortedDates.length; j++) {
+          const prevDay = comp.days[sortedDates[j]];
+          if (prevDay && !prevDay.error && prevDay.options) {
+            const prevOpt = prevDay.options.find(o => o.name === name);
+            if (prevOpt != null) {
+              const delta = qty - prevOpt.qty;
+              if (delta < 0) {
+                deltaHtml = `<div class="d-delta">[-${Math.abs(delta)}]</div>`;
+              } else if (delta > 0) {
+                deltaHtml = `<div class="d-delta" style="color:#2563EB">[+${delta}]</div>`;
+              }
+              break;
+            }
+          }
+        }
+      }
+      html += `<div class="date-cell"><div class="d-num${qty === null ? ' mute' : ''}">${qty !== null ? qty.toLocaleString() : '—'}</div>${deltaHtml}</div>`;
+    });
+    html += `<div></div></div>`;
+  });
+
+  // Total row
+  html += `<div class="m-row m-opt-row m-opt-total" style="grid-template-columns:${colTpl}">`;
+  html += `<div class="opt-name">합계</div>`;
+  sortedDates.forEach(d => {
+    const day = comp.days[d];
+    const total = day && day.total !== null ? day.total.toLocaleString() : '—';
+    html += `<div class="date-cell"><div class="d-num">${total}</div><div></div></div>`;
+  });
+  html += `<div></div></div>`;
+
+  return html;
+}
+
+function toggleExpand(cid) {
+  if (expandedRows.has(cid)) {
+    expandedRows.delete(cid);
+  } else {
+    expandedRows.add(cid);
+  }
+  const expanded = expandedRows.has(cid);
+  const compRow = document.querySelector(`.m-row[data-cid="${cid}"]`);
+  const detailRow = document.getElementById(`opt-${cid}`);
+  if (compRow) compRow.classList.toggle('m-expanded', expanded);
+  if (detailRow) detailRow.classList.toggle('open', expanded);
+}
+
+// ─── Fetch ───────────────────────────────────────────────────
+async function fetchAll() {
+  showLoading('전체 경쟁사 재고 조회 중...');
+  const btn = document.getElementById('fetch-btn');
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/fetch', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+    if (r.ok) {
+      await loadHistory();
+      showToast('✅ 전체 조회 완료');
+    } else {
+      showToast('조회 실패');
+    }
+  } catch {
+    showToast('서버 오류');
+  } finally {
+    hideLoading();
+    btn.disabled = false;
+  }
+}
+
+async function fetchSingle(cid, name) {
+  try {
+    const r = await fetch('/api/ext/queue', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({id: cid})
+    });
+    if (r.ok) {
+      showToast(`⏳ ${name} 대기 등록 — 크롬 확장 아이콘을 클릭하세요`);
+    } else {
+      const d = await r.json().catch(() => ({}));
+      showToast(d.error || '대기 등록 실패');
+    }
+  } catch {
+    showToast('서버 오류');
+  }
+}
+
+// ─── Competitors ─────────────────────────────────────────────
+function renderCompList(competitors) {
+  const el = document.getElementById('comp-list');
+  if (!competitors.length) {
+    el.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:12px 0">아직 등록된 경쟁사가 없습니다</div>';
+    return;
+  }
+  el.innerHTML = competitors.map(c => `
+    <div class="comp-list-item" id="cli-${c.id}">
+      <div class="comp-list-name">${escHtml(c.name)}</div>
+      <div class="comp-list-url" title="${escHtml(c.url)}">${escHtml(c.url)}</div>
+      <div class="comp-list-actions">
+        <button class="btn btn-sm" onclick="editCompetitor('${c.id}','${escHtml(c.name)}','${escHtml(c.url)}')">수정</button>
+        <button class="btn btn-sm btn-danger" onclick="removeCompetitor('${c.id}','${escHtml(c.name)}')">삭제</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function addCompetitor() {
+  const name = document.getElementById('new-comp-name').value.trim();
+  const url = document.getElementById('new-comp-url').value.trim();
+  if (!name || !url) { showToast('이름과 URL을 입력해주세요'); return; }
+  try {
+    const r = await fetch('/api/competitors', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({name, url})
+    });
+    const data = await r.json();
+    if (r.ok) {
+      document.getElementById('new-comp-name').value = '';
+      document.getElementById('new-comp-url').value = '';
+      showToast(`✅ ${name} 추가됨`);
+      await loadConfig();
+      await loadHistory();
+    } else {
+      showToast(data.error || '추가 실패');
+    }
+  } catch {
+    showToast('서버 오류');
+  }
+}
+
+function editCompetitor(cid, name, url) {
+  const newName = prompt('업체명:', name);
+  if (newName === null) return;
+  const newUrl = prompt('URL:', url);
+  if (newUrl === null) return;
+  fetch(`/api/competitors/${cid}`, {
+    method:'PUT',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name: newName, url: newUrl})
+  }).then(() => {
+    showToast('수정됨');
+    loadConfig();
+    loadHistory();
+  });
+}
+
+async function removeCompetitor(cid, name) {
+  if (!confirm(`"${name}"을(를) 삭제하시겠습니까?`)) return;
+  try {
+    await fetch(`/api/competitors/${cid}`, {method:'DELETE'});
+    showToast(`🗑️ ${name} 삭제됨`);
+    await loadConfig();
+    await loadHistory();
+  } catch {
+    showToast('삭제 실패');
+  }
+}
+
+// ─── Schedule ────────────────────────────────────────────────
+function scheduleChanged() {
+  clearTimeout(schedTimer);
+  schedTimer = setTimeout(saveSchedule, 800);
+}
+
+async function saveSchedule() {
+  const enabled = document.getElementById('sched-enabled').checked;
+  const hour = parseInt(document.getElementById('sched-hour').value);
+  const minute = parseInt(document.getElementById('sched-min').value);
+  try {
+    await fetch('/api/schedule', {
+      method:'PUT',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({enabled, hour, minute})
+    });
+    showToast(enabled ? `⏰ 매일 ${hour}시 ${minute}분 자동 조회 설정됨` : '자동 조회 해제됨');
+  } catch {
+    showToast('저장 실패');
+  }
+}
+
+// ─── Credentials ─────────────────────────────────────────────
+async function updateCredentials() {
+  const username = document.getElementById('new-username').value.trim();
+  const current = document.getElementById('cur-password').value;
+  const newPwd = document.getElementById('new-password').value;
+  if (!current) { showToast('현재 비밀번호를 입력해주세요'); return; }
+  if (!username && !newPwd) { showToast('변경할 내용을 입력해주세요'); return; }
+  try {
+    const r = await fetch('/api/credentials', {
+      method:'PUT',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({username, current, new_password: newPwd})
+    });
+    const data = await r.json();
+    if (r.ok) {
+      showToast('✅ 계정 정보 변경됨');
+      document.getElementById('cur-password').value = '';
+      document.getElementById('new-password').value = '';
+      document.getElementById('new-username').value = '';
+      await loadConfig();
+    } else {
+      showToast(data.error || '변경 실패');
+    }
+  } catch {
+    showToast('서버 오류');
+  }
+}
+
+// ─── Naver Cookie ────────────────────────────────────────────
+let _extPath = '';
+
+async function loadCookie() {
+  try {
+    const r = await fetch('/api/cookie');
+    if (!r.ok) return;
+    const d = await r.json();
+    const badge = document.getElementById('cookie-status');
+    if (d.has_cookie) {
+      badge.className = 'badge badge-green';
+      badge.textContent = '설정됨 (' + d.preview + ')';
+    } else {
+      badge.className = 'badge badge-gray';
+      badge.textContent = '미설정';
+    }
+    if (d.ext_path) {
+      _extPath = d.ext_path;
+      document.getElementById('ext-path').textContent = d.ext_path;
+    }
+  } catch {}
+}
+
+function switchTab(tab) {
+  document.getElementById('tab-content-ext').style.display    = tab === 'ext'    ? '' : 'none';
+  document.getElementById('tab-content-manual').style.display = tab === 'manual' ? '' : 'none';
+  document.getElementById('tab-ext').className    = 'btn btn-sm' + (tab === 'ext'    ? ' btn-primary' : '');
+  document.getElementById('tab-manual').className = 'btn btn-sm' + (tab === 'manual' ? ' btn-primary' : '');
+}
+
+function copyExtPath() {
+  if (!_extPath) return;
+  navigator.clipboard.writeText(_extPath).then(() => showToast('📋 경로 복사됨'));
+}
+
+function openExtPage() {
+  window.open('chrome://extensions', '_blank');
+}
+
+async function saveCookie() {
+  const cookie = document.getElementById('cookie-input').value.trim();
+  if (!cookie) { showToast('쿠키 값을 입력해주세요'); return; }
+  try {
+    const r = await fetch('/api/cookie', {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({cookie})
+    });
+    if (r.ok) {
+      showToast('✅ 쿠키 저장됨');
+      document.getElementById('cookie-input').value = '';
+      await loadCookie();
+    } else {
+      showToast('저장 실패');
+    }
+  } catch {
+    showToast('서버 오류');
+  }
+}
+
+async function clearCookie() {
+  if (!confirm('저장된 쿠키를 삭제하시겠습니까?')) return;
+  try {
+    await fetch('/api/cookie', {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({cookie: ''})
+    });
+    showToast('🗑️ 쿠키 삭제됨');
+    await loadCookie();
+  } catch {
+    showToast('서버 오류');
+  }
+}
+
+// ─── Logout ──────────────────────────────────────────────────
+async function doLogout() {
+  if (!confirm('로그아웃하시겠습니까?\n(다음 실행 시 네이버 로그인을 다시 해야 합니다)')) return;
+  await fetch('/api/license/logout', {method:'POST'});
+  location.href = '/start';
+}
+
+// ─── UI utils ────────────────────────────────────────────────
+function showLoading(text) {
+  document.getElementById('loading-text').textContent = text || '처리 중...';
+  document.getElementById('loading').classList.add('show');
+}
+function hideLoading() {
+  document.getElementById('loading').classList.remove('show');
+}
+
+let toastTimer;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+function escHtml(str) {
+  return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ─── Start ───────────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>

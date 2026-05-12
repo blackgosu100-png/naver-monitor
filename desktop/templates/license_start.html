@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>네이버 모니터링 — 시작</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Sans+KR:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Noto Sans KR', system-ui, sans-serif;
+  background: #fafafa; color: #18181b; line-height: 1.6;
+  min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+}
+.card {
+  background: #fff; border: 1px solid #e4e4e7; border-radius: 12px;
+  padding: 40px; max-width: 480px; width: 100%;
+  box-shadow: 0 4px 24px rgba(0,0,0,.04);
+}
+.logo {
+  width: 56px; height: 56px; background: #03c75a; border-radius: 12px;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-weight: 700; font-size: 24px; margin-bottom: 20px;
+}
+h1 { font-size: 22px; margin-bottom: 6px; }
+.muted { color: #71717a; font-size: 14px; margin-bottom: 24px; }
+.steps { background: #f4f4f5; border-radius: 8px; padding: 16px 20px; margin-bottom: 24px; }
+.steps li { margin: 6px 0; font-size: 13px; color: #52525b; }
+.btn {
+  width: 100%; padding: 14px; font-size: 15px; font-weight: 600;
+  background: #03c75a; color: #fff; border: none; border-radius: 8px;
+  cursor: pointer; font-family: inherit; transition: all .15s;
+}
+.btn:hover { background: #02b350; }
+.btn:disabled { background: #a1a1aa; cursor: not-allowed; }
+.status {
+  margin-top: 16px; padding: 12px 14px; border-radius: 6px;
+  font-size: 13px; display: none;
+}
+.status.show { display: block; }
+.status.info  { background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; }
+.status.err   { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+.status.ok    { background: #f0fdf4; color: #15803d; border: 1px solid #86efac; }
+.spinner {
+  display: inline-block; width: 14px; height: 14px; margin-right: 6px;
+  border: 2px solid #93c5fd; border-top-color: #1e40af; border-radius: 50%;
+  animation: spin .8s linear infinite; vertical-align: -2px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.footer { margin-top: 24px; font-size: 11px; color: #a1a1aa; text-align: center; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">N</div>
+  <h1>네이버 모니터링 시작하기</h1>
+  <div class="muted">사용 권한 확인을 위해 네이버 로그인이 필요합니다.</div>
+
+  <div class="steps">
+    <ol style="padding-left:18px">
+      <li>아래 <b>시작하기</b> 버튼 클릭</li>
+      <li>네이버 로그인 창이 열리면 <b>본인 ID/비밀번호</b>로 로그인</li>
+      <li>로그인 성공하면 자동으로 모니터링 페이지로 이동</li>
+    </ol>
+  </div>
+
+  <button id="startBtn" class="btn" onclick="start()">시작하기</button>
+
+  <div id="status" class="status"></div>
+
+  <div class="footer">
+    프로그램은 본인의 네이버 비밀번호를 절대 저장/전송하지 않습니다.<br>
+    승인된 수강생만 사용 가능합니다.
+  </div>
+</div>
+
+<script>
+const $btn    = document.getElementById('startBtn');
+const $status = document.getElementById('status');
+
+function show(type, html) {
+  $status.className = 'status show ' + type;
+  $status.innerHTML = html;
+}
+
+async function start() {
+  $btn.disabled = true;
+  $btn.textContent = '진행 중...';
+  show('info', '<span class="spinner"></span> 네이버 로그인 창이 열립니다. 본인 ID/비밀번호로 로그인해주세요. (창을 닫으면 안 됩니다)');
+
+  try {
+    const r = await fetch('/api/license/start', { method: 'POST' });
+    const data = await r.json();
+
+    if (data.ok) {
+      let msg = `<b>${data.display_name || data.naver_id}</b> 님 환영합니다! 잠시 후 이동합니다...`;
+      if (data.notice) {
+        msg += `<div style="margin-top:8px; padding-top:8px; border-top:1px solid #86efac"><b>${data.notice.title}</b><br>${data.notice.body || ''}</div>`;
+      }
+      show('ok', msg);
+      setTimeout(() => location.href = '/', 1800);
+    } else {
+      show('err', '❌ ' + (data.reason || '인증 실패'));
+      $btn.disabled = false;
+      $btn.textContent = '다시 시도';
+    }
+  } catch (e) {
+    show('err', '❌ 서버 연결 실패: ' + e.message);
+    $btn.disabled = false;
+    $btn.textContent = '다시 시도';
+  }
+}
+
+// 이미 라이선스가 있으면 자동 이동
+fetch('/api/license/state').then(r => r.json()).then(s => {
+  if (s.acquired) location.href = '/';
+});
+</script>
+</body>
+</html>
