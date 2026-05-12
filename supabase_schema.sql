@@ -30,6 +30,12 @@ INSERT INTO app_settings (key, value) VALUES
     ('schedule_minute',  '0')
 ON CONFLICT (key) DO NOTHING;
 
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+GRANT ALL ON TABLE competitors TO anon, authenticated, service_role;
+GRANT ALL ON TABLE stock_history TO anon, authenticated, service_role;
+GRANT ALL ON TABLE app_settings TO anon, authenticated, service_role;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
+
 -- ─── 관리자 페이지용 신규 테이블 ──────────────────────────────
 
 -- 승인된 수강생 (네이버 ID 화이트리스트)
