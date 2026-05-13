@@ -300,6 +300,15 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); min-
 .empty-state-icon { font-size: 40px; margin-bottom: 14px; }
 .empty-state-title { font-size: 15px; font-weight: 600; color: var(--text2); margin-bottom: 6px; letter-spacing: -.2px; }
 .empty-state-desc { font-size: 12px; line-height: 1.7; color: var(--text3); }
+.inline-spinner {
+  width: 30px;
+  height: 30px;
+  border: 2px solid #e4e4e7;
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin .75s linear infinite;
+  margin: 0 auto 14px;
+}
 
 /* ── Settings ── */
 .settings-section { margin-bottom: 24px; }
@@ -527,9 +536,9 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
         </div>
         <div class="table-wrap" id="table-wrap">
           <div class="empty-state">
-            <div class="empty-state-icon">🔍</div>
-            <div class="empty-state-title">경쟁사를 추가해주세요</div>
-            <div class="empty-state-desc">설정에서 모니터링할 스마트스토어 상품 URL을 추가하세요</div>
+            <div class="inline-spinner"></div>
+            <div class="empty-state-title">재고 데이터를 불러오는 중입니다</div>
+            <div class="empty-state-desc">잠시만 기다려주세요</div>
           </div>
         </div>
       </div>
@@ -884,9 +893,8 @@ function renderChart(data, sortedDates) {
 // ─── Init ────────────────────────────────────────────────────
 async function init() {
   await initAuth();
-  await loadConfig();
-  await loadHistory();
-  await loadCookie();
+  await Promise.all([loadHistory(), loadConfig()]);
+  setTimeout(loadCookie, 0);
 }
 
 async function loadConfig() {
