@@ -462,6 +462,10 @@ def index():
 def login_page():
     return render_template('login.html')
 
+@app.route('/privacy')
+def privacy_page():
+    return render_template('privacy.html')
+
 @app.route('/api/auth-config')
 def api_auth_config():
     return jsonify({
