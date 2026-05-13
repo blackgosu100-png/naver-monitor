@@ -567,13 +567,12 @@ def api_add_competitor():
     if not re.search(r'(?:smartstore|brand)\.naver\.com/.+/products/\d+', url):
         return jsonify({'error': 'smartstore.naver.com 또는 brand.naver.com URL이어야 합니다'}), 400
     cid = f"c{uuid.uuid4().hex}"
-    image_url = fetch_product_image(url)
     sb_insert('competitors', {
         'id': cid,
         'user_id': g.user_id,
         'name': name,
         'url': url,
-        'image_url': image_url,
+        'image_url': '',
     })
     return jsonify({'ok': True, 'id': cid})
 
@@ -583,7 +582,7 @@ def api_update_competitor(cid):
     body   = request.get_json() or {}
     update = {k: body[k].strip() for k in ('name', 'url') if body.get(k)}
     if 'url' in update:
-        update['image_url'] = fetch_product_image(update['url'])
+        update['image_url'] = ''
     if update:
         sb_update('competitors', update, 'id', cid, f'&user_id=eq.{g.user_id}')
     return jsonify({'ok': True})
