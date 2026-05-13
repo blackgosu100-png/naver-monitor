@@ -1,11 +1,19 @@
 // 백그라운드 서비스 워커 — 팝업이 닫혀도 조회 계속 실행
 
-const DEFAULT_SERVER = 'http://localhost:5001';
+const DEFAULT_SERVER = 'https://naver-monitor-production.up.railway.app';
+
+function normalizeServerUrl(url) {
+  var value = (url || DEFAULT_SERVER).replace(/\/$/, '');
+  if (value === 'http://localhost:5000' || value === 'http://localhost:5001') {
+    return DEFAULT_SERVER;
+  }
+  return value;
+}
 
 async function getAuthState() {
   var data = await chrome.storage.local.get(['serverUrl', 'accessToken', 'refreshToken']);
   return {
-    serverUrl: (data.serverUrl || DEFAULT_SERVER).replace(/\/$/, ''),
+    serverUrl: normalizeServerUrl(data.serverUrl),
     accessToken: data.accessToken || '',
     refreshToken: data.refreshToken || ''
   };

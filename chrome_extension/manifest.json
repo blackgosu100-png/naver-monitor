@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "네이버 경쟁사 모니터링",
-  "version": "4.0",
+  "version": "4.1",
   "description": "네이버 스마트스토어 경쟁사 재고를 자동 수집합니다",
   "icons": {
     "16": "icons/icon16.png",
@@ -9,13 +9,11 @@
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
-  "permissions": ["cookies", "tabs", "scripting", "storage"],
+  "permissions": ["tabs", "scripting", "storage"],
   "host_permissions": [
     "*://*.naver.com/*",
     "https://*.up.railway.app/*",
-    "https://*.railway.app/*",
-    "http://localhost:5000/*",
-    "http://localhost:5001/*"
+    "https://*.railway.app/*"
   ],
   "content_scripts": [{
     "matches": ["*://*.smartstore.naver.com/*", "*://brand.naver.com/*"],

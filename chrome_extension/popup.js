@@ -6,12 +6,20 @@ function showMsg(id, text, cls) {
   el.style.display = 'block';
 }
 
-var DEFAULT_SERVER = 'http://localhost:5001';
+var DEFAULT_SERVER = 'https://naver-monitor-production.up.railway.app';
+
+function normalizeServerUrl(url) {
+  var value = (url || DEFAULT_SERVER).replace(/\/$/, '');
+  if (value === 'http://localhost:5000' || value === 'http://localhost:5001') {
+    return DEFAULT_SERVER;
+  }
+  return value;
+}
 
 async function getAuthState() {
   var data = await chrome.storage.local.get(['serverUrl', 'accessToken', 'refreshToken']);
   return {
-    serverUrl: (data.serverUrl || DEFAULT_SERVER).replace(/\/$/, ''),
+    serverUrl: normalizeServerUrl(data.serverUrl),
     accessToken: data.accessToken || '',
     refreshToken: data.refreshToken || ''
   };
@@ -53,7 +61,7 @@ async function apiFetch(path, options) {
 }
 
 async function signInToService() {
-  var serverUrl = document.getElementById('server-url').value.trim().replace(/\/$/, '') || DEFAULT_SERVER;
+  var serverUrl = normalizeServerUrl(document.getElementById('server-url').value.trim());
   var email = document.getElementById('login-email').value.trim();
   var password = document.getElementById('login-password').value;
   if (!email || !password) throw new Error('이메일과 비밀번호를 입력해주세요.');
@@ -273,7 +281,7 @@ chrome.storage.local.get('fetchStatus', function(data) {
 
 // ─── 경쟁사 재고 조회 버튼 ────────────────────────────────────
 chrome.storage.local.get(['serverUrl'], function(data) {
-  document.getElementById('server-url').value = data.serverUrl || DEFAULT_SERVER;
+  document.getElementById('server-url').value = normalizeServerUrl(data.serverUrl);
 });
 
 document.getElementById('login-btn').addEventListener('click', async function() {
@@ -388,29 +396,3 @@ async function waitForCache(tabId, pid, timeout, onStatus) {
   }
 }
 
-// ─── 쿠키 전송 버튼 ───────────────────────────────────────────
-document.getElementById('cookie-btn').addEventListener('click', function() {
-  var btn = document.getElementById('cookie-btn');
-  btn.disabled = true;
-  showMsg('cookie-msg', '쿠키 읽는 중...', 'info');
-
-  chrome.cookies.getAll({ domain: '.naver.com' }, function(cookies) {
-    if (!cookies || cookies.length === 0) {
-      showMsg('cookie-msg', '네이버 쿠키 없음. Chrome에서 naver.com에 로그인 후 시도하세요.', 'err');
-      btn.disabled = false;
-      return;
-    }
-    var cookieStr = cookies.map(function(c) { return c.name + '=' + c.value; }).join('; ');
-    var encoded;
-    try { encoded = btoa(unescape(encodeURIComponent(cookieStr))); }
-    catch(e) { showMsg('cookie-msg', '인코딩 오류: ' + e, 'err'); btn.disabled = false; return; }
-
-    chrome.tabs.create(
-      { url: (document.getElementById('server-url').value.trim().replace(/\/$/, '') || DEFAULT_SERVER) + '/cookie-import?data=' + encodeURIComponent(encoded) },
-      function() {
-        showMsg('cookie-msg', '✅ 새 탭에서 저장 완료!', 'ok');
-        btn.disabled = false;
-      }
-    );
-  });
-});
