@@ -689,6 +689,8 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
 
 <script>
 const nativeFetch = window.fetch.bind(window);
+const CONFIG_CACHE_KEY = 'naverMonitorConfigCache:v1';
+const HISTORY_CACHE_KEY = 'naverMonitorHistoryCache:v1';
 let accessToken = '';
 
 async function initAuth() {
@@ -750,6 +752,32 @@ let historyData = null;
 let schedTimer = null;
 let expandedRows = new Set();
 let chartInstance = null;
+
+function readCache(key) {
+  try {
+    return JSON.parse(sessionStorage.getItem(key) || 'null');
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(key, value) {
+  try {
+    sessionStorage.setItem(key, JSON.stringify(value));
+  } catch {}
+}
+
+function hydrateFromCache() {
+  const cfg = readCache(CONFIG_CACHE_KEY);
+  if (cfg && cfg.username) applyConfig(cfg);
+
+  const cachedHistory = readCache(HISTORY_CACHE_KEY);
+  const days = document.getElementById('days-select').value;
+  if (cachedHistory && cachedHistory.days === days && cachedHistory.data) {
+    historyData = cachedHistory.data;
+    renderTable(historyData);
+  }
+}
 
 // ─── KPI ─────────────────────────────────────────────────────
 function snapshotDate(key) {
@@ -893,8 +921,20 @@ function renderChart(data, sortedDates) {
 // ─── Init ────────────────────────────────────────────────────
 async function init() {
   await initAuth();
+  hydrateFromCache();
   await Promise.all([loadHistory(), loadConfig()]);
   setTimeout(loadCookie, 0);
+}
+
+function applyConfig(cfg) {
+  document.getElementById('user-info').innerHTML = `<strong>${cfg.username}</strong>로 로그인됨`;
+  renderCompList(cfg.competitors || []);
+
+  if (cfg.schedule) {
+    document.getElementById('sched-enabled').checked = cfg.schedule.enabled;
+    document.getElementById('sched-hour').value = cfg.schedule.hour;
+    document.getElementById('sched-min').value = cfg.schedule.minute;
+  }
 }
 
 async function loadConfig() {
@@ -902,15 +942,8 @@ async function loadConfig() {
     const r = await fetch('/api/config');
     if (r.status === 401) { location.href = '/login'; return; }
     const cfg = await r.json();
-    document.getElementById('user-info').innerHTML = `<strong>${cfg.username}</strong>로 로그인됨`;
-
-    // Render competitor list in settings
-    renderCompList(cfg.competitors);
-
-    // Schedule settings
-    document.getElementById('sched-enabled').checked = cfg.schedule.enabled;
-    document.getElementById('sched-hour').value = cfg.schedule.hour;
-    document.getElementById('sched-min').value = cfg.schedule.minute;
+    applyConfig(cfg);
+    writeCache(CONFIG_CACHE_KEY, cfg);
   } catch (e) {
     console.error(e);
   }
@@ -931,6 +964,7 @@ async function loadHistory() {
     const r = await fetch(`/api/history?days=${days}`);
     if (r.status === 401) { location.href = '/login'; return; }
     historyData = await r.json();
+    writeCache(HISTORY_CACHE_KEY, {days, data: historyData});
     renderTable(historyData);
   } catch (e) {
     showToast('데이터 로드 실패');
@@ -1349,6 +1383,8 @@ async function doLogout() {
   await nativeFetch('/api/logout', {method:'POST'});
   localStorage.removeItem('naverMonitorAccessToken');
   localStorage.removeItem('naverMonitorRefreshToken');
+  sessionStorage.removeItem(CONFIG_CACHE_KEY);
+  sessionStorage.removeItem(HISTORY_CACHE_KEY);
   location.href = '/login';
 }
 
