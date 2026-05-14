@@ -117,6 +117,33 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); min-
 .topbar-meta { font-size: 11px; color: var(--text3); white-space: nowrap; }
 .content { padding: 24px; flex: 1; }
 
+.view-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface2);
+}
+.view-toggle-btn {
+  min-width: 72px;
+  height: 30px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text2);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: var(--sans);
+}
+.view-toggle-btn.active {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
 /* ── Buttons ── */
 .btn {
   padding: 6px 13px;
@@ -347,6 +374,28 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); min-
   gap: 10px;
   min-width: 0;
 }
+.product-link-btn {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text3);
+  flex-shrink: 0;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.product-link-btn:hover {
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
+  color: var(--green);
+}
+.product-link-btn svg {
+  width: 14px;
+  height: 14px;
+}
 .biz-cell-main {
   min-width: 0;
 }
@@ -503,10 +552,10 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
     <div class="topbar">
       <div class="topbar-title">재고 현황</div>
       <div class="topbar-meta" id="last-updated">마지막 조회: —</div>
-      <select class="form-input" id="history-mode" onchange="setHistoryMode(this.value)" style="padding:6px 10px;font-size:12px;width:auto">
-        <option value="daily" selected>일자별</option>
-        <option value="time">시간별</option>
-      </select>
+      <div class="view-toggle" role="group" aria-label="재고 보기 방식">
+        <button class="view-toggle-btn active" id="history-mode-daily" type="button" onclick="setHistoryMode('daily')">일자별</button>
+        <button class="view-toggle-btn" id="history-mode-time" type="button" onclick="setHistoryMode('time')">시간별</button>
+      </div>
       <select class="form-input" id="days-select" onchange="loadHistory()" style="padding:6px 10px;font-size:12px;width:auto">
         <option value="7">최근 7일</option>
         <option value="14" selected>최근 14일</option>
@@ -798,19 +847,18 @@ function snapshotDayKey(key) {
 }
 
 function currentHistoryMode() {
-  const el = document.getElementById('history-mode');
-  return el ? el.value : 'daily';
+  return localStorage.getItem(HISTORY_MODE_KEY) === 'time' ? 'time' : 'daily';
 }
 
-function initHistoryMode() {
-  const el = document.getElementById('history-mode');
-  if (!el) return;
-  const saved = localStorage.getItem(HISTORY_MODE_KEY);
-  el.value = saved === 'time' ? 'time' : 'daily';
+function syncHistoryModeButtons() {
+  const mode = currentHistoryMode();
+  document.getElementById('history-mode-daily')?.classList.toggle('active', mode === 'daily');
+  document.getElementById('history-mode-time')?.classList.toggle('active', mode === 'time');
 }
 
 function setHistoryMode(mode) {
   localStorage.setItem(HISTORY_MODE_KEY, mode === 'time' ? 'time' : 'daily');
+  syncHistoryModeButtons();
   renderTable(historyData);
 }
 
@@ -982,7 +1030,7 @@ function renderChart(data, sortedDates) {
 // ─── Init ────────────────────────────────────────────────────
 async function init() {
   await initAuth();
-  initHistoryMode();
+  syncHistoryModeButtons();
   hydrateFromCache();
   await Promise.all([loadHistory(), loadConfig()]);
 }
@@ -1073,24 +1121,28 @@ function renderTable(data) {
     );
   }
 
-  const colTpl = `280px repeat(${sortedDates.length}, 1fr) 118px`;
+  const colTpl = `310px repeat(${sortedDates.length}, 1fr) 92px`;
   let html = `<div class="monitor-wrap">`;
 
   // Header row
   html += `<div class="m-row m-head" style="grid-template-columns:${colTpl}">`;
-  html += `<div>업체명</div>`;
+  html += `<div>바로가기 / 업체명</div>`;
   sortedDates.forEach(d => {
     const dt = new Date(snapshotDate(d));
     const dow = ['일','월','화','수','목','금','토'][dt.getDay()];
     html += `<div class="date-cell"><div class="d-label">${snapshotLabel(d)}<br>${dow}</div><div></div></div>`;
   });
-  html += `<div style="text-align:center">작업</div></div>`;
+  html += `<div style="text-align:center">조회</div></div>`;
 
   // Data rows
   competitors.forEach(comp => {
     const isExpanded = expandedRows.has(comp.id);
     html += `<div class="m-row${isExpanded ? ' m-expanded' : ''}" data-cid="${comp.id}" style="grid-template-columns:${colTpl}" onclick="toggleExpand('${comp.id}')">`;
-    html += `<div class="biz-name"><div class="biz-cell">${productThumb(comp)}<div class="biz-cell-main"><span class="biz-dot"></span>${escHtml(comp.name)}<span class="expand-arr">▾</span></div></div></div>`;
+    html += `<div class="biz-name"><div class="biz-cell">
+      <button class="product-link-btn" type="button" onclick="event.stopPropagation(); window.open('${escHtml(comp.url)}','_blank')" title="네이버 상품 페이지 열기" aria-label="네이버 상품 페이지 열기">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6.5 3H3.8A1.8 1.8 0 002 4.8v7.4A1.8 1.8 0 003.8 14h7.4a1.8 1.8 0 001.8-1.8V9.5"/><path d="M9 2h5v5"/><path d="M8 8l6-6"/></svg>
+      </button>
+      ${productThumb(comp)}<div class="biz-cell-main"><span class="biz-dot"></span>${escHtml(comp.name)}<span class="expand-arr">▾</span></div></div></div>`;
 
     sortedDates.forEach(d => {
       const day = comp.days[d];
@@ -1114,7 +1166,6 @@ function renderTable(data) {
 
     html += `<div class="m-action" onclick="event.stopPropagation()">
       <button class="btn btn-sm" onclick="fetchSingle('${comp.id}','${escHtml(comp.name)}')" title="이 상품만 재고 조회">재고 조회</button>
-      <button class="btn btn-sm" onclick="window.open('${escHtml(comp.url)}','_blank')" title="네이버 상품 페이지 열기">상품 열기</button>
     </div></div>`;
 
     html += `<div class="m-detail${isExpanded ? ' open' : ''}" id="opt-${comp.id}">${renderOptionsDetailGrid(comp, sortedDates, colTpl)}</div>`;
