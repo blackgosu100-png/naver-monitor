@@ -169,6 +169,8 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); min-
 .btn-green:hover { background: #02b350; border-color: #02b350; }
 .btn-danger { background: var(--danger); color: #fff; border-color: var(--danger); }
 .btn-danger:hover { background: #991b1b; border-color: #991b1b; }
+.btn-stop { background: #ef4444; color: #fff; border-color: #ef4444; }
+.btn-stop:hover { background: #dc2626; border-color: #dc2626; color: #fff; }
 .btn-sm { padding: 4px 10px; font-size: 11px; }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
 
@@ -383,14 +385,14 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); min-
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--surface);
-  color: var(--text3);
+  color: #0ea5e9;
   flex-shrink: 0;
   transition: background .12s, border-color .12s, color .12s;
 }
 .product-link-btn:hover {
-  background: var(--accent-bg);
-  border-color: var(--accent-border);
-  color: var(--green);
+  background: #eff6ff;
+  border-color: #bae6fd;
+  color: #0284c7;
 }
 .product-link-btn svg {
   width: 14px;
@@ -569,6 +571,7 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
         <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 8A6 6 0 102 8"/><polyline points="14,4 14,8 10,8"/></svg>
         전체 조회
       </button>
+      <button class="btn btn-stop" id="stop-fetch-btn" onclick="stopFetch()" title="진행 중인 확장 프로그램 조회를 중지합니다">STOP</button>
     </div>
     <div class="content">
 
@@ -609,7 +612,7 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
             <div class="settings-section">
               <div class="settings-label">새 경쟁사 추가</div>
               <div class="input-row" style="flex-wrap:wrap;gap:8px">
-                <input class="form-input" id="new-comp-name" placeholder="업체명 (예: 미미쇼핑몰)" style="width:160px">
+                <input class="form-input" id="new-comp-name" placeholder="경쟁사 상품명 (예: 미미쇼핑몰)" style="width:180px">
                 <input class="form-input wide" id="new-comp-url" placeholder="스마트스토어 상품 URL (https://smartstore.naver.com/...)">
                 <button class="btn btn-primary" onclick="addCompetitor()">추가</button>
               </div>
@@ -1126,7 +1129,7 @@ function renderTable(data) {
 
   // Header row
   html += `<div class="m-row m-head" style="grid-template-columns:${colTpl}">`;
-  html += `<div>바로가기 / 업체명</div>`;
+  html += `<div>URL 바로가기 / 경쟁사 상품명</div>`;
   sortedDates.forEach(d => {
     const dt = new Date(snapshotDate(d));
     const dow = ['일','월','화','수','목','금','토'][dt.getDay()];
@@ -1165,7 +1168,7 @@ function renderTable(data) {
     });
 
     html += `<div class="m-action" onclick="event.stopPropagation()">
-      <button class="btn btn-sm" onclick="fetchSingle('${comp.id}','${escHtml(comp.name)}')" title="이 상품만 재고 조회">재고 조회</button>
+      <button class="btn btn-sm" onclick="fetchSingle('${comp.id}','${escHtml(comp.name)}')" title="이 상품만 재고 조회">선택상품조회</button>
     </div></div>`;
 
     html += `<div class="m-detail${isExpanded ? ' open' : ''}" id="opt-${comp.id}">${renderOptionsDetailGrid(comp, sortedDates, colTpl)}</div>`;
@@ -1291,6 +1294,33 @@ function requestExtensionFetch(competitors) {
   });
 }
 
+function requestExtensionStop() {
+  return new Promise((resolve, reject) => {
+    const requestId = `stop-${Date.now()}-${++extensionRequestSeq}`;
+    const timer = setTimeout(() => {
+      window.removeEventListener('message', onMessage);
+      reject(new Error('확장 프로그램 연결을 확인할 수 없습니다.'));
+    }, 5200);
+
+    function onMessage(event) {
+      if (event.source !== window) return;
+      const msg = event.data || {};
+      if (msg.source !== 'naver-monitor-extension' || msg.type !== 'STOP_FETCH_RESULT' || msg.requestId !== requestId) return;
+      clearTimeout(timer);
+      window.removeEventListener('message', onMessage);
+      if (msg.ok) resolve(msg);
+      else reject(new Error(msg.error || '조회 중지에 실패했습니다.'));
+    }
+
+    window.addEventListener('message', onMessage);
+    window.postMessage({
+      source: 'naver-monitor-dashboard',
+      type: 'STOP_FETCH',
+      requestId,
+    }, '*');
+  });
+}
+
 async function queueFetchForExtension(id = null) {
   const r = await fetch('/api/ext/queue', {
     method: 'POST',
@@ -1300,6 +1330,15 @@ async function queueFetchForExtension(id = null) {
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.error || '대기 등록 실패');
   return data;
+}
+
+async function stopFetch() {
+  try {
+    await requestExtensionStop();
+    showToast('진행 중인 조회를 중지했습니다');
+  } catch (e) {
+    showToast(e.message || '조회 중지 실패');
+  }
 }
 
 async function fetchAll() {
@@ -1395,7 +1434,7 @@ async function addCompetitor() {
 }
 
 function editCompetitor(cid, name, url) {
-  const newName = prompt('업체명:', name);
+  const newName = prompt('경쟁사 상품명:', name);
   if (newName === null) return;
   const newUrl = prompt('URL:', url);
   if (newUrl === null) return;

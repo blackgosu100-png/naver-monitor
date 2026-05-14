@@ -284,9 +284,11 @@ async function pollStatus() {
 
   var bar = document.getElementById('progress-bar');
   var fill = document.getElementById('progress-fill');
+  var stopBtn = document.getElementById('stop-btn');
 
   if (s.running) {
     document.getElementById('fetch-btn').disabled = true;
+    stopBtn.style.display = 'block';
     bar.style.display = 'block';
     var pct = s.total > 0 ? Math.round(((s.current - 0.5) / s.total) * 85) : 0;
     fill.style.width = pct + '%';
@@ -294,9 +296,16 @@ async function pollStatus() {
     showMsg('fetch-msg', label, 'info');
   } else if (s.done) {
     document.getElementById('fetch-btn').disabled = false;
+    stopBtn.style.display = 'none';
     fill.style.width = '100%';
     var okCount = (s.results || []).filter(function(r) { return !r.error; }).length;
     showMsg('fetch-msg', s.msg || '완료', okCount === (s.results || []).length ? 'ok' : 'info');
+    chrome.storage.local.remove('fetchStatus');
+    if (statusPoller) { clearInterval(statusPoller); statusPoller = null; }
+  } else if (s.stopped) {
+    document.getElementById('fetch-btn').disabled = false;
+    stopBtn.style.display = 'none';
+    showMsg('fetch-msg', s.msg || '중지되었습니다', 'info');
     chrome.storage.local.remove('fetchStatus');
     if (statusPoller) { clearInterval(statusPoller); statusPoller = null; }
   }
@@ -361,6 +370,7 @@ document.getElementById('fetch-btn').addEventListener('click', async function() 
     if (competitors.length === 0) throw new Error('등록된 경쟁사가 없습니다. 앱 설정에서 추가해주세요.');
 
     btn.disabled = true;
+    document.getElementById('stop-btn').style.display = 'block';
     bar.style.display = 'block';
     fill.style.width = '0%';
     showMsg('fetch-msg', '조회 시작 중... (팝업을 닫아도 계속 실행됩니다)', 'info');
@@ -374,7 +384,24 @@ document.getElementById('fetch-btn').addEventListener('click', async function() 
   } catch(e) {
     showMsg('fetch-msg', '❌ ' + e.message, 'err');
     btn.disabled = false;
+    document.getElementById('stop-btn').style.display = 'none';
   }
+});
+
+document.getElementById('stop-btn').addEventListener('click', function() {
+  var stopBtn = document.getElementById('stop-btn');
+  stopBtn.disabled = true;
+  showMsg('fetch-msg', 'STOP 요청 중...', 'info');
+  chrome.runtime.sendMessage({ type: 'STOP_FETCH' }, function(response) {
+    stopBtn.disabled = false;
+    if (chrome.runtime.lastError || !response || !response.ok) {
+      showMsg('fetch-msg', '❌ STOP 실패: ' + (chrome.runtime.lastError ? chrome.runtime.lastError.message : (response && response.error || '알 수 없는 오류')), 'err');
+      return;
+    }
+    stopBtn.style.display = 'none';
+    document.getElementById('fetch-btn').disabled = false;
+    showMsg('fetch-msg', '조회 중지 요청을 보냈습니다.', 'info');
+  });
 });
 
 // ─── 캐시 폴링 ────────────────────────────────────────────────

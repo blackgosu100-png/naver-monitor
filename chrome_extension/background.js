@@ -1,6 +1,9 @@
 // 백그라운드 서비스 워커 — 팝업이 닫혀도 조회 계속 실행
 
 const DEFAULT_SERVER = 'https://naver-monitor-production.up.railway.app';
+var stopRequested = false;
+var currentFetchTabId = null;
+var fetchRunning = false;
 
 function normalizeServerUrl(url) {
   var value = (url || DEFAULT_SERVER).replace(/\/$/, '');
@@ -125,20 +128,75 @@ async function setStatus(status) {
   await chrome.storage.local.set({ fetchStatus: status });
 }
 
+function shouldStop() {
+  return !!stopRequested;
+}
+
+async function stopCurrentFetch() {
+  stopRequested = true;
+  if (currentFetchTabId !== null) {
+    try {
+      await chrome.tabs.remove(currentFetchTabId);
+    } catch(e) {}
+    currentFetchTabId = null;
+  }
+  await setStatus({
+    running: false,
+    stopped: true,
+    msg: 'STOP 요청으로 조회를 중지했습니다.',
+    results: []
+  });
+}
+
 async function openTab(url) {
   return new Promise((resolve, reject) => {
-    var timer = setTimeout(() => reject(new Error('탭 로딩 타임아웃')), 30000);
+    var done = false;
+    var timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      chrome.tabs.onRemoved.removeListener(onRemoved);
+      reject(new Error('탭 로딩 타임아웃'));
+    }, 30000);
+
+    var tid = null;
+    function cleanup() {
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      chrome.tabs.onRemoved.removeListener(onRemoved);
+    }
+    function onUpdated(tabId, changeInfo) {
+      if (tabId === tid && changeInfo.status === 'complete') {
+        if (done) return;
+        done = true;
+        cleanup();
+        resolve(tid);
+      }
+    }
+    function onRemoved(tabId) {
+      if (tabId === tid) {
+        if (done) return;
+        done = true;
+        cleanup();
+        reject(new Error(shouldStop() ? '사용자 중지' : '탭이 닫힘'));
+      }
+    }
+
     chrome.tabs.create({ url, active: true }, (tab) => {
       if (chrome.runtime.lastError) { clearTimeout(timer); reject(new Error(chrome.runtime.lastError.message)); return; }
-      var tid = tab.id;
-      function onUpdated(tabId, changeInfo) {
-        if (tabId === tid && changeInfo.status === 'complete') {
-          chrome.tabs.onUpdated.removeListener(onUpdated);
-          clearTimeout(timer);
-          resolve(tid);
+      tid = tab.id;
+      currentFetchTabId = tid;
+      if (shouldStop()) {
+        chrome.tabs.remove(tid, () => {});
+        if (!done) {
+          done = true;
+          cleanup();
+          reject(new Error('사용자 중지'));
         }
+        return;
       }
       chrome.tabs.onUpdated.addListener(onUpdated);
+      chrome.tabs.onRemoved.addListener(onRemoved);
     });
   });
 }
@@ -149,6 +207,7 @@ async function waitForCache(tabId, pid, onStatus) {
   var maxWait = 120000;
 
   while (elapsed < maxWait) {
+    if (shouldStop()) return { ok: false, stopped: true, error: '사용자 중지' };
     var tab;
     try { tab = await chrome.tabs.get(tabId); } catch(e) {
       return { ok: false, error: '탭이 닫힘' };
@@ -190,13 +249,20 @@ async function waitForCache(tabId, pid, onStatus) {
     await new Promise(r => setTimeout(r, 1000));
     elapsed += 1000;
   }
+  if (shouldStop()) return { ok: false, stopped: true, error: '사용자 중지' };
   return { ok: false, error: '타임아웃' };
 }
 
 async function runFetch(competitors) {
+  if (fetchRunning) return;
+  fetchRunning = true;
+  stopRequested = false;
+  currentFetchTabId = null;
   var results = [];
+  var stopped = false;
 
   for (var i = 0; i < competitors.length; i++) {
+    if (shouldStop()) { stopped = true; break; }
     var comp = competitors[i];
     var parsed = parseNaverUrl(comp.url);
 
@@ -217,11 +283,16 @@ async function runFetch(competitors) {
     var tabId = null;
     try {
       tabId = await openTab(comp.url);
+      currentFetchTabId = tabId;
+      if (shouldStop()) { stopped = true; break; }
       var cr = await waitForCache(tabId, parsed.pid, async (msg) => {
         await setStatus({ running: true, current: i + 1, total: competitors.length, name: comp.name, msg, results });
       });
 
-      if (cr && cr.ok) {
+      if (cr && cr.stopped) {
+        stopped = true;
+        break;
+      } else if (cr && cr.ok) {
         results.push({ id: comp.id, name: comp.name, total: cr.total, options: cr.options, image_url: cr.image_url || '', error: null, fetched_at: new Date().toISOString() });
       } else {
         results.push({ id: comp.id, name: comp.name, error: (cr && cr.error) || '데이터 없음' });
@@ -230,26 +301,36 @@ async function runFetch(competitors) {
       results.push({ id: comp.id, name: comp.name, error: String(e) });
     } finally {
       if (tabId !== null) chrome.tabs.remove(tabId, () => {});
+      if (currentFetchTabId === tabId) currentFetchTabId = null;
     }
 
-    if (i < competitors.length - 1) await new Promise(r => setTimeout(r, 3000));
+    if (shouldStop()) { stopped = true; break; }
+    if (i < competitors.length - 1) {
+      await new Promise(r => setTimeout(r, 3000));
+      if (shouldStop()) { stopped = true; break; }
+    }
   }
 
   // 결과 서버에 저장
-  try {
-    await apiFetch('/api/stock-data', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ results })
-    });
-  } catch(e) {}
+  if (results.length) {
+    try {
+      await apiFetch('/api/stock-data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ results })
+      });
+    } catch(e) {}
+  }
 
   var okCount = results.filter(r => !r.error).length;
   var errItems = results.filter(r => r.error);
-  var msg = `✅ 완료! ${okCount}/${results.length} 성공`;
+  var msg = stopped ? `⏹ 중지됨. 저장된 결과 ${okCount}/${results.length} 성공` : `✅ 완료! ${okCount}/${results.length} 성공`;
   if (errItems.length) msg += '\n❌ 실패: ' + errItems.map(r => r.name + '(' + r.error + ')').join(', ');
 
-  await setStatus({ running: false, done: true, msg, results });
+  await setStatus({ running: false, done: !stopped, stopped, msg, results });
+  fetchRunning = false;
+  stopRequested = false;
+  currentFetchTabId = null;
 
   // 대시보드 탭 새로고침
   var state = await getAuthState();
@@ -266,6 +347,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: false, error: '조회할 상품이 없습니다.' });
         return;
       }
+      if (fetchRunning) {
+        sendResponse({ ok: false, error: '이미 조회가 진행 중입니다. 먼저 STOP을 눌러주세요.' });
+        return;
+      }
       var token = await ensureServiceToken(4000);
       if (!token) {
         sendResponse({ ok: false, error: '확장 프로그램에서 서비스 로그인이 필요합니다.' });
@@ -273,6 +358,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
       setStatus({ running: true, current: 0, total: competitors.length, msg: '시작 중...', results: [] });
       runFetch(competitors);
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+  if (msg.type === 'STOP_FETCH') {
+    (async () => {
+      await stopCurrentFetch();
       sendResponse({ ok: true });
     })();
     return true;
