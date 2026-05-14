@@ -25,19 +25,26 @@
   .progress-bar { height: 4px; background: #e2e8f0; border-radius: 2px; margin-top: 8px; overflow: hidden; display:none; }
   .progress-fill { height: 100%; background: #03c75a; border-radius: 2px; transition: width .3s; }
   .tip { font-size: 10px; color: #94a3b8; margin-top: 8px; line-height: 1.6; }
+  .login-state { display:none; margin: 8px 0 10px; padding: 9px 11px; background:#ecfdf5; color:#166534; border-radius:6px; font-size:12px; line-height:1.5; }
+  .login-state strong { display:block; color:#14532d; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .link-btn { border:0; background:transparent; color:#475569; text-decoration:underline; padding:0; margin-top:6px; cursor:pointer; font-size:11px; }
 </style>
 </head>
 <body>
 
 <h3>네이버 경쟁사 모니터링</h3>
 
+<div class="login-state" id="login-state"></div>
+
 <label>서버 주소</label>
 <input id="server-url" placeholder="https://your-app.up.railway.app">
-<label>이메일</label>
-<input id="login-email" type="email" placeholder="student@example.com">
-<label>비밀번호</label>
-<input id="login-password" type="password" placeholder="비밀번호">
-<button class="btn btn-gray" id="login-btn">서비스 로그인</button>
+<div id="login-form">
+  <label>이메일</label>
+  <input id="login-email" type="email" placeholder="student@example.com">
+  <label>비밀번호</label>
+  <input id="login-password" type="password" placeholder="비밀번호">
+  <button class="btn btn-gray" id="login-btn">서비스 로그인</button>
+</div>
 <div class="msg" id="login-msg"></div>
 
 <div class="divider"></div>
@@ -54,8 +61,8 @@
 </div>
 
 <div class="tip">
-  먼저 서비스 계정으로 로그인한 뒤 조회하세요.<br>
-  서버 주소는 선생님이 안내한 배포 주소를 입력합니다.
+  로그인 상태는 자동으로 유지됩니다.<br>
+  기본 서버 주소는 운영 배포 주소로 설정됩니다.
 </div>
 
 <script src="popup.js"></script>

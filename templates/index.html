@@ -374,6 +374,11 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); min-
 .badge-green { background: var(--accent-bg); color: var(--green); border-color: var(--accent-border); }
 .badge-red { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-border); }
 .badge-gray { background: var(--surface2); color: var(--text3); border-color: var(--border); }
+.admin-row { display: grid; grid-template-columns: 1.4fr .8fr .8fr 120px; gap: 12px; align-items: center; padding: 11px 14px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.admin-row.admin-head { background: #fafbfc; color: var(--text3); font-size: 11px; font-weight: 600; }
+.admin-row:last-child { border-bottom: 0; }
+.admin-email { font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-muted { color: var(--text3); }
 
 /* ── Toast ── */
 .toast {
@@ -491,6 +496,10 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
       <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="2.5"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41"/></svg>
       설정
     </div>
+    <div class="nav-item" id="nav-admin" onclick="showView('admin')" style="display:none">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1l5 2v4c0 3.3-2.1 6.2-5 7.2C5.1 13.2 3 10.3 3 7V3l5-2z"/><path d="M5.8 8.1l1.4 1.4 3-3"/></svg>
+      관리자 보드
+    </div>
   </nav>
   <div class="sidebar-bottom">
     <div class="user-info" id="user-info"></div>
@@ -578,18 +587,19 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
         <div class="card">
           <div class="card-header"><div class="card-title">⏰ 자동 조회 스케줄</div></div>
           <div style="padding:20px">
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:16px;font-size:13px">
-              <input type="checkbox" id="sched-enabled" onchange="scheduleChanged()" style="width:16px;height:16px;accent-color:var(--accent)">
+            <div class="badge badge-gray" style="margin-bottom:14px">서비스 준비중</div>
+            <label style="display:flex;align-items:center;gap:8px;cursor:not-allowed;margin-bottom:16px;font-size:13px;color:var(--text3)">
+              <input type="checkbox" id="sched-enabled" disabled style="width:16px;height:16px;accent-color:var(--accent)">
               매일 자동 조회 사용
             </label>
             <div class="input-row" style="align-items:center">
               <span style="font-size:13px;color:var(--text2)">조회 시각</span>
-              <input class="form-input" type="number" id="sched-hour" min="0" max="23" value="9" style="width:70px;text-align:center" onchange="scheduleChanged()">
+              <input class="form-input" type="number" id="sched-hour" min="0" max="23" value="9" style="width:70px;text-align:center" disabled>
               <span style="font-size:13px">시</span>
-              <input class="form-input" type="number" id="sched-min" min="0" max="59" value="0" style="width:70px;text-align:center" onchange="scheduleChanged()">
+              <input class="form-input" type="number" id="sched-min" min="0" max="59" value="0" style="width:70px;text-align:center" disabled>
               <span style="font-size:13px">분</span>
             </div>
-            <div style="margin-top:12px;font-size:11px;color:var(--text3)">⚠️ 자동 조회는 서버(app.py)가 실행 중일 때만 동작합니다</div>
+            <div style="margin-top:12px;font-size:11px;color:var(--text3)">현재는 크롬 확장 프로그램을 통한 수동 조회만 지원합니다. 자동 스케줄은 안정화 후 제공 예정입니다.</div>
           </div>
         </div>
 
@@ -615,61 +625,48 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
           </div>
         </div>
 
-        <!-- Naver Cookie -->
+        <!-- Chrome Extension -->
         <div class="card" style="grid-column:1/-1">
-          <div class="card-header"><div class="card-title">🍪 네이버 세션 쿠키 (429 차단 우회)</div></div>
+          <div class="card-header"><div class="card-title">🧩 크롬 확장 프로그램 설치 안내</div></div>
           <div style="padding:20px">
-
-            <div style="margin-bottom:8px;font-size:11px;color:var(--text3);display:flex;align-items:center;gap:8px">
-              <span>현재 상태:</span>
-              <span id="cookie-status" class="badge badge-gray">미설정</span>
+            <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:14px 16px;font-size:12px;line-height:2;color:#166534">
+              <strong>확장 프로그램을 설치한 뒤 서비스 계정으로 로그인하면 재고 조회를 실행할 수 있습니다.</strong><br>
+              <span style="font-size:13px">① 아래 Chrome Web Store 링크를 열고 확장 프로그램을 설치합니다.</span><br>
+              <code id="store-url" style="display:block;background:#dcfce7;padding:6px 10px;border-radius:6px;font-size:11px;word-break:break-all;margin:4px 0 6px;cursor:pointer" onclick="copyStoreUrl()" title="클릭하여 복사">https://chromewebstore.google.com/detail/네이버-경쟁사-모니터링/bihcbfmkldglanbhabgaiiccnhfbnmfk</code>
+              <span style="font-size:13px">② Chrome 우측 상단 퍼즐 아이콘에서 <strong>네이버 경쟁사 모니터링</strong>을 고정합니다.</span><br>
+              <span style="font-size:13px">③ 확장 프로그램을 열고 서비스 이메일/비밀번호로 로그인합니다.</span><br>
+              <span style="font-size:13px">④ 대시보드에서 조회 대기열을 등록한 뒤 확장 프로그램에서 <strong>경쟁사 재고 전체 조회</strong>를 실행합니다.</span>
             </div>
-
-            <!-- 탭 버튼 -->
-            <div style="display:flex;gap:4px;margin-bottom:16px">
-              <button id="tab-ext" class="btn btn-primary btn-sm" onclick="switchTab('ext')">🧩 크롬 확장 프로그램 (권장)</button>
-              <button id="tab-manual" class="btn btn-sm" onclick="switchTab('manual')">✏️ 직접 입력</button>
-            </div>
-
-            <!-- 확장 프로그램 탭 -->
-            <div id="tab-content-ext">
-              <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:14px 16px;font-size:12px;line-height:2;color:#166534">
-                <strong>⚡ 최초 1회만 설정하면 버튼 한 번으로 끝납니다</strong><br>
-                <span style="font-size:13px">① Chrome 주소창에 <code style="background:#dcfce7;padding:2px 6px;border-radius:4px">chrome://extensions</code> 입력 → Enter</span><br>
-                <span style="font-size:13px">② 우측 상단 <strong>개발자 모드</strong> 켜기</span><br>
-                <span style="font-size:13px">③ <strong>압축해제된 확장 프로그램 로드</strong> 클릭</span><br>
-                <span style="font-size:13px">④ 아래 폴더 선택:</span><br>
-                <code id="ext-path" style="display:block;background:#dcfce7;padding:6px 10px;border-radius:6px;font-size:11px;word-break:break-all;margin:4px 0 6px;cursor:pointer" onclick="copyExtPath()" title="클릭하여 복사">
-                  (로딩 중...)
-                </code>
-                <span style="font-size:13px">⑤ 설치 후 Chrome 우측 상단 퍼즐 아이콘 → <strong>네이버 쿠키 전송</strong> 클릭 → <strong>쿠키 전송 버튼</strong></span>
-              </div>
-              <div style="margin-top:12px;display:flex;gap:8px">
-                <button class="btn btn-sm" onclick="copyExtPath()">📋 폴더 경로 복사</button>
-                <button class="btn btn-sm" onclick="openExtPage()">🔗 chrome://extensions 열기</button>
-                <button class="btn btn-sm btn-primary" onclick="loadCookie()">🔄 상태 새로고침</button>
-              </div>
-              <div style="margin-top:8px;font-size:11px;color:var(--text3)">확장 프로그램에서 쿠키 전송 후 위 "상태 새로고침" 버튼으로 확인하세요</div>
-            </div>
-
-            <!-- 직접 입력 탭 -->
-            <div id="tab-content-manual" style="display:none">
-              <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 14px;margin-bottom:12px;font-size:12px;line-height:1.8;color:#92400e">
-                Chrome DevTools(F12) → Network 탭 → smartstore.naver.com 요청 클릭 → Headers → <strong>cookie</strong> 값 복사 후 아래 붙여넣기
-              </div>
-              <textarea class="form-input wide" id="cookie-input"
-                placeholder="NID_AUT=...; NID_SES=...; 기타쿠키=값; ..."
-                style="width:100%;min-height:80px;resize:vertical;font-size:11px;font-family:monospace;line-height:1.5"
-              ></textarea>
-              <div style="display:flex;gap:8px;margin-top:10px">
-                <button class="btn btn-primary" onclick="saveCookie()">💾 저장</button>
-                <button class="btn" onclick="clearCookie()">🗑️ 쿠키 삭제</button>
-              </div>
+            <div style="margin-top:12px;display:flex;gap:8px">
+              <button class="btn btn-sm btn-primary" onclick="openStoreUrl()">스토어 열기</button>
+              <button class="btn btn-sm" onclick="copyStoreUrl()">설치 URL 복사</button>
             </div>
 
           </div>
         </div>
 
+      </div>
+    </div>
+  </div>
+
+  <!-- Admin View -->
+  <div id="view-admin" style="display:none">
+    <div class="topbar">
+      <div class="topbar-title">관리자 보드</div>
+      <button class="btn btn-sm" onclick="loadAdminUsers()">새로고침</button>
+    </div>
+    <div class="content">
+      <div class="card" style="max-width:1000px">
+        <div class="card-header">
+          <div class="card-title">회원 승인 관리</div>
+          <div style="font-size:11px;color:var(--text3)">이메일 인증 후 승인된 회원만 서비스를 이용할 수 있습니다</div>
+        </div>
+        <div id="admin-users">
+          <div class="empty-state">
+            <div class="inline-spinner"></div>
+            <div class="empty-state-title">회원 목록을 불러오는 중입니다</div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -740,7 +737,7 @@ async function authFetch(input, init = {}) {
       res = await nativeFetch(input, { ...init, headers });
     }
   }
-  if (res.status === 401) {
+  if (res.status === 401 || res.status === 403) {
     localStorage.removeItem('naverMonitorAccessToken');
     localStorage.removeItem('naverMonitorRefreshToken');
     location.href = '/login';
@@ -752,6 +749,8 @@ let historyData = null;
 let schedTimer = null;
 let expandedRows = new Set();
 let chartInstance = null;
+let isAdminUser = false;
+const EXTENSION_STORE_URL = 'https://chromewebstore.google.com/detail/%EB%84%A4%EC%9D%B4%EB%B2%84-%EA%B2%BD%EC%9F%81%EC%82%AC-%EB%AA%A8%EB%8B%88%ED%84%B0%EB%A7%81/bihcbfmkldglanbhabgaiiccnhfbnmfk';
 
 function readCache(key) {
   try {
@@ -923,11 +922,12 @@ async function init() {
   await initAuth();
   hydrateFromCache();
   await Promise.all([loadHistory(), loadConfig()]);
-  setTimeout(loadCookie, 0);
 }
 
 function applyConfig(cfg) {
   document.getElementById('user-info').innerHTML = `<strong>${cfg.username}</strong>로 로그인됨`;
+  isAdminUser = !!cfg.is_admin;
+  document.getElementById('nav-admin').style.display = isAdminUser ? '' : 'none';
   renderCompList(cfg.competitors || []);
 
   if (cfg.schedule) {
@@ -951,10 +951,14 @@ async function loadConfig() {
 
 // ─── Views ───────────────────────────────────────────────────
 function showView(view) {
+  if (view === 'admin' && !isAdminUser) view = 'dashboard';
   document.getElementById('view-dashboard').style.display = view === 'dashboard' ? '' : 'none';
   document.getElementById('view-settings').style.display = view === 'settings' ? '' : 'none';
+  document.getElementById('view-admin').style.display = view === 'admin' ? '' : 'none';
   document.getElementById('nav-dashboard').className = 'nav-item' + (view === 'dashboard' ? ' active' : '');
   document.getElementById('nav-settings').className = 'nav-item' + (view === 'settings' ? ' active' : '');
+  document.getElementById('nav-admin').className = 'nav-item' + (view === 'admin' ? ' active' : '');
+  if (view === 'admin') loadAdminUsers();
 }
 
 // ─── History / Table ─────────────────────────────────────────
@@ -1255,8 +1259,7 @@ async function removeCompetitor(cid, name) {
 
 // ─── Schedule ────────────────────────────────────────────────
 function scheduleChanged() {
-  clearTimeout(schedTimer);
-  schedTimer = setTimeout(saveSchedule, 800);
+  showToast('자동 조회 스케줄은 서비스 준비중입니다');
 }
 
 async function saveSchedule() {
@@ -1303,79 +1306,71 @@ async function updateCredentials() {
   }
 }
 
-// ─── Naver Cookie ────────────────────────────────────────────
-let _extPath = '';
+// ─── Extension Guide ─────────────────────────────────────────
+function copyStoreUrl() {
+  navigator.clipboard.writeText(EXTENSION_STORE_URL).then(() => showToast('설치 URL 복사됨'));
+}
 
-async function loadCookie() {
+function openStoreUrl() {
+  window.open(EXTENSION_STORE_URL, '_blank');
+}
+
+// ─── Admin ──────────────────────────────────────────────────
+async function loadAdminUsers() {
+  if (!isAdminUser) return;
+  const el = document.getElementById('admin-users');
+  el.innerHTML = `<div class="empty-state"><div class="inline-spinner"></div><div class="empty-state-title">회원 목록을 불러오는 중입니다</div></div>`;
   try {
-    const r = await fetch('/api/cookie');
-    if (!r.ok) return;
-    const d = await r.json();
-    const badge = document.getElementById('cookie-status');
-    if (d.has_cookie) {
-      badge.className = 'badge badge-green';
-      badge.textContent = '설정됨 (' + d.preview + ')';
-    } else {
-      badge.className = 'badge badge-gray';
-      badge.textContent = '미설정';
+    const r = await fetch('/api/admin/users');
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || '회원 목록 로드 실패');
+    const users = data.users || [];
+    if (!users.length) {
+      el.innerHTML = '<div class="empty-state"><div class="empty-state-title">회원이 없습니다</div></div>';
+      return;
     }
-    if (d.ext_path) {
-      _extPath = d.ext_path;
-      document.getElementById('ext-path').textContent = d.ext_path;
-    }
-  } catch {}
-}
-
-function switchTab(tab) {
-  document.getElementById('tab-content-ext').style.display    = tab === 'ext'    ? '' : 'none';
-  document.getElementById('tab-content-manual').style.display = tab === 'manual' ? '' : 'none';
-  document.getElementById('tab-ext').className    = 'btn btn-sm' + (tab === 'ext'    ? ' btn-primary' : '');
-  document.getElementById('tab-manual').className = 'btn btn-sm' + (tab === 'manual' ? ' btn-primary' : '');
-}
-
-function copyExtPath() {
-  if (!_extPath) return;
-  navigator.clipboard.writeText(_extPath).then(() => showToast('📋 경로 복사됨'));
-}
-
-function openExtPage() {
-  window.open('chrome://extensions', '_blank');
-}
-
-async function saveCookie() {
-  const cookie = document.getElementById('cookie-input').value.trim();
-  if (!cookie) { showToast('쿠키 값을 입력해주세요'); return; }
-  try {
-    const r = await fetch('/api/cookie', {
-      method: 'PUT',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({cookie})
-    });
-    if (r.ok) {
-      showToast('✅ 쿠키 저장됨');
-      document.getElementById('cookie-input').value = '';
-      await loadCookie();
-    } else {
-      showToast('저장 실패');
-    }
-  } catch {
-    showToast('서버 오류');
+    el.innerHTML = `
+      <div class="admin-row admin-head">
+        <div>이메일</div><div>이메일 인증</div><div>승인 상태</div><div></div>
+      </div>
+      ${users.map(user => `
+        <div class="admin-row">
+          <div>
+            <div class="admin-email" title="${escHtml(user.email)}">${escHtml(user.email || user.id)}</div>
+            <div class="admin-muted">가입 ${formatAdminDate(user.created_at)}</div>
+          </div>
+          <div>${user.email_confirmed_at ? '<span class="badge badge-green">인증됨</span>' : '<span class="badge badge-gray">대기중</span>'}</div>
+          <div>${user.is_admin ? '<span class="badge badge-green">관리자</span>' : user.approved ? '<span class="badge badge-green">승인됨</span>' : '<span class="badge badge-red">미승인</span>'}</div>
+          <div>
+            ${user.is_admin ? '' : `<button class="btn btn-sm ${user.approved ? '' : 'btn-primary'}" onclick="setUserApproval('${user.id}', ${user.approved ? 'false' : 'true'})">${user.approved ? '승인 취소' : '승인'}</button>`}
+          </div>
+        </div>
+      `).join('')}`;
+  } catch (e) {
+    el.innerHTML = `<div class="empty-state"><div class="empty-state-title">${escHtml(e.message || '회원 목록 로드 실패')}</div></div>`;
   }
 }
 
-async function clearCookie() {
-  if (!confirm('저장된 쿠키를 삭제하시겠습니까?')) return;
+async function setUserApproval(uid, approved) {
   try {
-    await fetch('/api/cookie', {
+    const r = await fetch(`/api/admin/users/${uid}/approval`, {
       method: 'PUT',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({cookie: ''})
+      body: JSON.stringify({approved})
     });
-    showToast('🗑️ 쿠키 삭제됨');
-    await loadCookie();
-  } catch {
-    showToast('서버 오류');
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || '승인 상태 변경 실패');
+    showToast(approved ? '회원 승인됨' : '승인 취소됨');
+    await loadAdminUsers();
+  } catch (e) {
+    showToast(e.message || '승인 상태 변경 실패');
   }
+}
+
+function formatAdminDate(value) {
+  if (!value) return '—';
+  const dt = new Date(value);
+  return dt.toLocaleDateString('ko-KR') + ' ' + dt.toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'});
 }
 
 // ─── Logout ──────────────────────────────────────────────────

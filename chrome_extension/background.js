@@ -12,8 +12,10 @@ function normalizeServerUrl(url) {
 
 async function getAuthState() {
   var data = await chrome.storage.local.get(['serverUrl', 'accessToken', 'refreshToken']);
+  var serverUrl = normalizeServerUrl(data.serverUrl);
+  if (data.serverUrl !== serverUrl) await chrome.storage.local.set({ serverUrl: serverUrl });
   return {
-    serverUrl: normalizeServerUrl(data.serverUrl),
+    serverUrl: serverUrl,
     accessToken: data.accessToken || '',
     refreshToken: data.refreshToken || ''
   };
@@ -38,6 +40,10 @@ async function refreshServiceToken(state) {
 
 async function apiFetch(path, options) {
   var state = await getAuthState();
+  if (!state.accessToken && state.refreshToken) {
+    state.accessToken = await refreshServiceToken(state) || '';
+  }
+  if (!state.accessToken) throw new Error('서비스 로그인이 필요합니다.');
   options = options || {};
   options.headers = Object.assign({}, options.headers || {}, {
     'Authorization': 'Bearer ' + state.accessToken

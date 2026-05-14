@@ -123,7 +123,7 @@
   </div>
   <div class="msg" id="msg"></div>
   <button class="btn-login" id="btn" onclick="submitAuth()">로그인</button>
-  <div class="hint">회원가입 후 이메일 확인이 켜져 있으면 받은 편지함의 인증 링크를 먼저 눌러주세요.</div>
+  <div class="hint">회원가입 후 받은 편지함의 인증 링크를 누르고, 관리자 승인 후 로그인할 수 있습니다.</div>
 </div>
 
 <script>
@@ -162,8 +162,8 @@ async function submitAuth() {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || '인증에 실패했습니다.');
-    if (mode === 'signup' && !data.access_token) {
-      showMsg('가입 확인 메일을 보냈습니다. 이메일 인증 후 로그인해주세요.', 'ok');
+    if (mode === 'signup') {
+      showMsg(data.message || '가입 확인 메일을 보냈습니다. 이메일 인증 후 관리자 승인을 기다려주세요.', 'ok');
       setMode('login');
       return;
     }

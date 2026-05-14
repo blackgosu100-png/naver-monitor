@@ -17,11 +17,14 @@ function normalizeServerUrl(url) {
 }
 
 async function getAuthState() {
-  var data = await chrome.storage.local.get(['serverUrl', 'accessToken', 'refreshToken']);
+  var data = await chrome.storage.local.get(['serverUrl', 'accessToken', 'refreshToken', 'loginEmail']);
+  var serverUrl = normalizeServerUrl(data.serverUrl);
+  if (data.serverUrl !== serverUrl) await chrome.storage.local.set({ serverUrl: serverUrl });
   return {
-    serverUrl: normalizeServerUrl(data.serverUrl),
+    serverUrl: serverUrl,
     accessToken: data.accessToken || '',
-    refreshToken: data.refreshToken || ''
+    refreshToken: data.refreshToken || '',
+    loginEmail: data.loginEmail || ''
   };
 }
 
@@ -44,6 +47,9 @@ async function refreshServiceToken(state) {
 
 async function apiFetch(path, options) {
   var state = await getAuthState();
+  if (!state.accessToken && state.refreshToken) {
+    state.accessToken = await refreshServiceToken(state) || '';
+  }
   if (!state.accessToken) throw new Error('서비스 로그인이 필요합니다.');
   options = options || {};
   options.headers = Object.assign({}, options.headers || {}, {
@@ -56,6 +62,9 @@ async function apiFetch(path, options) {
       options.headers.Authorization = 'Bearer ' + newToken;
       res = await fetch(state.serverUrl + path, options);
     }
+  }
+  if (res.status === 401 || res.status === 403) {
+    await setLoggedOutUi();
   }
   return res;
 }
@@ -76,8 +85,29 @@ async function signInToService() {
   await chrome.storage.local.set({
     serverUrl: serverUrl,
     accessToken: authData.access_token,
-    refreshToken: authData.refresh_token
+    refreshToken: authData.refresh_token,
+    loginEmail: email
   });
+  await setLoggedInUi(email);
+}
+
+async function setLoggedInUi(email) {
+  var stateEl = document.getElementById('login-state');
+  var formEl = document.getElementById('login-form');
+  stateEl.innerHTML = '<strong>' + (email || '로그인됨') + '</strong>서비스 로그인 상태입니다.<br><button class="link-btn" id="logout-btn">로그아웃</button>';
+  stateEl.style.display = 'block';
+  formEl.style.display = 'none';
+  document.getElementById('login-msg').style.display = 'none';
+  var logoutBtn = document.getElementById('logout-btn');
+  if (logoutBtn) logoutBtn.addEventListener('click', async function() {
+    await chrome.storage.local.remove(['accessToken', 'refreshToken', 'loginEmail']);
+    await setLoggedOutUi();
+  });
+}
+
+async function setLoggedOutUi() {
+  document.getElementById('login-state').style.display = 'none';
+  document.getElementById('login-form').style.display = 'block';
 }
 
 function parseNaverUrl(url) {
@@ -279,10 +309,30 @@ chrome.storage.local.get('fetchStatus', function(data) {
   }
 });
 
-// ─── 경쟁사 재고 조회 버튼 ────────────────────────────────────
-chrome.storage.local.get(['serverUrl'], function(data) {
-  document.getElementById('server-url').value = normalizeServerUrl(data.serverUrl);
-});
+// ─── 초기 상태 ───────────────────────────────────────────────
+async function initializePopup() {
+  var state = await getAuthState();
+  document.getElementById('server-url').value = state.serverUrl;
+  if (state.loginEmail) document.getElementById('login-email').value = state.loginEmail;
+
+  if (state.accessToken || state.refreshToken) {
+    try {
+      var r = await apiFetch('/api/config');
+      if (r.ok) {
+        var cfg = await r.json();
+        await setLoggedInUi(cfg.username || state.loginEmail);
+      } else {
+        await setLoggedOutUi();
+      }
+    } catch(e) {
+      await setLoggedOutUi();
+    }
+  } else {
+    await setLoggedOutUi();
+  }
+}
+
+initializePopup();
 
 document.getElementById('login-btn').addEventListener('click', async function() {
   var btn = document.getElementById('login-btn');

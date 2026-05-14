@@ -91,6 +91,7 @@ def handle_supabase_error(exc):
 
 # ─── Admin 계정 (Railway 환경변수로 설정) ──────────────────────
 ADMIN_USERNAME     = os.environ.get('ADMIN_USERNAME', 'admin')
+ADMIN_EMAIL        = os.environ.get('ADMIN_EMAIL', ADMIN_USERNAME)
 ADMIN_PASSWORD_HASH = os.environ.get(
     'ADMIN_PASSWORD_HASH',
     hashlib.sha256(b'1234').hexdigest()
@@ -425,6 +426,29 @@ def _auth_error(response, fallback: str) -> str:
         return fallback
     return data.get('msg') or data.get('error_description') or data.get('error') or fallback
 
+def _admin_api_headers() -> dict:
+    return {
+        'apikey': SUPABASE_KEY,
+        'Authorization': f'Bearer {SUPABASE_KEY}',
+        'Content-Type': 'application/json',
+    }
+
+def _is_admin_user(user: dict) -> bool:
+    email = (user.get('email') or '').strip().lower()
+    admin_email = (ADMIN_EMAIL or '').strip().lower()
+    admin_name = (ADMIN_USERNAME or '').strip().lower()
+    return bool(email and (
+        email == admin_email
+        or email.split('@', 1)[0] == admin_name
+        or (admin_name and email == admin_name)
+    ))
+
+def _is_approved_user(user: dict) -> bool:
+    if _is_admin_user(user):
+        return True
+    app_meta = user.get('app_metadata') or {}
+    return app_meta.get('approved') is True
+
 def _verify_supabase_user(token: str) -> dict | None:
     auth_key = _auth_api_key()
     if not token or not SUPABASE_URL or not auth_key:
@@ -447,6 +471,21 @@ def login_required(f):
         user = _verify_supabase_user(_bearer_token())
         if not user or not user.get('id'):
             return jsonify({'error': 'Unauthorized'}), 401
+        if not _is_approved_user(user):
+            return jsonify({'error': '관리자 승인 후 이용할 수 있습니다.'}), 403
+        g.user = user
+        g.user_id = user['id']
+        return f(*args, **kwargs)
+    return dec
+
+def admin_required(f):
+    @wraps(f)
+    def dec(*args, **kwargs):
+        user = _verify_supabase_user(_bearer_token())
+        if not user or not user.get('id'):
+            return jsonify({'error': 'Unauthorized'}), 401
+        if not _is_admin_user(user):
+            return jsonify({'error': 'Admin only'}), 403
         g.user = user
         g.user_id = user['id']
         return f(*args, **kwargs)
@@ -491,7 +530,11 @@ def api_auth_login():
     )
     if r.status_code >= 400:
         return jsonify({'error': _auth_error(r, 'Login failed')}), 401
-    return jsonify(r.json())
+    data = r.json()
+    user = data.get('user') or {}
+    if not _is_approved_user(user):
+        return jsonify({'error': '회원가입은 완료되었습니다. 관리자 승인 후 로그인할 수 있습니다.'}), 403
+    return jsonify(data)
 
 @app.route('/api/auth/signup', methods=['POST'])
 def api_auth_signup():
@@ -506,12 +549,23 @@ def api_auth_signup():
     r = httpx.post(
         f'{SUPABASE_URL}/auth/v1/signup',
         headers={'apikey': auth_key, 'Content-Type': 'application/json'},
-        json={'email': email, 'password': password},
+        params={'redirect_to': request.url_root.rstrip('/') + '/login'},
+        json={
+            'email': email,
+            'password': password,
+            'data': {'approved': False},
+        },
         timeout=20,
     )
     if r.status_code >= 400:
         return jsonify({'error': _auth_error(r, 'Signup failed')}), 400
-    return jsonify(r.json())
+    data = r.json()
+    return jsonify({
+        'ok': True,
+        'requires_email_confirmation': True,
+        'message': '가입 확인 메일을 보냈습니다. 이메일 인증 후 관리자 승인을 기다려주세요.',
+        'user': data.get('user'),
+    })
 
 @app.route('/api/auth/refresh', methods=['POST'])
 def api_auth_refresh():
@@ -552,9 +606,66 @@ def api_config():
     return jsonify({
         'username':    email,
         'user_id':     g.user_id,
+        'is_admin':    _is_admin_user(g.user),
+        'approved':    _is_approved_user(g.user),
         'competitors': db_get_competitors(g.user_id),
         'schedule':    db_get_schedule(g.user_id),
     })
+
+@app.route('/api/admin/users')
+@admin_required
+def api_admin_users():
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return jsonify({'error': 'Supabase service role key is not configured'}), 500
+    r = httpx.get(
+        f'{SUPABASE_URL}/auth/v1/admin/users',
+        headers=_admin_api_headers(),
+        params={'page': 1, 'per_page': 200},
+        timeout=20,
+    )
+    if r.status_code >= 400:
+        return jsonify({'error': _auth_error(r, 'Failed to load users')}), 500
+    data = r.json()
+    users = data.get('users', data if isinstance(data, list) else [])
+    result = []
+    for user in users:
+        app_meta = user.get('app_metadata') or {}
+        result.append({
+            'id': user.get('id'),
+            'email': user.get('email') or '',
+            'created_at': user.get('created_at') or '',
+            'last_sign_in_at': user.get('last_sign_in_at') or '',
+            'email_confirmed_at': user.get('email_confirmed_at') or user.get('confirmed_at') or '',
+            'approved': app_meta.get('approved') is True or _is_admin_user(user),
+            'is_admin': _is_admin_user(user),
+        })
+    result.sort(key=lambda u: u.get('created_at') or '', reverse=True)
+    return jsonify({'users': result})
+
+@app.route('/api/admin/users/<uid>/approval', methods=['PUT'])
+@admin_required
+def api_admin_user_approval(uid):
+    body = request.get_json() or {}
+    approved = bool(body.get('approved'))
+    current = httpx.get(
+        f'{SUPABASE_URL}/auth/v1/admin/users/{uid}',
+        headers=_admin_api_headers(),
+        timeout=20,
+    )
+    if current.status_code >= 400:
+        return jsonify({'error': _auth_error(current, 'User not found')}), 404
+    user = current.json()
+    app_meta = user.get('app_metadata') or {}
+    app_meta['approved'] = approved
+    r = httpx.put(
+        f'{SUPABASE_URL}/auth/v1/admin/users/{uid}',
+        headers=_admin_api_headers(),
+        json={'app_metadata': app_meta},
+        timeout=20,
+    )
+    if r.status_code >= 400:
+        return jsonify({'error': _auth_error(r, 'Approval update failed')}), 500
+    return jsonify({'ok': True})
 
 @app.route('/api/competitors', methods=['POST'])
 @login_required
