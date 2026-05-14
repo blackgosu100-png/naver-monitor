@@ -503,6 +503,10 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
     <div class="topbar">
       <div class="topbar-title">재고 현황</div>
       <div class="topbar-meta" id="last-updated">마지막 조회: —</div>
+      <select class="form-input" id="history-mode" onchange="setHistoryMode(this.value)" style="padding:6px 10px;font-size:12px;width:auto">
+        <option value="daily" selected>일자별</option>
+        <option value="time">시간별</option>
+      </select>
       <select class="form-input" id="days-select" onchange="loadHistory()" style="padding:6px 10px;font-size:12px;width:auto">
         <option value="7">최근 7일</option>
         <option value="14" selected>최근 14일</option>
@@ -526,7 +530,7 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
       <div class="card" id="monitor-card">
         <div class="card-header">
           <div class="card-title" id="monitor-count">경쟁사 — 명</div>
-          <div style="font-size:11px;color:var(--text3)">행 클릭 시 옵션별 상세 보기</div>
+          <div style="font-size:11px;color:var(--text3)" id="monitor-mode-label">일자별 최신 조회값 비교</div>
         </div>
         <div class="table-wrap" id="table-wrap">
           <div class="empty-state">
@@ -673,6 +677,7 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
 const nativeFetch = window.fetch.bind(window);
 const CONFIG_CACHE_KEY = 'naverMonitorConfigCache:v1';
 const HISTORY_CACHE_KEY = 'naverMonitorHistoryCache:v1';
+const HISTORY_MODE_KEY = 'naverMonitorHistoryMode:v1';
 let accessToken = '';
 
 async function initAuth() {
@@ -786,6 +791,77 @@ function productThumb(comp) {
     return `<img class="product-thumb" src="${escHtml(comp.image_url)}" alt="">`;
   }
   return '<span class="product-thumb placeholder">IMG</span>';
+}
+
+function snapshotDayKey(key) {
+  return String(key || '').slice(0, 10);
+}
+
+function currentHistoryMode() {
+  const el = document.getElementById('history-mode');
+  return el ? el.value : 'daily';
+}
+
+function initHistoryMode() {
+  const el = document.getElementById('history-mode');
+  if (!el) return;
+  const saved = localStorage.getItem(HISTORY_MODE_KEY);
+  el.value = saved === 'time' ? 'time' : 'daily';
+}
+
+function setHistoryMode(mode) {
+  localStorage.setItem(HISTORY_MODE_KEY, mode === 'time' ? 'time' : 'daily');
+  renderTable(historyData);
+}
+
+function historyModeLabel() {
+  return currentHistoryMode() === 'time' ? '시간 포함 스냅샷 비교' : '일자별 최신 조회값 비교';
+}
+
+function toDailyHistory(data) {
+  if (!data || !Array.isArray(data.dates)) return data;
+
+  const dailyDates = [...new Set(data.dates.map(snapshotDayKey).filter(Boolean))].sort();
+  const competitors = (data.competitors || []).map(comp => {
+    const entry = {...comp, days: {}};
+    let prevTotal = null;
+
+    dailyDates.forEach(dayKey => {
+      const keysForDay = data.dates
+        .filter(key => snapshotDayKey(key) === dayKey)
+        .sort();
+      let latest = null;
+      for (const key of keysForDay) {
+        const row = comp.days ? comp.days[key] : null;
+        if (row) latest = row;
+      }
+
+      if (!latest) {
+        entry.days[dayKey] = null;
+        return;
+      }
+
+      const total = latest.total;
+      const sales = (total !== null && prevTotal !== null) ? prevTotal - total : null;
+      entry.days[dayKey] = {
+        ...latest,
+        sales,
+      };
+      if (total !== null) prevTotal = total;
+    });
+
+    return entry;
+  });
+
+  return {
+    ...data,
+    dates: dailyDates,
+    competitors,
+  };
+}
+
+function getDisplayHistory(data) {
+  return currentHistoryMode() === 'time' ? data : toDailyHistory(data);
 }
 
 function renderKPIs(data) {
@@ -906,6 +982,7 @@ function renderChart(data, sortedDates) {
 // ─── Init ────────────────────────────────────────────────────
 async function init() {
   await initAuth();
+  initHistoryMode();
   hydrateFromCache();
   await Promise.all([loadHistory(), loadConfig()]);
 }
@@ -962,6 +1039,8 @@ async function loadHistory() {
 }
 
 function renderTable(data) {
+  if (!data) return;
+  data = getDisplayHistory(data);
   const wrap = document.getElementById('table-wrap');
   const { dates, competitors } = data;
 
@@ -972,6 +1051,7 @@ function renderTable(data) {
   }
 
   document.getElementById('monitor-count').textContent = `경쟁사 ${competitors.length}명`;
+  document.getElementById('monitor-mode-label').textContent = historyModeLabel();
   renderKPIs(data);
 
   if (competitors.length === 0) {
