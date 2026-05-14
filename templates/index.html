@@ -100,7 +100,8 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); min-
 .user-info strong { color: #a1a1aa; display: block; font-size: 12px; margin-bottom: 1px; }
 
 /* ── Main ── */
-.main { margin-left: 216px; flex: 1; display: flex; flex-direction: column; min-height: 100vh; }
+body { overflow-x: hidden; }
+.main { margin-left: 216px; flex: 1; display: flex; flex-direction: column; min-height: 100vh; min-width: 0; }
 .topbar {
   background: var(--surface);
   border-bottom: 1px solid var(--border);
@@ -115,7 +116,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); min-
 }
 .topbar-title { font-size: 14px; font-weight: 600; flex: 1; letter-spacing: -.2px; }
 .topbar-meta { font-size: 11px; color: var(--text3); white-space: nowrap; }
-.content { padding: 24px; flex: 1; }
+.content { padding: 24px; flex: 1; min-width: 0; }
 
 .view-toggle {
   display: inline-flex;
@@ -143,6 +144,8 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); min-
   color: var(--text);
   box-shadow: var(--shadow);
 }
+.time-range-toggle { display: none; }
+.time-range-toggle.visible { display: inline-flex; }
 
 /* ── Buttons ── */
 .btn {
@@ -180,6 +183,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); min-
   border-radius: var(--radius-lg);
   border: 1px solid var(--border);
   box-shadow: var(--shadow);
+  min-width: 0;
 }
 .card-header {
   padding: 14px 18px;
@@ -191,7 +195,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); min-
 .card-title { font-size: 13px; font-weight: 600; flex: 1; letter-spacing: -.1px; }
 
 /* ── Monitor Grid Table ── */
-.table-wrap { overflow-x: auto; }
+.table-wrap { overflow-x: auto; max-width: 100%; min-width: 0; }
 .monitor-wrap { min-width: 600px; }
 
 .m-row {
@@ -202,8 +206,16 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); min-
   font-size: 13px;
   cursor: pointer;
   transition: background .1s;
+  background: var(--surface);
 }
 .m-row:hover { background: #fafbfc; }
+.m-row > :first-child {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: inherit;
+  box-shadow: 10px 0 14px -16px rgba(15, 23, 42, .35);
+}
 .m-row.m-head {
   background: #fafbfc;
   color: var(--text3);
@@ -216,6 +228,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); min-
   top: 0;
   z-index: 5;
 }
+.m-row.m-head > :first-child { z-index: 7; }
 .m-row.m-head:hover { background: #fafbfc; }
 .m-row.m-expanded { background: #f6fff9; }
 
@@ -458,7 +471,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); min-
 /* ── KPI Cards ── */
 .kpi-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 16px;
 }
@@ -558,6 +571,7 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
         <button class="view-toggle-btn active" id="history-mode-daily" type="button" onclick="setHistoryMode('daily')">일자별</button>
         <button class="view-toggle-btn" id="history-mode-time" type="button" onclick="setHistoryMode('time')">시간별</button>
       </div>
+      <button class="btn btn-sm time-range-toggle" id="time-range-toggle" type="button" onclick="toggleTimeRange()">전체 시간 보기</button>
       <select class="form-input" id="days-select" onchange="loadHistory()" style="padding:6px 10px;font-size:12px;width:auto">
         <option value="7">최근 7일</option>
         <option value="14" selected>최근 14일</option>
@@ -730,6 +744,8 @@ const nativeFetch = window.fetch.bind(window);
 const CONFIG_CACHE_KEY = 'naverMonitorConfigCache:v1';
 const HISTORY_CACHE_KEY = 'naverMonitorHistoryCache:v1';
 const HISTORY_MODE_KEY = 'naverMonitorHistoryMode:v1';
+const TIME_RANGE_KEY = 'naverMonitorTimeRange:v1';
+const TIME_COLUMN_LIMIT = 10;
 let accessToken = '';
 
 async function initAuth() {
@@ -853,10 +869,24 @@ function currentHistoryMode() {
   return localStorage.getItem(HISTORY_MODE_KEY) === 'time' ? 'time' : 'daily';
 }
 
+function showAllTimeColumns() {
+  return localStorage.getItem(TIME_RANGE_KEY) === 'all';
+}
+
 function syncHistoryModeButtons() {
   const mode = currentHistoryMode();
   document.getElementById('history-mode-daily')?.classList.toggle('active', mode === 'daily');
   document.getElementById('history-mode-time')?.classList.toggle('active', mode === 'time');
+  syncTimeRangeToggle();
+}
+
+function syncTimeRangeToggle(totalColumns = null) {
+  const btn = document.getElementById('time-range-toggle');
+  if (!btn) return;
+  const isTimeMode = currentHistoryMode() === 'time';
+  const hasOverflow = totalColumns === null || totalColumns > TIME_COLUMN_LIMIT;
+  btn.classList.toggle('visible', isTimeMode && hasOverflow);
+  btn.textContent = showAllTimeColumns() ? '최근 10회만 보기' : '전체 시간 보기';
 }
 
 function setHistoryMode(mode) {
@@ -865,8 +895,15 @@ function setHistoryMode(mode) {
   renderTable(historyData);
 }
 
+function toggleTimeRange() {
+  localStorage.setItem(TIME_RANGE_KEY, showAllTimeColumns() ? 'recent' : 'all');
+  syncTimeRangeToggle();
+  renderTable(historyData);
+}
+
 function historyModeLabel() {
-  return currentHistoryMode() === 'time' ? '시간 포함 스냅샷 비교' : '일자별 최신 조회값 비교';
+  if (currentHistoryMode() !== 'time') return '일자별 최신 조회값 비교';
+  return showAllTimeColumns() ? '시간별 전체 조회값 비교' : `시간별 최근 ${TIME_COLUMN_LIMIT}회 조회값 비교`;
 }
 
 function toDailyHistory(data) {
@@ -1123,8 +1160,14 @@ function renderTable(data) {
       })
     );
   }
+  const totalTimeColumns = sortedDates.length;
+  if (currentHistoryMode() === 'time' && !showAllTimeColumns()) {
+    sortedDates = sortedDates.slice(0, TIME_COLUMN_LIMIT);
+  }
+  syncTimeRangeToggle(totalTimeColumns);
 
-  const colTpl = `310px repeat(${sortedDates.length}, 1fr) 92px`;
+  const dateColTpl = sortedDates.length ? `repeat(${sortedDates.length}, minmax(112px, 124px))` : '';
+  const colTpl = `310px ${dateColTpl} 92px`;
   let html = `<div class="monitor-wrap">`;
 
   // Header row
