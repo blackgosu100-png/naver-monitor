@@ -71,6 +71,34 @@
     transition: border-color .12s, box-shadow .12s;
   }
   input:focus { border-color: #86efac; box-shadow: 0 0 0 3px rgba(3,199,90,.08); }
+  .password-wrap { position: relative; }
+  .password-wrap input { padding-right: 54px; }
+  .toggle-password {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    border: 0;
+    background: transparent;
+    color: #71717a;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 4px 5px;
+    font-family: inherit;
+  }
+  .toggle-password:hover { color: #18181b; }
+  .signup-notice {
+    display: none;
+    margin: 0 0 16px;
+    padding: 10px 12px;
+    border: 1px solid #86efac;
+    border-radius: 6px;
+    background: #f0fdf4;
+    color: #166534;
+    font-size: 12px;
+    line-height: 1.6;
+  }
   .btn-login {
     width: 100%;
     margin-top: 20px;
@@ -113,13 +141,20 @@
     <button class="tab" id="tab-signup" onclick="setMode('signup')">회원가입</button>
   </div>
 
+  <div class="signup-notice" id="signup-notice">
+    회원가입 후 이메일 인증 링크를 먼저 눌러주세요. 인증이 끝나면 관리자가 승인한 뒤 서비스를 이용할 수 있습니다.
+  </div>
+
   <div class="field">
     <label>이메일</label>
     <input type="email" id="email" placeholder="student@example.com" autocomplete="email">
   </div>
   <div class="field">
     <label>비밀번호</label>
-    <input type="password" id="password" placeholder="비밀번호 입력" autocomplete="current-password">
+    <div class="password-wrap">
+      <input type="password" id="password" placeholder="비밀번호 입력" autocomplete="current-password">
+      <button type="button" class="toggle-password" id="toggle-password" onclick="togglePassword()">보기</button>
+    </div>
   </div>
   <div class="msg" id="msg"></div>
   <button class="btn-login" id="btn" onclick="submitAuth()">로그인</button>
@@ -144,7 +179,17 @@ function setMode(next) {
   document.getElementById('tab-login').className = 'tab' + (mode === 'login' ? ' active' : '');
   document.getElementById('tab-signup').className = 'tab' + (mode === 'signup' ? ' active' : '');
   document.getElementById('btn').textContent = mode === 'login' ? '로그인' : '회원가입';
+  document.getElementById('signup-notice').style.display = mode === 'signup' ? 'block' : 'none';
+  document.getElementById('password').autocomplete = mode === 'login' ? 'current-password' : 'new-password';
   hideMsg();
+}
+
+function togglePassword() {
+  const input = document.getElementById('password');
+  const btn = document.getElementById('toggle-password');
+  const show = input.type === 'password';
+  input.type = show ? 'text' : 'password';
+  btn.textContent = show ? '숨김' : '보기';
 }
 
 async function submitAuth() {
