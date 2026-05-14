@@ -210,7 +210,6 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); min-
 }
 .date-cell .d-num.mute { color: var(--text3); font-size: 12px; font-weight: 400; }
 .date-cell .d-num.err  { color: var(--danger); font-size: 11px; font-weight: 400; }
-.date-cell .d-pill { margin-top: 4px; text-align: right; padding-right: 4px; }
 .date-cell .d-delta {
   font-size: 11.5px;
   font-weight: 600;
@@ -245,21 +244,6 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); min-
   flex-shrink: 0;
 }
 .m-row.m-expanded .expand-arr { transform: rotate(180deg); color: var(--accent); }
-
-/* pill 뱃지 */
-.d-pill-tag {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 7px;
-  border-radius: 10px;
-  font-size: 11px;
-  font-weight: 700;
-  font-family: var(--mono);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.d-pill-tag.sale    { background: #FFF1E6; color: #E8590C; }
-.d-pill-tag.restock { background: #EFF6FF; color: #2563EB; }
 
 /* 조회 버튼 셀 */
 .m-action { display: flex; flex-direction: column; gap: 5px; align-items: stretch; padding: 8px 0; }
@@ -1038,19 +1022,13 @@ function renderTable(data) {
         const total = day.total;
         const sales = day.sales;
         const totalStr = total !== null ? total.toLocaleString() : '—';
-        let pillHtml = '';
-        if (sales !== null && sales > 0) {
-          pillHtml = `<div class="d-pill"><span class="d-pill-tag sale">▼${sales.toLocaleString()}</span></div>`;
-        } else if (sales !== null && sales < 0) {
-          pillHtml = `<div class="d-pill"><span class="d-pill-tag restock">▲${Math.abs(sales).toLocaleString()}</span></div>`;
-        }
         let deltaHtml = '';
         if (sales !== null && sales > 0) {
           deltaHtml = `<div class="d-delta">[-${sales.toLocaleString()}]</div>`;
         } else if (sales !== null && sales < 0) {
           deltaHtml = `<div class="d-delta" style="color:#2563EB">[+${Math.abs(sales).toLocaleString()}]</div>`;
         }
-        html += `<div class="date-cell"><div><div class="d-num">${totalStr}</div>${pillHtml}</div>${deltaHtml}</div>`;
+        html += `<div class="date-cell"><div class="d-num">${totalStr}</div>${deltaHtml}</div>`;
       }
     });
 
