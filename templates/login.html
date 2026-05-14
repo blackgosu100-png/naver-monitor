@@ -142,7 +142,7 @@
   </div>
 
   <div class="signup-notice" id="signup-notice">
-    회원가입 후 이메일 인증 링크를 먼저 눌러주세요. 인증이 끝나면 관리자가 승인한 뒤 서비스를 이용할 수 있습니다.
+    회원가입 후 Supabase Auth에서 인증 메일이 발송됩니다. 받은 편지함의 인증 링크를 누른 뒤, 관리자 승인이 완료되면 서비스를 이용할 수 있습니다.
   </div>
 
   <div class="field">
@@ -208,7 +208,7 @@ async function submitAuth() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || '인증에 실패했습니다.');
     if (mode === 'signup') {
-      showMsg(data.message || '가입 확인 메일을 보냈습니다. 이메일 인증 후 관리자 승인을 기다려주세요.', 'ok');
+      showMsg(data.message || 'Supabase Auth에서 가입 확인 메일을 보냈습니다. 이메일 인증 후 관리자 승인을 기다려주세요.', 'ok');
       setMode('login');
       return;
     }
