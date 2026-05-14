@@ -245,9 +245,25 @@ async function runFetch(competitors) {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'START_FETCH') {
-    setStatus({ running: true, current: 0, total: msg.competitors.length, msg: '시작 중...', results: [] });
-    runFetch(msg.competitors);
-    sendResponse({ ok: true });
+    (async () => {
+      var competitors = msg.competitors || [];
+      if (!competitors.length) {
+        sendResponse({ ok: false, error: '조회할 상품이 없습니다.' });
+        return;
+      }
+      var state = await getAuthState();
+      if (!state.accessToken && state.refreshToken) {
+        state.accessToken = await refreshServiceToken(state) || '';
+      }
+      if (!state.accessToken) {
+        sendResponse({ ok: false, error: '확장 프로그램에서 서비스 로그인이 필요합니다.' });
+        return;
+      }
+      setStatus({ running: true, current: 0, total: competitors.length, msg: '시작 중...', results: [] });
+      runFetch(competitors);
+      sendResponse({ ok: true });
+    })();
+    return true;
   }
   return false;
 });

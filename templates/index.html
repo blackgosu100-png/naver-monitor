@@ -262,7 +262,8 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); min-
 .d-pill-tag.restock { background: #EFF6FF; color: #2563EB; }
 
 /* 조회 버튼 셀 */
-.m-action { display: flex; flex-direction: column; gap: 3px; align-items: center; padding: 8px 0; }
+.m-action { display: flex; flex-direction: column; gap: 5px; align-items: stretch; padding: 8px 0; }
+.m-action .btn { justify-content: center; width: 86px; padding-left: 8px; padding-right: 8px; }
 
 /* Options detail */
 .m-detail { display: none; border-bottom: 2px solid var(--accent); }
@@ -750,6 +751,7 @@ let schedTimer = null;
 let expandedRows = new Set();
 let chartInstance = null;
 let isAdminUser = false;
+let extensionRequestSeq = 0;
 const EXTENSION_STORE_URL = 'https://chromewebstore.google.com/detail/%EB%84%A4%EC%9D%B4%EB%B2%84-%EA%B2%BD%EC%9F%81%EC%82%AC-%EB%AA%A8%EB%8B%88%ED%84%B0%EB%A7%81/bihcbfmkldglanbhabgaiiccnhfbnmfk';
 
 function readCache(key) {
@@ -1007,7 +1009,7 @@ function renderTable(data) {
     );
   }
 
-  const colTpl = `280px repeat(${sortedDates.length}, 1fr) 90px`;
+  const colTpl = `280px repeat(${sortedDates.length}, 1fr) 118px`;
   let html = `<div class="monitor-wrap">`;
 
   // Header row
@@ -1018,7 +1020,7 @@ function renderTable(data) {
     const dow = ['일','월','화','수','목','금','토'][dt.getDay()];
     html += `<div class="date-cell"><div class="d-label">${snapshotLabel(d)}<br>${dow}</div><div></div></div>`;
   });
-  html += `<div style="text-align:center">조회</div></div>`;
+  html += `<div style="text-align:center">작업</div></div>`;
 
   // Data rows
   competitors.forEach(comp => {
@@ -1053,8 +1055,8 @@ function renderTable(data) {
     });
 
     html += `<div class="m-action" onclick="event.stopPropagation()">
-      <button class="btn btn-sm" onclick="fetchSingle('${comp.id}','${escHtml(comp.name)}')" title="개별 재고 조회">조회</button>
-      <button class="btn btn-sm" onclick="window.open('${escHtml(comp.url)}','_blank')" title="상품 페이지 열기">↗</button>
+      <button class="btn btn-sm" onclick="fetchSingle('${comp.id}','${escHtml(comp.name)}')" title="이 상품만 재고 조회">재고 조회</button>
+      <button class="btn btn-sm" onclick="window.open('${escHtml(comp.url)}','_blank')" title="네이버 상품 페이지 열기">상품 열기</button>
     </div></div>`;
 
     html += `<div class="m-detail${isExpanded ? ' open' : ''}" id="opt-${comp.id}">${renderOptionsDetailGrid(comp, sortedDates, colTpl)}</div>`;
@@ -1146,20 +1148,70 @@ function toggleExpand(cid) {
 }
 
 // ─── Fetch ───────────────────────────────────────────────────
+function getDashboardCompetitors() {
+  return ((historyData && historyData.competitors) || [])
+    .map(comp => ({ id: comp.id, name: comp.name, url: comp.url }))
+    .filter(comp => comp.id && comp.url);
+}
+
+function requestExtensionFetch(competitors) {
+  return new Promise((resolve, reject) => {
+    const requestId = `fetch-${Date.now()}-${++extensionRequestSeq}`;
+    const timer = setTimeout(() => {
+      window.removeEventListener('message', onMessage);
+      reject(new Error('확장 프로그램 연결을 확인할 수 없습니다.'));
+    }, 1600);
+
+    function onMessage(event) {
+      if (event.source !== window) return;
+      const msg = event.data || {};
+      if (msg.source !== 'naver-monitor-extension' || msg.type !== 'START_FETCH_RESULT' || msg.requestId !== requestId) return;
+      clearTimeout(timer);
+      window.removeEventListener('message', onMessage);
+      if (msg.ok) resolve(msg);
+      else reject(new Error(msg.error || '확장 프로그램에서 조회를 시작하지 못했습니다.'));
+    }
+
+    window.addEventListener('message', onMessage);
+    window.postMessage({
+      source: 'naver-monitor-dashboard',
+      type: 'START_FETCH',
+      requestId,
+      competitors
+    }, '*');
+  });
+}
+
+async function queueFetchForExtension(id = null) {
+  const r = await fetch('/api/ext/queue', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(id ? {id} : {})
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || '대기 등록 실패');
+  return data;
+}
+
 async function fetchAll() {
-  showLoading('확장 프로그램 조회 대기열 등록 중...');
+  showLoading('크롬 확장 프로그램에 전체 조회 요청 중...');
   const btn = document.getElementById('fetch-btn');
   btn.disabled = true;
   try {
-    const r = await fetch('/api/ext/queue', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
-    const data = await r.json().catch(() => ({}));
-    if (r.ok) {
-      showToast(`⏳ ${data.count || 0}개 대기 등록 — 크롬 확장 아이콘을 클릭하세요`);
-    } else {
-      showToast(data.error || '대기 등록 실패');
+    const competitors = getDashboardCompetitors();
+    if (!competitors.length) {
+      showToast('조회할 경쟁사가 없습니다');
+      return;
     }
-  } catch {
-    showToast('서버 오류');
+    try {
+      await requestExtensionFetch(competitors);
+      showToast(`확장 프로그램에서 ${competitors.length}개 상품 조회를 시작했습니다`);
+    } catch (e) {
+      const data = await queueFetchForExtension();
+      showToast(`확장 프로그램 업데이트/로그인 확인 필요 — ${data.count || 0}개 대기 등록됨`);
+    }
+  } catch (e) {
+    showToast(e.message || '서버 오류');
   } finally {
     hideLoading();
     btn.disabled = false;
@@ -1167,20 +1219,24 @@ async function fetchAll() {
 }
 
 async function fetchSingle(cid, name) {
+  showLoading(`${name} 재고 조회 요청 중...`);
   try {
-    const r = await fetch('/api/ext/queue', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({id: cid})
-    });
-    if (r.ok) {
-      showToast(`⏳ ${name} 대기 등록 — 크롬 확장 아이콘을 클릭하세요`);
-    } else {
-      const d = await r.json().catch(() => ({}));
-      showToast(d.error || '대기 등록 실패');
+    const comp = getDashboardCompetitors().find(item => item.id === cid);
+    if (!comp) {
+      showToast('조회할 상품 정보를 찾을 수 없습니다');
+      return;
     }
-  } catch {
-    showToast('서버 오류');
+    try {
+      await requestExtensionFetch([comp]);
+      showToast(`${name} 재고 조회를 시작했습니다`);
+    } catch (e) {
+      await queueFetchForExtension(cid);
+      showToast(`${name} 대기 등록됨 — 확장 프로그램 업데이트/로그인 확인 필요`);
+    }
+  } catch (e) {
+    showToast(e.message || '서버 오류');
+  } finally {
+    hideLoading();
   }
 }
 
