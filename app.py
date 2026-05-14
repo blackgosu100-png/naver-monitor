@@ -562,8 +562,8 @@ def api_auth_signup():
     data = r.json()
     return jsonify({
         'ok': True,
-        'requires_email_confirmation': True,
-        'message': '가입 확인 메일을 보냈습니다. 이메일 인증 후 관리자 승인을 기다려주세요.',
+        'requires_admin_approval': True,
+        'message': '회원가입 신청이 완료되었습니다. 관리자가 승인하면 로그인할 수 있습니다.',
         'user': data.get('user'),
     })
 

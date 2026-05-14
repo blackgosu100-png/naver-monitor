@@ -659,7 +659,7 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
       <div class="card" style="max-width:1000px">
         <div class="card-header">
           <div class="card-title">회원 승인 관리</div>
-          <div style="font-size:11px;color:var(--text3)">이메일 인증 후 승인된 회원만 서비스를 이용할 수 있습니다</div>
+          <div style="font-size:11px;color:var(--text3)">관리자가 승인한 회원만 서비스를 이용할 수 있습니다</div>
         </div>
         <div id="admin-users">
           <div class="empty-state">
@@ -1331,7 +1331,7 @@ async function loadAdminUsers() {
     }
     el.innerHTML = `
       <div class="admin-row admin-head">
-        <div>이메일</div><div>이메일 인증</div><div>승인 상태</div><div></div>
+        <div>이메일</div><div>가입 상태</div><div>승인 상태</div><div></div>
       </div>
       ${users.map(user => `
         <div class="admin-row">
