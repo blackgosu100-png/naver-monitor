@@ -1160,7 +1160,7 @@ function requestExtensionFetch(competitors) {
     const timer = setTimeout(() => {
       window.removeEventListener('message', onMessage);
       reject(new Error('확장 프로그램 연결을 확인할 수 없습니다.'));
-    }, 1600);
+    }, 5200);
 
     function onMessage(event) {
       if (event.source !== window) return;

@@ -38,11 +38,26 @@ async function refreshServiceToken(state) {
   return data.access_token;
 }
 
+async function ensureServiceToken(waitMs) {
+  var deadline = Date.now() + (waitMs || 3000);
+  var state = await getAuthState();
+
+  while (Date.now() <= deadline) {
+    if (state.accessToken) return state.accessToken;
+    if (state.refreshToken) {
+      var refreshed = await refreshServiceToken(state);
+      if (refreshed) return refreshed;
+    }
+    await new Promise(resolve => setTimeout(resolve, 250));
+    state = await getAuthState();
+  }
+
+  return '';
+}
+
 async function apiFetch(path, options) {
   var state = await getAuthState();
-  if (!state.accessToken && state.refreshToken) {
-    state.accessToken = await refreshServiceToken(state) || '';
-  }
+  if (!state.accessToken) state.accessToken = await ensureServiceToken(3000);
   if (!state.accessToken) throw new Error('서비스 로그인이 필요합니다.');
   options = options || {};
   options.headers = Object.assign({}, options.headers || {}, {
@@ -251,11 +266,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: false, error: '조회할 상품이 없습니다.' });
         return;
       }
-      var state = await getAuthState();
-      if (!state.accessToken && state.refreshToken) {
-        state.accessToken = await refreshServiceToken(state) || '';
-      }
-      if (!state.accessToken) {
+      var token = await ensureServiceToken(4000);
+      if (!token) {
         sendResponse({ ok: false, error: '확장 프로그램에서 서비스 로그인이 필요합니다.' });
         return;
       }
