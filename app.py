@@ -35,6 +35,26 @@ SUPABASE_KEY = os.environ.get('SUPABASE_KEY', '')
 SUPABASE_ANON_KEY = os.environ.get('SUPABASE_ANON_KEY', '')
 KST = ZoneInfo('Asia/Seoul')
 FREE_COMPETITOR_LIMIT = int(os.environ.get('FREE_COMPETITOR_LIMIT', '3'))
+PLAN_LIMITS = {
+    'free': FREE_COMPETITOR_LIMIT,
+    'basic': 10,
+    'pro': 20,
+    'business': 50,
+}
+PLAN_LABELS = {
+    'free': '무료',
+    'basic': '베이직',
+    'pro': '프로',
+    'business': '비즈니스',
+    'admin': '관리자',
+    'unlimited': '무제한',
+}
+PLAN_PRICING = [
+    {'id': 'free', 'label': '무료', 'price': '0원', 'period': '', 'competitor_limit': 3, 'recommended': False, 'note': '승인 없이 바로 사용'},
+    {'id': 'basic', 'label': '베이직', 'price': '19,900원', 'period': '3개월', 'competitor_limit': 10, 'recommended': False, 'note': '가볍게 확장'},
+    {'id': 'pro', 'label': '프로', 'price': '39,900원', 'period': '6개월', 'competitor_limit': 20, 'recommended': True, 'note': '추천 플랜'},
+    {'id': 'business', 'label': '비즈니스', 'price': '149,000원', 'period': '6개월', 'competitor_limit': 50, 'recommended': False, 'note': '상담 후 활성화'},
+]
 
 def _sb_headers(prefer: str = 'return=representation') -> dict:
     return {
@@ -301,14 +321,36 @@ def fetch_product_image(url: str) -> str:
 def db_get_competitors(user_id: str) -> list:
     return sb_select('competitors', f'?user_id=eq.{user_id}&order=created_at')
 
-def competitor_limit_for_user(user: dict) -> int | None:
+def user_plan(user: dict) -> str:
     if _is_admin_user(user):
-        return None
+        return 'admin'
     app_meta = user.get('app_metadata') or {}
-    plan = str(app_meta.get('plan') or app_meta.get('tier') or 'free').lower()
-    if plan in ('pro', 'paid', 'premium', 'unlimited'):
+    raw = str(app_meta.get('plan') or app_meta.get('tier') or '').strip().lower()
+    aliases = {
+        'starter': 'basic',
+        '베이직': 'basic',
+        'paid': 'pro',
+        'premium': 'pro',
+        '프로': 'pro',
+        'biz': 'business',
+        'enterprise': 'business',
+        '비즈니스': 'business',
+    }
+    plan = aliases.get(raw, raw)
+    if plan in PLAN_LIMITS or plan in ('unlimited',):
+        return plan
+    if app_meta.get('approved') is True:
+        return 'pro'
+    return 'free'
+
+def user_plan_label(user: dict) -> str:
+    return PLAN_LABELS.get(user_plan(user), '무료')
+
+def competitor_limit_for_user(user: dict) -> int | None:
+    plan = user_plan(user)
+    if plan in ('admin', 'unlimited'):
         return None
-    return FREE_COMPETITOR_LIMIT
+    return PLAN_LIMITS.get(plan, FREE_COMPETITOR_LIMIT)
 
 def _stock_snapshot(now: datetime | None = None) -> tuple[str, str]:
     dt = (now or datetime.now(KST)).astimezone(KST)
@@ -615,11 +657,15 @@ def api_config():
     email = g.user.get('email') or g.user.get('phone') or g.user_id
     competitors = db_get_competitors(g.user_id)
     competitor_limit = competitor_limit_for_user(g.user)
+    plan = user_plan(g.user)
     return jsonify({
         'username':    email,
         'user_id':     g.user_id,
         'is_admin':    _is_admin_user(g.user),
         'approved':    _is_approved_user(g.user),
+        'plan':        plan,
+        'plan_label':  PLAN_LABELS.get(plan, '무료'),
+        'pricing':     PLAN_PRICING,
         'competitors': competitors,
         'competitor_limit': competitor_limit,
         'competitor_count': len(competitors),
@@ -643,19 +689,49 @@ def api_admin_users():
     users = data.get('users', data if isinstance(data, list) else [])
     result = []
     for user in users:
-        app_meta = user.get('app_metadata') or {}
+        plan = user_plan(user)
         result.append({
             'id': user.get('id'),
             'email': user.get('email') or '',
             'created_at': user.get('created_at') or '',
             'last_sign_in_at': user.get('last_sign_in_at') or '',
             'email_confirmed_at': user.get('email_confirmed_at') or user.get('confirmed_at') or '',
-            'approved': app_meta.get('approved') is True or _is_admin_user(user),
-            'plan': str(app_meta.get('plan') or app_meta.get('tier') or 'free').lower(),
+            'approved': plan not in ('free',),
+            'plan': plan,
+            'plan_label': PLAN_LABELS.get(plan, '무료'),
+            'competitor_limit': competitor_limit_for_user(user),
             'is_admin': _is_admin_user(user),
         })
     result.sort(key=lambda u: u.get('created_at') or '', reverse=True)
     return jsonify({'users': result})
+
+@app.route('/api/admin/users/<uid>/plan', methods=['PUT'])
+@admin_required
+def api_admin_user_plan(uid):
+    body = request.get_json() or {}
+    plan = str(body.get('plan') or '').strip().lower()
+    if plan not in PLAN_LIMITS:
+        return jsonify({'error': '지원하지 않는 플랜입니다'}), 400
+    current = httpx.get(
+        f'{SUPABASE_URL}/auth/v1/admin/users/{uid}',
+        headers=_admin_api_headers(),
+        timeout=20,
+    )
+    if current.status_code >= 400:
+        return jsonify({'error': _auth_error(current, 'User not found')}), 404
+    user = current.json()
+    app_meta = user.get('app_metadata') or {}
+    app_meta['plan'] = plan
+    app_meta['approved'] = plan != 'free'
+    r = httpx.put(
+        f'{SUPABASE_URL}/auth/v1/admin/users/{uid}',
+        headers=_admin_api_headers(),
+        json={'app_metadata': app_meta},
+        timeout=20,
+    )
+    if r.status_code >= 400:
+        return jsonify({'error': _auth_error(r, 'Plan update failed')}), 500
+    return jsonify({'ok': True, 'plan': plan, 'plan_label': PLAN_LABELS.get(plan, '무료')})
 
 @app.route('/api/admin/users/<uid>/approval', methods=['PUT'])
 @admin_required
@@ -672,6 +748,7 @@ def api_admin_user_approval(uid):
     user = current.json()
     app_meta = user.get('app_metadata') or {}
     app_meta['approved'] = approved
+    app_meta['plan'] = 'pro' if approved else 'free'
     r = httpx.put(
         f'{SUPABASE_URL}/auth/v1/admin/users/{uid}',
         headers=_admin_api_headers(),
@@ -694,7 +771,7 @@ def api_add_competitor():
         return jsonify({'error': 'smartstore.naver.com 또는 brand.naver.com URL이어야 합니다'}), 400
     competitor_limit = competitor_limit_for_user(g.user)
     if competitor_limit is not None and len(db_get_competitors(g.user_id)) >= competitor_limit:
-        return jsonify({'error': f'무료 사용자는 경쟁사 상품을 {competitor_limit}개까지만 등록할 수 있습니다.'}), 403
+        return jsonify({'error': f'{user_plan_label(g.user)} 플랜은 경쟁사 상품을 {competitor_limit}개까지만 등록할 수 있습니다.'}), 403
     cid = f"c{uuid.uuid4().hex}"
     sb_insert('competitors', {
         'id': cid,

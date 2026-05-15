@@ -423,11 +423,13 @@ body { overflow-x: hidden; }
 .badge-green { background: var(--accent-bg); color: var(--green); border-color: var(--accent-border); }
 .badge-red { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-border); }
 .badge-gray { background: var(--surface2); color: var(--text3); border-color: var(--border); }
-.admin-row { display: grid; grid-template-columns: 1.4fr .8fr .8fr 120px; gap: 12px; align-items: center; padding: 11px 14px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.admin-row { display: grid; grid-template-columns: 1.4fr .7fr .8fr 280px; gap: 12px; align-items: center; padding: 11px 14px; border-bottom: 1px solid var(--border); font-size: 12px; }
 .admin-row.admin-head { background: #fafbfc; color: var(--text3); font-size: 11px; font-weight: 600; }
 .admin-row:last-child { border-bottom: 0; }
 .admin-email { font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .admin-muted { color: var(--text3); }
+.plan-actions { display:flex; gap:5px; flex-wrap:wrap; }
+.plan-actions .btn { padding:4px 8px; min-width:48px; }
 
 /* ── Toast ── */
 .toast {
@@ -696,7 +698,7 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
             </div>
             <div style="margin-top:12px;background:#fff;border:1px solid var(--border);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--text2);line-height:1.8">
               <strong style="color:var(--text)">플랜 안내</strong><br>
-              무료: 경쟁사 3개 · 베이직: 19,900원 / 3개월 / 경쟁사 10개 · 프로: 39,000원 / 6개월 / 경쟁사 30개
+              무료: 0원 / 경쟁사 3개 · 베이직: 19,900원 / 3개월 / 경쟁사 10개 · 프로 추천: 39,900원 / 6개월 / 경쟁사 20개 · 비즈니스: 149,000원 / 6개월 / 경쟁사 50개(상담 후 활성화)
             </div>
             <div style="margin-top:12px;display:flex;gap:8px">
               <button class="btn btn-sm btn-primary" onclick="openStoreUrl()">스토어 열기</button>
@@ -720,7 +722,7 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
       <div class="card" style="max-width:1000px">
         <div class="card-header">
           <div class="card-title">플랜 전환 관리</div>
-          <div style="font-size:11px;color:var(--text3)">무료 사용자는 즉시 이용 가능하며, 유료 전환만 관리자가 처리합니다</div>
+          <div style="font-size:11px;color:var(--text3)">무료 사용자는 즉시 이용 가능하며, 베이직/프로/비즈니스 전환만 관리자가 처리합니다</div>
         </div>
         <div id="admin-users">
           <div class="empty-state">
@@ -1453,11 +1455,13 @@ function renderCompetitorLimit(cfg) {
   if (!note) return;
   const competitors = (cfg && cfg.competitors) || [];
   const limit = cfg ? cfg.competitor_limit : null;
+  const planLabel = (cfg && cfg.plan_label) || '무료';
   if (limit === null || limit === undefined) {
     note.textContent = `현재 등록 ${competitors.length}개 · 등록 제한 없음`;
     return;
   }
-  note.textContent = `무료 사용자는 경쟁사 상품을 ${limit}개까지 등록할 수 있습니다. 현재 ${competitors.length}/${limit}개`;
+  const remain = Math.max(limit - competitors.length, 0);
+  note.textContent = `${planLabel} 플랜: 경쟁사 상품 ${limit}개까지 등록 가능 · 현재 ${competitors.length}/${limit}개 · 남은 ${remain}개`;
 }
 
 function renderCompList(competitors) {
@@ -1486,7 +1490,7 @@ async function addCompetitor() {
   const limit = appConfig.competitor_limit;
   const currentCount = (appConfig.competitors || []).length;
   if (limit !== null && limit !== undefined && currentCount >= limit) {
-    showToast(`무료 사용자는 경쟁사 상품을 ${limit}개까지만 등록할 수 있습니다.`);
+    showToast(`${appConfig.plan_label || '현재'} 플랜은 경쟁사 상품을 ${limit}개까지만 등록할 수 있습니다.`);
     return;
   }
   try {
@@ -1597,6 +1601,27 @@ function openStoreUrl() {
 }
 
 // ─── Admin ──────────────────────────────────────────────────
+const PLAN_LABELS = {free:'무료', basic:'베이직', pro:'프로 추천', business:'비즈니스'};
+const PLAN_LIMITS = {free:3, basic:10, pro:20, business:50};
+
+function renderUserPlanBadge(user) {
+  if (user.is_admin) return '<span class="badge badge-green">관리자</span>';
+  const plan = user.plan || 'free';
+  const label = PLAN_LABELS[plan] || user.plan_label || '무료';
+  const limit = PLAN_LIMITS[plan] || user.competitor_limit || 3;
+  const badgeClass = plan === 'pro' ? 'badge-green' : plan === 'business' ? 'badge-red' : plan === 'basic' ? 'badge-green' : 'badge-gray';
+  return `<span class="badge ${badgeClass}">${label} · ${limit}개</span>`;
+}
+
+function renderPlanActions(user) {
+  if (user.is_admin) return '';
+  return `<div class="plan-actions">
+    ${Object.entries(PLAN_LABELS).map(([plan, label]) => `
+      <button class="btn btn-sm ${user.plan === plan ? 'btn-primary' : ''}" onclick="setUserPlan('${user.id}', '${plan}')">${label.replace(' 추천', '')}</button>
+    `).join('')}
+  </div>`;
+}
+
 async function loadAdminUsers() {
   if (!isAdminUser) return;
   const el = document.getElementById('admin-users');
@@ -1612,7 +1637,7 @@ async function loadAdminUsers() {
     }
     el.innerHTML = `
       <div class="admin-row admin-head">
-        <div>이메일</div><div>가입 상태</div><div>플랜</div><div>유료 전환</div>
+        <div>이메일</div><div>가입 상태</div><div>현재 플랜</div><div>플랜 변경</div>
       </div>
       ${users.map(user => `
         <div class="admin-row">
@@ -1620,11 +1645,9 @@ async function loadAdminUsers() {
             <div class="admin-email" title="${escHtml(user.email)}">${escHtml(user.email || user.id)}</div>
             <div class="admin-muted">가입 ${formatAdminDate(user.created_at)}</div>
           </div>
-          <div>${user.email_confirmed_at ? '<span class="badge badge-green">인증됨</span>' : '<span class="badge badge-gray">대기중</span>'}</div>
-          <div>${user.is_admin ? '<span class="badge badge-green">관리자</span>' : user.approved ? '<span class="badge badge-green">유료</span>' : '<span class="badge badge-gray">무료</span>'}</div>
-          <div>
-            ${user.is_admin ? '' : `<button class="btn btn-sm ${user.approved ? '' : 'btn-primary'}" onclick="setUserApproval('${user.id}', ${user.approved ? 'false' : 'true'})">${user.approved ? '무료 전환' : '유료 전환'}</button>`}
-          </div>
+          <div><span class="badge badge-green">가입 완료</span></div>
+          <div>${renderUserPlanBadge(user)}</div>
+          <div>${renderPlanActions(user)}</div>
         </div>
       `).join('')}`;
   } catch (e) {
@@ -1632,16 +1655,16 @@ async function loadAdminUsers() {
   }
 }
 
-async function setUserApproval(uid, approved) {
+async function setUserPlan(uid, plan) {
   try {
-    const r = await fetch(`/api/admin/users/${uid}/approval`, {
+    const r = await fetch(`/api/admin/users/${uid}/plan`, {
       method: 'PUT',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({approved})
+      body: JSON.stringify({plan})
     });
     const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(data.error || '승인 상태 변경 실패');
-    showToast(approved ? '유료 사용자로 전환됨' : '무료 사용자로 전환됨');
+    if (!r.ok) throw new Error(data.error || '플랜 변경 실패');
+    showToast(`${PLAN_LABELS[plan] || '선택한'} 플랜으로 변경됨`);
     await loadAdminUsers();
   } catch (e) {
     showToast(e.message || '플랜 상태 변경 실패');
