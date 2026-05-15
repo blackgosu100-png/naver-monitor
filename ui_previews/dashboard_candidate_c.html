@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Candidate C - Operator Console</title>
+<style>
+:root{--bg:#f6f7f8;--panel:#fff;--line:#e5e7eb;--text:#111827;--muted:#6b7280;--green:#03c75a;--blue:#2563eb;--orange:#ea580c;--red:#b91c1c;--mono:ui-monospace,SFMono-Regular,Menlo,monospace;--sans:Inter,"Noto Sans KR",system-ui,sans-serif}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:13px/1.5 var(--sans)}.layout{display:grid;grid-template-columns:260px 1fr;min-height:100vh}.rail{background:#101114;color:#d4d4d8;padding:16px}.brand{font-weight:800;color:#fff;margin-bottom:16px}.nav button{width:100%;border:0;background:transparent;color:#a1a1aa;text-align:left;padding:10px;border-radius:6px}.nav .active{background:#173824;color:#4ade80}.main{display:grid;grid-template-rows:auto 1fr;min-width:0}.bar{height:58px;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 20px;gap:10px}.bar h1{font-size:15px;margin:0 auto 0 0}.pill{border:1px solid var(--line);border-radius:999px;padding:6px 10px;background:#fff;color:var(--muted)}.start{border:0;border-radius:7px;background:#111827;color:#fff;padding:8px 13px;font-weight:800}.workspace{display:grid;grid-template-columns:300px 1fr;gap:14px;padding:18px;min-width:0}.panel{background:#fff;border:1px solid var(--line);border-radius:8px;overflow:hidden;min-width:0}.head{display:flex;align-items:center;gap:8px;height:48px;padding:0 14px;border-bottom:1px solid var(--line)}.head b{margin-right:auto}.filter{border:1px solid var(--line);border-radius:6px;padding:7px 9px;width:100%;margin:12px 0}.list{padding:0 12px 12px}.item{display:grid;grid-template-columns:46px 1fr auto;gap:10px;align-items:center;padding:10px;border:1px solid transparent;border-radius:8px;margin-bottom:6px}.item.active{background:#f0fdf4;border-color:#86efac}.thumb{width:46px;height:46px;border-radius:7px;border:1px solid var(--line);background:linear-gradient(135deg,#e5e7eb,#fff);display:grid;place-items:center;color:#9ca3af;font-size:11px;font-weight:800}.name{font-weight:800}.mini{color:var(--muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.score{font:800 14px/1 var(--mono);color:var(--orange)}.content{display:grid;grid-template-rows:auto auto 1fr;min-width:0}.focus{display:grid;grid-template-columns:76px 1fr auto;gap:14px;padding:16px;border-bottom:1px solid var(--line)}.focus .thumb{width:76px;height:76px}.focus h2{margin:0 0 4px;font-size:18px}.actions{display:flex;gap:8px;align-items:start}.btn{border:1px solid var(--line);background:#fff;border-radius:7px;padding:8px 10px}.btn.green{background:var(--green);border-color:var(--green);color:#fff;font-weight:800}.strip{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;padding:14px;border-bottom:1px solid var(--line);background:#fbfbfc}.stat{background:#fff;border:1px solid var(--line);border-radius:8px;padding:12px}.stat label{display:block;color:var(--muted);font-size:11px;margin-bottom:6px}.stat strong{font:800 22px/1 var(--mono)}.compare{overflow:auto}.matrix{min-width:900px}.row{display:grid;grid-template-columns:260px repeat(6,1fr);border-bottom:1px solid #f1f5f9;align-items:center}.row.headrow{background:#f8fafc;color:var(--muted);font-size:11px;font-weight:800;position:sticky;top:0}.cell{padding:12px;text-align:right}.cell:first-child{text-align:left}.qty{font:800 17px/1.1 var(--mono)}.delta{font:800 11px/1 var(--mono);margin-top:5px}.sale{color:var(--orange)}.restock{color:var(--blue)}.timeline{display:flex;gap:6px;align-items:center;color:var(--muted);font-size:12px}.dot{width:8px;height:8px;border-radius:50%;background:var(--green)}@media(max-width:1000px){.layout{grid-template-columns:1fr}.rail{display:none}.workspace{grid-template-columns:1fr}.content{min-height:620px}}@media(max-width:640px){.bar{height:auto;flex-wrap:wrap;padding:12px}.workspace{padding:12px}.focus{grid-template-columns:60px 1fr}.focus .thumb{width:60px;height:60px}.actions{grid-column:1/-1}.strip{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside class="rail">
+    <div class="brand">네이버 모니터링</div>
+    <div class="nav"><button class="active">재고 콘솔</button><button>경쟁사 URL</button><button>조회 이력</button><button>설정</button></div>
+  </aside>
+  <main class="main">
+    <header class="bar"><h1>재고 콘솔</h1><span class="pill">기준: 5/13 09:00</span><span class="pill">비교: 5/12 09:00</span><button class="start">전체 조회</button></header>
+    <div class="workspace">
+      <section class="panel">
+        <div class="head"><b>경쟁사</b><span class="pill">12</span></div>
+        <div class="list">
+          <input class="filter" placeholder="경쟁사 검색">
+          <div class="item active"><div class="thumb">IMG</div><div><div class="name">마베비보틀워머</div><div class="mini">최근 판매 신호 큼</div></div><div class="score">-18</div></div>
+          <div class="item"><div class="thumb">IMG</div><div><div class="name">젖병건조대</div><div class="mini">꾸준한 재고 감소</div></div><div class="score">-14</div></div>
+          <div class="item"><div class="thumb">IMG</div><div><div class="name">철제화분선반</div><div class="mini">재입고 감지</div></div><div class="score" style="color:var(--blue)">+12</div></div>
+          <div class="item"><div class="thumb">IMG</div><div><div class="name">수납 트롤리</div><div class="mini">조회 실패, 재시도 필요</div></div><div class="score" style="color:var(--red)">!</div></div>
+        </div>
+      </section>
+      <section class="panel content">
+        <div class="focus">
+          <div class="thumb">IMG</div>
+          <div><h2>마베비보틀워머</h2><div class="mini">brand.naver.com/mabebi/products/11978228576</div><div class="timeline"><span class="dot"></span>오늘 09:00 조회 성공, 어제 같은 시간 대비 18개 감소</div></div>
+          <div class="actions"><button class="btn green">개별 조회</button><button class="btn">상품 열기</button></div>
+        </div>
+        <div class="strip">
+          <div class="stat"><label>현재 총 재고</label><strong>184</strong></div>
+          <div class="stat"><label>24시간 판매 추정</label><strong class="sale">18</strong></div>
+          <div class="stat"><label>7일 누적 감소</label><strong>76</strong></div>
+          <div class="stat"><label>옵션 수</label><strong>4</strong></div>
+        </div>
+        <div class="compare">
+          <div class="matrix">
+            <div class="row headrow"><div class="cell">옵션명</div><div class="cell">5/13 09:00</div><div class="cell">5/12 09:00</div><div class="cell">5/11 09:00</div><div class="cell">5/10 09:00</div><div class="cell">5/09 09:00</div><div class="cell">변화</div></div>
+            <div class="row"><div class="cell"><b>화이트 / 단품</b></div><div class="cell"><div class="qty">76</div></div><div class="cell"><div class="qty">82</div></div><div class="cell"><div class="qty">90</div></div><div class="cell"><div class="qty">90</div></div><div class="cell"><div class="qty">91</div></div><div class="cell"><div class="delta sale">-6</div></div></div>
+            <div class="row"><div class="cell"><b>베이지 / 단품</b></div><div class="cell"><div class="qty">108</div></div><div class="cell"><div class="qty">120</div></div><div class="cell"><div class="qty">131</div></div><div class="cell"><div class="qty">140</div></div><div class="cell"><div class="qty">139</div></div><div class="cell"><div class="delta sale">-12</div></div></div>
+            <div class="row"><div class="cell"><b>세트 구성</b></div><div class="cell"><div class="qty">0</div></div><div class="cell"><div class="qty">0</div></div><div class="cell"><div class="qty">0</div></div><div class="cell"><div class="qty">8</div></div><div class="cell"><div class="qty">10</div></div><div class="cell"><div class="delta">품절</div></div></div>
+            <div class="row"><div class="cell"><b>합계</b></div><div class="cell"><div class="qty">184</div></div><div class="cell"><div class="qty">202</div></div><div class="cell"><div class="qty">221</div></div><div class="cell"><div class="qty">238</div></div><div class="cell"><div class="qty">240</div></div><div class="cell"><div class="delta sale">-18</div></div></div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+</body>
+</html>

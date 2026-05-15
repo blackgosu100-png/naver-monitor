@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>재고 보충 감지 UI 후보</title>
+<style>
+:root {
+  --bg:#f6f7f9; --surface:#fff; --line:#e5e7eb; --text:#111827; --sub:#6b7280;
+  --green:#16a34a; --orange:#ea580c; --blue:#2563eb; --amber:#d97706; --red:#dc2626;
+  --sky:#0ea5e9; --soft-green:#ecfdf5; --soft-orange:#fff7ed; --soft-blue:#eff6ff;
+  --shadow:0 6px 18px rgba(15,23,42,.06);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--text); }
+.app { display:flex; min-height:100vh; }
+.side { width:216px; background:#18181b; color:#d4d4d8; padding:20px 12px; }
+.brand { display:flex; gap:10px; align-items:center; font-weight:800; margin-bottom:28px; }
+.brand-icon { width:32px; height:32px; border-radius:8px; background:#00c853; display:grid; place-items:center; color:#fff; }
+.nav { padding:10px 12px; border-radius:8px; margin-bottom:8px; color:#a1a1aa; }
+.nav.active { background:#073d25; color:#22c55e; font-weight:700; }
+.main { flex:1; min-width:0; }
+.top { height:56px; background:#fff; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:12px; padding:0 24px; }
+.top h1 { font-size:15px; margin:0; flex:1; }
+.toggle { display:flex; background:#f1f5f9; border:1px solid #e2e8f0; border-radius:9px; padding:3px; }
+.toggle button { border:0; background:transparent; padding:7px 14px; border-radius:7px; font-weight:800; color:#64748b; }
+.toggle .on { background:white; color:#111827; box-shadow:0 2px 8px rgba(15,23,42,.08); }
+.content { padding:24px; min-width:0; }
+.panel-note { background:#fff; border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin-bottom:16px; color:#475569; line-height:1.6; }
+.tabs { display:flex; gap:8px; margin-bottom:14px; }
+.tabs button { border:1px solid var(--line); background:white; border-radius:8px; padding:9px 13px; font-weight:800; cursor:pointer; }
+.tabs button.active { border-color:#111827; color:#111827; box-shadow:var(--shadow); }
+.candidate { display:none; }
+.candidate.active { display:block; }
+.grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-bottom:16px; }
+.card { background:white; border:1px solid var(--line); border-radius:8px; box-shadow:var(--shadow); padding:16px; }
+.metric-label { color:#64748b; font-size:12px; font-weight:700; margin-bottom:8px; }
+.metric-value { font-size:28px; font-weight:900; line-height:1; }
+.metric-sub { margin-top:8px; color:#64748b; font-size:12px; }
+.table-card { background:white; border:1px solid var(--line); border-radius:8px; overflow:hidden; box-shadow:var(--shadow); }
+.table-head { display:flex; align-items:center; padding:15px 18px; border-bottom:1px solid var(--line); gap:12px; }
+.table-head strong { flex:1; }
+.legend { display:flex; gap:8px; flex-wrap:wrap; color:#64748b; font-size:12px; }
+.chip { border-radius:999px; padding:4px 8px; font-weight:800; background:#f1f5f9; }
+.chip.orange { color:var(--orange); background:var(--soft-orange); }
+.chip.blue { color:var(--blue); background:var(--soft-blue); }
+.chip.green { color:var(--green); background:var(--soft-green); }
+.table-wrap { overflow-x:auto; }
+.row { display:grid; grid-template-columns:310px repeat(6,124px) 148px; min-width:1200px; border-bottom:1px solid #eef2f7; align-items:center; }
+.row.header { background:#f8fafc; color:#94a3b8; font-size:12px; font-weight:800; }
+.cell { padding:13px 14px; min-height:58px; }
+.product { display:flex; align-items:center; gap:10px; position:sticky; left:0; background:inherit; z-index:3; box-shadow:10px 0 14px -16px rgba(15,23,42,.35); }
+.link { width:28px; height:28px; border:1px solid #dbeafe; border-radius:7px; color:var(--sky); display:grid; place-items:center; font-weight:900; }
+.thumb { width:36px; height:36px; border-radius:7px; background:linear-gradient(135deg,#fef3c7,#dbeafe); border:1px solid #e5e7eb; }
+.name { font-weight:900; }
+.stock { font-size:20px; font-weight:950; letter-spacing:-.4px; }
+.delta { color:var(--orange); font-weight:900; margin-left:4px; }
+.rise { color:var(--blue); font-weight:900; margin-left:4px; }
+.badge { display:inline-flex; align-items:center; border-radius:999px; padding:4px 8px; font-size:12px; font-weight:900; margin-top:5px; }
+.badge.rest { color:var(--blue); background:var(--soft-blue); }
+.badge.est { color:var(--amber); background:#fffbeb; }
+.badge.ok { color:var(--green); background:var(--soft-green); }
+.action { text-align:center; }
+.btn { border:1px solid #d1d5db; background:#fff; border-radius:7px; padding:7px 10px; font-weight:800; }
+.insight { display:grid; grid-template-columns:1.2fr 1fr; gap:16px; margin-top:16px; }
+.timeline { display:flex; align-items:center; gap:8px; padding:14px; overflow-x:auto; }
+.step { min-width:116px; border:1px solid var(--line); border-radius:8px; padding:10px; background:#fff; }
+.step .t { color:#64748b; font-size:12px; font-weight:800; }
+.step .n { font-size:21px; font-weight:950; margin-top:6px; }
+.arrow { color:#94a3b8; font-weight:900; }
+.callout { border-left:4px solid var(--amber); background:#fffbeb; border-radius:8px; padding:14px; line-height:1.65; }
+.callout strong { color:#92400e; }
+.mini-table { width:100%; border-collapse:collapse; font-size:13px; }
+.mini-table th,.mini-table td { border-bottom:1px solid #eef2f7; text-align:left; padding:10px; }
+.mini-table th { color:#64748b; background:#f8fafc; }
+.pill-row { display:flex; gap:8px; flex-wrap:wrap; }
+.pill { border-radius:8px; padding:10px 12px; background:#f8fafc; border:1px solid #e5e7eb; }
+.pill b { display:block; font-size:20px; margin-top:4px; }
+@media (max-width:900px) {
+  .side { display:none; }
+  .grid,.insight { grid-template-columns:1fr; }
+  .content { padding:14px; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand"><div class="brand-icon">↗</div><div>네이버 모니터링<br><small>Stock Monitor</small></div></div>
+    <div class="nav active">대시보드</div>
+    <div class="nav">설정</div>
+    <div class="nav">관리자 보드</div>
+  </aside>
+  <main class="main">
+    <div class="top">
+      <h1>재고 현황 - 보충 감지 예시</h1>
+      <div class="toggle"><button class="on">일자별</button><button>시간별</button></div>
+      <button class="btn">최근 14일</button>
+    </div>
+    <div class="content">
+      <div class="panel-note">
+        마베비 보틀워머처럼 재고가 <b>46 → 975</b>로 크게 증가하면 단순 판매량이 아니라 <b>재고 보충/수정</b>으로 분리해서 보여주는 예시입니다.
+        999로 보충했다고 추정하면, 999에서 948까지 내려간 구간은 <b>추정 판매 51개</b>로 볼 수 있습니다.
+      </div>
+
+      <div class="tabs">
+        <button class="active" onclick="showCandidate('a', this)">A. 표 안에 바로 표시</button>
+        <button onclick="showCandidate('b', this)">B. 상품 상세 카드</button>
+        <button onclick="showCandidate('c', this)">C. 리포트형 요약</button>
+      </div>
+
+      <section class="candidate active" id="candidate-a">
+        <div class="grid">
+          <div class="card"><div class="metric-label">확정 판매</div><div class="metric-value" style="color:var(--green)">27개</div><div class="metric-sub">조회값 감소분만 합산</div></div>
+          <div class="card"><div class="metric-label">추정 판매</div><div class="metric-value" style="color:var(--amber)">51개</div><div class="metric-sub">999 보충 가정 포함</div></div>
+          <div class="card"><div class="metric-label">보충 감지</div><div class="metric-value" style="color:var(--blue)">+929</div><div class="metric-sub">46 → 975 구간</div></div>
+          <div class="card"><div class="metric-label">신뢰도</div><div class="metric-value">중간</div><div class="metric-sub">999가 직접 관측되지 않음</div></div>
+        </div>
+        <div class="table-card">
+          <div class="table-head">
+            <strong>경쟁사 11명</strong>
+            <div class="legend"><span class="chip orange">[-] 확정 판매</span><span class="chip blue">보충 감지</span><span class="chip green">추정 표시</span></div>
+          </div>
+          <div class="table-wrap">
+            <div class="row header">
+              <div class="cell product">URL 바로가기 / 경쟁사 상품명</div>
+              <div class="cell">5/14<br>22:28</div><div class="cell">5/14<br>17:49</div><div class="cell">5/14<br>16:21</div>
+              <div class="cell">5/14<br>15:59</div><div class="cell">5/13<br>14:15</div><div class="cell">5/13<br>06:19</div><div class="cell action">분석</div>
+            </div>
+            <div class="row">
+              <div class="cell product"><div class="link">↗</div><div class="thumb"></div><div class="name">마베비 보틀워머</div></div>
+              <div class="cell"><span class="stock">948</span><span class="delta">[-25]</span></div>
+              <div class="cell"><span class="stock">973</span></div>
+              <div class="cell"><span class="stock">973</span><span class="delta">[-2]</span></div>
+              <div class="cell"><span class="stock">975</span><br><span class="badge rest">보충 감지 +929</span></div>
+              <div class="cell"><span class="stock">46</span></div>
+              <div class="cell"><span class="stock">70</span><span class="delta">[-8]</span></div>
+              <div class="cell action"><button class="btn">분석 보기</button></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="candidate" id="candidate-b">
+        <div class="table-card">
+          <div class="table-head"><strong>마베비 보틀워머 상세 분석</strong><span class="chip blue">재고 보충/수정 감지</span></div>
+          <div class="timeline">
+            <div class="step"><div class="t">5/13 14:15</div><div class="n">46</div></div><div class="arrow">→</div>
+            <div class="step"><div class="t">보충 추정</div><div class="n" style="color:var(--blue)">999</div></div><div class="arrow">→</div>
+            <div class="step"><div class="t">5/14 15:59</div><div class="n">975</div></div><div class="arrow">→</div>
+            <div class="step"><div class="t">5/14 16:21</div><div class="n">973</div></div><div class="arrow">→</div>
+            <div class="step"><div class="t">5/14 22:28</div><div class="n">948</div></div>
+          </div>
+        </div>
+        <div class="insight">
+          <div class="card">
+            <div class="metric-label">해석</div>
+            <div class="callout">
+              <strong>46 → 975</strong>는 판매가 아니라 재고 보충으로 봅니다.<br>
+              999로 보충했다고 가정하면 <strong>999 → 948 = 51개</strong> 판매 추정입니다.<br>
+              실제 조회값으로 확인되는 감소분은 <strong>975 → 973 → 948 = 27개</strong>입니다.
+            </div>
+          </div>
+          <div class="card">
+            <table class="mini-table">
+              <tr><th>구분</th><th>수량</th><th>설명</th></tr>
+              <tr><td>확정 판매</td><td><b>27개</b></td><td>조회로 확인된 감소분</td></tr>
+              <tr><td>추정 판매</td><td><b>51개</b></td><td>999 보충 기준 가정</td></tr>
+              <tr><td>보충 감지</td><td><b>+929</b></td><td>46에서 975로 증가</td></tr>
+              <tr><td>신뢰도</td><td><b>중간</b></td><td>999가 직접 찍히진 않음</td></tr>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="candidate" id="candidate-c">
+        <div class="table-card">
+          <div class="table-head"><strong>오늘 판매 리포트</strong><span class="chip green">수강생 설명용</span></div>
+          <div class="cell">
+            <div class="pill-row">
+              <div class="pill">마베비 보틀워머<br><b>관심 필요</b></div>
+              <div class="pill">확정 판매<br><b style="color:var(--green)">27개</b></div>
+              <div class="pill">추정 판매<br><b style="color:var(--amber)">51개</b></div>
+              <div class="pill">보충/수정<br><b style="color:var(--blue)">1회</b></div>
+              <div class="pill">현재 재고<br><b>948개</b></div>
+            </div>
+          </div>
+          <div class="cell">
+            <div class="callout">
+              이 상품은 중간에 재고가 크게 증가했습니다. 그래서 오늘 판매량은 <strong>확정 판매 27개</strong>와
+              <strong>추정 판매 51개</strong>를 분리해서 보는 것이 안전합니다. 교육용 화면에서는 이 방식이 가장 설명하기 쉽습니다.
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+<script>
+function showCandidate(id, btn) {
+  document.querySelectorAll('.candidate').forEach(el => el.classList.remove('active'));
+  document.getElementById('candidate-' + id).classList.add('active');
+  document.querySelectorAll('.tabs button').forEach(el => el.classList.remove('active'));
+  btn.classList.add('active');
+}
+</script>
+</body>
+</html>

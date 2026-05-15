@@ -4,7 +4,7 @@ from functools import wraps
 from zoneinfo import ZoneInfo
 
 import httpx
-from flask import Flask, request, jsonify, session, render_template, redirect, g
+from flask import Flask, request, jsonify, session, render_template, redirect, g, send_from_directory
 from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
@@ -504,6 +504,14 @@ def login_page():
 @app.route('/privacy')
 def privacy_page():
     return render_template('privacy.html')
+
+@app.route('/ui')
+def ui_preview_index():
+    return send_from_directory('ui_previews', 'index.html')
+
+@app.route('/ui/<path:filename>')
+def ui_preview_file(filename):
+    return send_from_directory('ui_previews', filename)
 
 @app.route('/api/auth-config')
 def api_auth_config():

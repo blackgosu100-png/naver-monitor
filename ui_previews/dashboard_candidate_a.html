@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Candidate A - Snapshot Table</title>
+<style>
+:root{--bg:#f7f8fa;--panel:#fff;--line:#e5e7eb;--text:#111827;--muted:#6b7280;--soft:#f3f4f6;--green:#03c75a;--blue:#2563eb;--orange:#ea580c;--red:#dc2626;--radius:8px;--mono:ui-monospace,SFMono-Regular,Menlo,monospace;--sans:Inter,"Noto Sans KR",system-ui,sans-serif}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:13px/1.5 var(--sans)}button,select,input{font:inherit}.app{display:grid;grid-template-columns:216px 1fr;min-height:100vh}.side{background:#18181b;color:#a1a1aa;padding:18px 12px}.brand{display:flex;gap:10px;align-items:center;padding:0 8px 18px;border-bottom:1px solid #2b2b30;color:#fff;font-weight:700}.brand-mark{width:30px;height:30px;border-radius:7px;background:var(--green);display:grid;place-items:center}.nav{padding-top:12px}.nav div{padding:9px 10px;border-radius:6px;margin-bottom:3px}.nav .on{background:#09351f;color:#4ade80}.main{min-width:0}.top{height:56px;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;padding:0 22px;position:sticky;top:0;z-index:5}.title{font-weight:700;font-size:15px;margin-right:auto}.meta{color:var(--muted);font-size:12px}.select,.check,.btn{border:1px solid var(--line);background:#fff;border-radius:6px;padding:7px 10px;color:#374151}.btn.primary{background:var(--green);border-color:var(--green);color:#fff;font-weight:700}.content{padding:22px}.summary{display:grid;grid-template-columns:repeat(4,minmax(140px,1fr));gap:12px;margin-bottom:16px}.kpi{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px}.kpi label{display:block;color:var(--muted);font-size:11px;margin-bottom:8px}.kpi strong{font:700 24px/1 var(--mono)}.kpi small{display:block;color:#9ca3af;margin-top:6px}.toolbar{display:flex;gap:10px;align-items:center;margin:12px 0}.search{width:260px;border:1px solid var(--line);border-radius:6px;padding:8px 10px}.panel{background:#fff;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}.panel-head{height:48px;display:flex;align-items:center;padding:0 16px;border-bottom:1px solid var(--line)}.panel-head b{margin-right:auto}.hint{color:var(--muted);font-size:12px}.table{overflow:auto}.grid{min-width:1020px}.row{display:grid;grid-template-columns:300px repeat(5,1fr) 92px;align-items:center;border-bottom:1px solid #f0f1f3}.row.head{background:#fafafa;color:#6b7280;font-size:11px;font-weight:700;position:sticky;top:0}.cell{padding:12px 14px;min-height:58px}.cell.stock{display:flex;align-items:center;justify-content:flex-end;gap:6px}.product{display:flex;align-items:center;gap:11px}.thumb{width:42px;height:42px;border-radius:7px;background:linear-gradient(135deg,#e5e7eb,#f9fafb);border:1px solid var(--line);display:grid;place-items:center;color:#9ca3af;font-weight:700;font-size:11px;flex:0 0 auto}.pname{font-weight:700}.url{color:#9ca3af;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:210px}.qty{font:700 16px/1.2 var(--mono);text-align:right}.delta{font:700 11px/1.2 var(--mono);text-align:right}.sale{color:var(--orange)}.restock{color:var(--blue)}.fail{color:var(--red);font-size:12px;text-align:right}.date{font-weight:700;text-align:right}.date span{display:block;color:#9ca3af;font-weight:500;font-size:11px}.action{display:flex;justify-content:center}.mini{border:1px solid var(--line);background:#fff;border-radius:6px;padding:5px 9px}.details{background:#fbfdfc;border-bottom:1px solid #bbf7d0;padding:10px 14px 14px 66px;color:#374151}.opt{display:grid;grid-template-columns:1fr repeat(5,90px);gap:8px;margin-top:6px;font-size:12px}.opt b{font-weight:600}.opt span{text-align:right;font-family:var(--mono)}@media(max-width:860px){.app{grid-template-columns:1fr}.side{display:none}.top{height:auto;flex-wrap:wrap;padding:12px}.content{padding:14px}.summary{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand"><span class="brand-mark">N</span><span>네이버 모니터링</span></div>
+    <div class="nav"><div class="on">재고 현황</div><div>경쟁사 설정</div><div>확장 프로그램</div></div>
+  </aside>
+  <main class="main">
+    <div class="top">
+      <div class="title">재고 현황</div>
+      <div class="meta">마지막 조회: 2026.05.13 09:00</div>
+      <select class="select"><option>최근 14일</option></select>
+      <label class="check"><input type="checkbox"> 실패 열 숨김</label>
+      <button class="btn primary">전체 조회</button>
+    </div>
+    <div class="content">
+      <section class="summary">
+        <div class="kpi"><label>모니터링 경쟁사</label><strong>12</strong><small>등록 상품 기준</small></div>
+        <div class="kpi"><label>최근 24시간 판매 추정</label><strong class="sale">86</strong><small>재고 감소 합산</small></div>
+        <div class="kpi"><label>재입고 감지</label><strong class="restock">2</strong><small>재고 증가 상품</small></div>
+        <div class="kpi"><label>조회 성공률</label><strong>92%</strong><small>성공 11 / 오류 1</small></div>
+      </section>
+      <div class="toolbar">
+        <input class="search" placeholder="경쟁사명 또는 URL 검색">
+        <span class="hint">행을 클릭하면 옵션별 재고가 열립니다.</span>
+      </div>
+      <section class="panel">
+        <div class="panel-head"><b>경쟁사 12명</b><span class="hint">시간 포함 스냅샷 비교</span></div>
+        <div class="table">
+          <div class="grid">
+            <div class="row head"><div class="cell">업체명</div><div class="cell date">5/13<span>09:00</span></div><div class="cell date">5/12<span>09:00</span></div><div class="cell date">5/11<span>09:00</span></div><div class="cell date">5/10<span>09:00</span></div><div class="cell date">5/09<span>09:00</span></div><div class="cell">조회</div></div>
+            <div class="row"><div class="cell product"><div class="thumb">IMG</div><div><div class="pname">마베비보틀워머</div><div class="url">brand.naver.com/mabebi/products/119...</div></div></div><div class="cell stock"><span class="qty">184</span><span class="delta sale">[-18]</span></div><div class="cell"><div class="qty">202</div></div><div class="cell stock"><span class="qty">221</span><span class="delta sale">[-9]</span></div><div class="cell"><div class="qty">230</div></div><div class="cell"><div class="qty">230</div></div><div class="cell action"><button class="mini">조회</button></div></div>
+            <div class="details"><b>옵션 재고</b><div class="opt"><b>화이트 / 단품</b><span>76</span><span>82</span><span>90</span><span>90</span><span>91</span></div><div class="opt"><b>베이지 / 단품</b><span>108</span><span>120</span><span>131</span><span>140</span><span>139</span></div></div>
+            <div class="row"><div class="cell product"><div class="thumb">IMG</div><div><div class="pname">철제화분선반</div><div class="url">smartstore.naver.com/sample/products...</div></div></div><div class="cell stock"><span class="qty">61</span><span class="delta restock">[+12]</span></div><div class="cell"><div class="qty">49</div></div><div class="cell"><div class="qty">58</div></div><div class="cell"><div class="qty">72</div></div><div class="cell"><div class="qty">80</div></div><div class="cell action"><button class="mini">조회</button></div></div>
+            <div class="row"><div class="cell product"><div class="thumb">IMG</div><div><div class="pname">프리미엄 젖병건조대</div><div class="url">smartstore.naver.com/sample/products...</div></div></div><div class="cell"><div class="fail">실패</div></div><div class="cell"><div class="qty">314</div></div><div class="cell stock"><span class="qty">336</span><span class="delta sale">[-22]</span></div><div class="cell"><div class="qty">358</div></div><div class="cell"><div class="qty">361</div></div><div class="cell action"><button class="mini">재조회</button></div></div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+</body>
+</html>

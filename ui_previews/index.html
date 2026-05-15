@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UI Idea Lab - 네이버 모니터링 후보</title>
+<style>
+:root{--bg:#f6f7f8;--panel:#fff;--line:#e5e7eb;--text:#111827;--muted:#6b7280;--green:#03c75a;--blue:#2563eb;--orange:#ea580c;--red:#dc2626;--shadow:0 1px 3px rgb(0 0 0/.08);--sans:Inter,"Noto Sans KR",system-ui,sans-serif}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:13px/1.5 var(--sans)}.top{height:58px;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 22px;gap:12px;position:sticky;top:0;z-index:10}.top h1{font-size:16px;margin:0 auto 0 0}.badge{border:1px solid #bbf7d0;background:#f0fdf4;color:#166534;border-radius:999px;padding:5px 9px;font-weight:700}.wrap{padding:18px 22px 28px}.debate{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px}.role{background:#fff;border:1px solid var(--line);border-radius:8px;padding:14px;box-shadow:var(--shadow)}.role b{display:block;margin-bottom:7px}.role p{margin:0;color:var(--muted)}.tabs{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}.tab{border:1px solid var(--line);background:#fff;border-radius:7px;padding:8px 11px;cursor:pointer;font-weight:700}.tab.active{background:#111827;color:#fff;border-color:#111827}.summary{background:#fff;border:1px solid var(--line);border-radius:8px;padding:14px;margin-bottom:12px;box-shadow:var(--shadow)}.summary h2{font-size:15px;margin:0 0 6px}.summary p{margin:0;color:var(--muted)}.summary code{background:#f3f4f6;border-radius:5px;padding:2px 5px}.frame{width:100%;height:740px;border:1px solid var(--line);border-radius:8px;background:#fff;box-shadow:var(--shadow)}@media(max-width:900px){.debate{grid-template-columns:1fr}.frame{height:720px}.top{height:auto;flex-wrap:wrap;padding:12px}}
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>UI Idea Lab - 네이버 모니터링 대시보드 후보</h1>
+  <span class="badge">UX + 마케팅 + 개발 토론</span>
+</header>
+<main class="wrap">
+  <section class="debate">
+    <div class="role"><b>UX 전문가</b><p>현재 표는 강력하지만 조회 시간이 많아질수록 사용자가 오늘 봐야 할 변화량을 놓치기 쉽습니다. 기준 시점, 판매 감소, 실패 재조회가 첫 화면에서 더 분명해야 합니다.</p></div>
+    <div class="role"><b>마케터</b><p>수강생에게는 “경쟁사가 얼마나 팔렸는지”가 가장 큰 소구점입니다. 단순 재고표보다 판매 추정 TOP, 재입고 감지, 성공률을 앞세우면 가치가 바로 전달됩니다.</p></div>
+    <div class="role"><b>개발자</b><p>실제 적용은 기존 <code>renderKPIs</code>, <code>renderTable</code>, <code>productThumb</code> 구조를 살리는 후보가 안전합니다. 과한 화면 전환보다 표 개선부터 가는 편이 리스크가 낮습니다.</p></div>
+  </section>
+  <div class="tabs">
+    <button class="tab active" data-file="dashboard_candidate_a.html" data-name="A. 실전형 테이블 정돈">A. 실전형 테이블 정돈</button>
+    <button class="tab" data-file="dashboard_candidate_b.html" data-name="B. 판매 신호 보드">B. 판매 신호 보드</button>
+    <button class="tab" data-file="dashboard_candidate_c.html" data-name="C. 운영 콘솔">C. 운영 콘솔</button>
+  </div>
+  <section class="summary">
+    <h2 id="candidate-title">A. 실전형 테이블 정돈</h2>
+    <p id="candidate-desc">기존 대시보드와 가장 가까운 방향입니다. 수강생이 지금 쓰는 표 흐름은 유지하면서 KPI, 시간축, 옵션 상세를 더 읽기 쉽게 정리하는 안입니다.</p>
+  </section>
+  <iframe class="frame" id="preview" src="/ui/dashboard_candidate_a.html" title="UI preview"></iframe>
+</main>
+<script>
+const descriptions = {
+  "dashboard_candidate_a.html": "기존 대시보드와 가장 가까운 방향입니다. 수강생이 지금 쓰는 표 흐름은 유지하면서 KPI, 시간축, 옵션 상세를 더 읽기 쉽게 정리하는 안입니다.",
+  "dashboard_candidate_b.html": "판매량 추정과 관리 우선순위를 앞에 둔 방향입니다. 수업에서 도구의 가치를 설명하거나 초보자가 오늘 확인할 항목을 빠르게 잡는 데 좋습니다.",
+  "dashboard_candidate_c.html": "경쟁사 하나를 선택해 옵션 변화까지 깊게 보는 운영 콘솔 방향입니다. 기능 변경 폭은 크지만 장기적으로 가장 전문적인 사용감이 납니다."
+};
+document.querySelectorAll('.tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('candidate-title').textContent = btn.dataset.name;
+    document.getElementById('candidate-desc').textContent = descriptions[btn.dataset.file];
+    document.getElementById('preview').src = '/ui/' + btn.dataset.file;
+  });
+});
+</script>
+</body>
+</html>
