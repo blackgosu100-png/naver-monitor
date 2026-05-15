@@ -1,4 +1,4 @@
-import json, re, hashlib, threading, time, random, os, uuid, html
+import json, re, hashlib, threading, time, random, os, uuid, html, calendar
 from datetime import datetime, date, timedelta
 from functools import wraps
 from zoneinfo import ZoneInfo
@@ -50,12 +50,33 @@ PLAN_LABELS = {
     'unlimited': '무제한',
 }
 PLAN_PRICING = [
-    {'id': 'free', 'label': '무료', 'price': '0원', 'period': '', 'competitor_limit': 3, 'recommended': False, 'note': '승인 없이 바로 사용'},
-    {'id': 'basic', 'label': '베이직', 'price': '19,900원', 'period': '3개월', 'competitor_limit': 10, 'recommended': False, 'note': '가볍게 확장'},
-    {'id': 'pro', 'label': '프로', 'price': '39,900원', 'period': '6개월', 'competitor_limit': 20, 'recommended': True, 'note': '추천 플랜'},
-    {'id': 'business', 'label': '비즈니스', 'price': '149,000원', 'period': '6개월', 'competitor_limit': 50, 'recommended': False, 'note': '상담 후 활성화'},
+    {'id': 'free', 'label': '무료', 'price': '0원', 'period': '', 'months': 0, 'competitor_limit': 3, 'recommended': False, 'note': '승인 없이 바로 사용'},
+    {'id': 'basic', 'label': '베이직', 'price': '19,900원', 'period': '3개월', 'months': 3, 'competitor_limit': 10, 'recommended': False, 'note': '가볍게 확장'},
+    {'id': 'pro', 'label': '프로', 'price': '39,900원', 'period': '6개월', 'months': 6, 'competitor_limit': 20, 'recommended': True, 'note': '추천 플랜'},
+    {'id': 'business', 'label': '비즈니스', 'price': '149,000원', 'period': '6개월', 'months': 6, 'competitor_limit': 50, 'recommended': False, 'note': '상담 후 활성화'},
 ]
 PAID_PLAN_IDS = {'basic', 'pro', 'business'}
+
+def _plan_meta(plan: str) -> dict:
+    return next((item for item in PLAN_PRICING if item['id'] == plan), {})
+
+def _today_kst() -> date:
+    return datetime.now(KST).date()
+
+def _add_months(day: date, months: int) -> date:
+    month = day.month - 1 + months
+    year = day.year + month // 12
+    month = month % 12 + 1
+    last_day = calendar.monthrange(year, month)[1]
+    return date(year, month, min(day.day, last_day))
+
+def _parse_iso_date(value: str | None) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except Exception:
+        return None
 
 def _sb_headers(prefer: str = 'return=representation') -> dict:
     return {
@@ -347,10 +368,29 @@ def user_plan(user: dict) -> str:
 def user_plan_label(user: dict) -> str:
     return PLAN_LABELS.get(user_plan(user), '무료')
 
+def user_plan_dates(user: dict) -> dict:
+    app_meta = user.get('app_metadata') or {}
+    started = _parse_iso_date(app_meta.get('plan_started_at'))
+    expires = _parse_iso_date(app_meta.get('plan_expires_at'))
+    today = _today_kst()
+    is_expired = expires is not None and expires < today
+    remaining_days = (expires - today).days if expires else None
+    return {
+        'started_at': started.isoformat() if started else None,
+        'expires_at': expires.isoformat() if expires else None,
+        'remaining_days': remaining_days,
+        'is_expired': is_expired,
+    }
+
+def is_plan_expired(user: dict) -> bool:
+    return user_plan_dates(user)['is_expired']
+
 def competitor_limit_for_user(user: dict) -> int | None:
     plan = user_plan(user)
     if plan in ('admin', 'unlimited'):
         return None
+    if plan in PAID_PLAN_IDS and is_plan_expired(user):
+        return FREE_COMPETITOR_LIMIT
     return PLAN_LIMITS.get(plan, FREE_COMPETITOR_LIMIT)
 
 def _stock_snapshot(now: datetime | None = None) -> tuple[str, str]:
@@ -659,6 +699,7 @@ def api_config():
     competitors = db_get_competitors(g.user_id)
     competitor_limit = competitor_limit_for_user(g.user)
     plan = user_plan(g.user)
+    plan_dates = user_plan_dates(g.user)
     return jsonify({
         'username':    email,
         'user_id':     g.user_id,
@@ -666,6 +707,10 @@ def api_config():
         'approved':    _is_approved_user(g.user),
         'plan':        plan,
         'plan_label':  PLAN_LABELS.get(plan, '무료'),
+        'plan_started_at': plan_dates['started_at'],
+        'plan_expires_at': plan_dates['expires_at'],
+        'plan_remaining_days': plan_dates['remaining_days'],
+        'plan_expired': plan_dates['is_expired'],
         'pricing':     PLAN_PRICING,
         'competitors': competitors,
         'competitor_limit': competitor_limit,
@@ -729,6 +774,7 @@ def api_admin_users():
     result = []
     for user in users:
         plan = user_plan(user)
+        plan_dates = user_plan_dates(user)
         result.append({
             'id': user.get('id'),
             'email': user.get('email') or '',
@@ -739,6 +785,10 @@ def api_admin_users():
             'plan': plan,
             'plan_label': PLAN_LABELS.get(plan, '무료'),
             'competitor_limit': competitor_limit_for_user(user),
+            'plan_started_at': plan_dates['started_at'],
+            'plan_expires_at': plan_dates['expires_at'],
+            'plan_remaining_days': plan_dates['remaining_days'],
+            'plan_expired': plan_dates['is_expired'],
             'plan_request': plan_requests.get(user.get('id')),
             'is_admin': _is_admin_user(user),
         })
@@ -763,6 +813,14 @@ def api_admin_user_plan(uid):
     app_meta = user.get('app_metadata') or {}
     app_meta['plan'] = plan
     app_meta['approved'] = plan != 'free'
+    if plan in PAID_PLAN_IDS:
+        started = _today_kst()
+        expires = _add_months(started, int(_plan_meta(plan).get('months') or 0))
+        app_meta['plan_started_at'] = started.isoformat()
+        app_meta['plan_expires_at'] = expires.isoformat()
+    else:
+        app_meta.pop('plan_started_at', None)
+        app_meta.pop('plan_expires_at', None)
     r = httpx.put(
         f'{SUPABASE_URL}/auth/v1/admin/users/{uid}',
         headers=_admin_api_headers(),
@@ -789,6 +847,13 @@ def api_admin_user_approval(uid):
     app_meta = user.get('app_metadata') or {}
     app_meta['approved'] = approved
     app_meta['plan'] = 'pro' if approved else 'free'
+    if approved:
+        started = _today_kst()
+        app_meta['plan_started_at'] = started.isoformat()
+        app_meta['plan_expires_at'] = _add_months(started, int(_plan_meta('pro').get('months') or 6)).isoformat()
+    else:
+        app_meta.pop('plan_started_at', None)
+        app_meta.pop('plan_expires_at', None)
     r = httpx.put(
         f'{SUPABASE_URL}/auth/v1/admin/users/{uid}',
         headers=_admin_api_headers(),

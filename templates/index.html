@@ -679,6 +679,7 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
           <div style="padding:20px">
             <div class="settings-section">
               <div class="settings-label">새 경쟁사 추가</div>
+              <div id="plan-status-card" style="margin-bottom:12px;padding:12px 14px;border:1px solid var(--border);border-radius:8px;background:#fafafa;font-size:12px;color:var(--text2);line-height:1.7"></div>
               <div class="input-row" style="flex-wrap:wrap;gap:8px">
                 <input class="form-input" id="new-comp-name" placeholder="경쟁사 상품명 (예: 미미쇼핑몰)" style="width:180px">
                 <input class="form-input wide" id="new-comp-url" placeholder="스마트스토어 상품 URL (https://smartstore.naver.com/...)">
@@ -1161,6 +1162,7 @@ function applyConfig(cfg) {
   isAdminUser = !!cfg.is_admin;
   document.getElementById('nav-admin').style.display = isAdminUser ? '' : 'none';
   renderCompList(cfg.competitors || []);
+  renderPlanStatus(cfg);
   renderCompetitorLimit(cfg);
 
   if (cfg.schedule) {
@@ -1426,6 +1428,33 @@ function requestExtensionFetch(competitors) {
   });
 }
 
+function formatPlanDate(value) {
+  if (!value) return '—';
+  const dt = new Date(`${value}T00:00:00+09:00`);
+  return dt.toLocaleDateString('ko-KR');
+}
+
+function renderPlanStatus(cfg) {
+  const el = document.getElementById('plan-status-card');
+  if (!el || !cfg) return;
+  const limit = cfg.competitor_limit == null ? '제한 없음' : `${cfg.competitor_limit}개`;
+  const count = cfg.competitor_count ?? ((cfg.competitors || []).length);
+  const expired = !!cfg.plan_expired;
+  const remaining = cfg.plan_remaining_days;
+  const periodText = cfg.plan_expires_at
+    ? `시작일 ${formatPlanDate(cfg.plan_started_at)} · 만료일 ${formatPlanDate(cfg.plan_expires_at)} · ${expired ? '만료됨' : `남은 기간 ${remaining}일`}`
+    : '무료 플랜은 별도 만료일 없이 바로 사용할 수 있습니다.';
+  el.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div>
+        <strong style="color:var(--text)">${escHtml(cfg.plan_label || '무료')} 플랜${expired ? ' · 만료됨' : ''}</strong><br>
+        ${periodText}<br>
+        경쟁사 상품 ${limit}까지 등록 가능 · 현재 ${count}개 등록
+      </div>
+      ${expired ? '<button class="btn btn-sm btn-primary" onclick="openUpgradeModal(\'이용 기간이 만료되었습니다. 계속 사용하려면 유료 플랜을 다시 신청해주세요.\')">연장 신청</button>' : ''}
+    </div>`;
+}
+
 function requestExtensionStop() {
   return new Promise((resolve, reject) => {
     const requestId = `stop-${Date.now()}-${++extensionRequestSeq}`;
@@ -1529,6 +1558,10 @@ function renderCompetitorLimit(cfg) {
   const planLabel = (cfg && cfg.plan_label) || '무료';
   if (limit === null || limit === undefined) {
     note.textContent = `현재 등록 ${competitors.length}개 · 등록 제한 없음`;
+    return;
+  }
+  if (cfg && cfg.plan_expired) {
+    note.textContent = `${planLabel} 플랜 이용 기간이 만료되어 추가 등록은 무료 한도 ${limit}개 기준으로 제한됩니다. 현재 ${competitors.length}/${limit}개`;
     return;
   }
   const remain = Math.max(limit - competitors.length, 0);
@@ -1739,8 +1772,10 @@ function renderUserPlanBadge(user) {
   const plan = user.plan || 'free';
   const label = PLAN_LABELS[plan] || user.plan_label || '무료';
   const limit = PLAN_LIMITS[plan] || user.competitor_limit || 3;
-  const badgeClass = plan === 'pro' ? 'badge-green' : plan === 'business' ? 'badge-red' : plan === 'basic' ? 'badge-green' : 'badge-gray';
-  return `<span class="badge ${badgeClass}">${label} · ${limit}개</span>`;
+  const badgeClass = user.plan_expired ? 'badge-red' : plan === 'pro' ? 'badge-green' : plan === 'business' ? 'badge-red' : plan === 'basic' ? 'badge-green' : 'badge-gray';
+  const remain = user.plan_remaining_days;
+  const period = user.plan_expires_at ? ` · ${user.plan_expired ? '만료됨' : `${remain}일 남음`}` : '';
+  return `<span class="badge ${badgeClass}">${label} · ${limit}개${period}</span>`;
 }
 
 function renderPlanRequest(user) {
