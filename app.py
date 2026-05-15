@@ -393,6 +393,16 @@ def competitor_limit_for_user(user: dict) -> int | None:
         return FREE_COMPETITOR_LIMIT
     return PLAN_LIMITS.get(plan, FREE_COMPETITOR_LIMIT)
 
+def active_competitors_for_user(user: dict, competitors: list | None = None) -> list:
+    competitors = competitors if competitors is not None else db_get_competitors(user.get('id'))
+    limit = competitor_limit_for_user(user)
+    if limit is None:
+        return competitors
+    return competitors[:limit]
+
+def active_competitor_ids_for_user(user: dict, competitors: list | None = None) -> set:
+    return {comp.get('id') for comp in active_competitors_for_user(user, competitors)}
+
 def _stock_snapshot(now: datetime | None = None) -> tuple[str, str]:
     dt = (now or datetime.now(KST)).astimezone(KST)
     return dt.date().isoformat(), dt.strftime('%Y-%m-%d %H:%M')
@@ -462,15 +472,18 @@ def db_get_ext_queue(user_id: str) -> list:
     by_id = {comp['id']: comp for comp in competitors}
     return [by_id[cid] for cid in queued_ids if cid in by_id]
 
-def db_queue_competitors(user_id: str, cid: str | None = None) -> list:
+def db_queue_competitors(user_id: str, cid: str | None = None, user: dict | None = None) -> list:
     competitors = db_get_competitors(user_id)
     valid_ids = [comp['id'] for comp in competitors]
+    active_ids = valid_ids if user is None else [comp['id'] for comp in active_competitors_for_user(user, competitors)]
     if cid:
         if cid not in valid_ids:
             raise ValueError('경쟁사를 찾을 수 없습니다')
+        if cid not in active_ids:
+            raise ValueError('현재 플랜에서는 등록순 상위 상품만 조회할 수 있습니다. 계속 조회하려면 플랜을 연장하거나 업그레이드해주세요.')
         target_ids = [cid]
     else:
-        target_ids = valid_ids
+        target_ids = active_ids
 
     queued_ids = db_get_ext_queue_ids(user_id)
     for target_id in target_ids:
@@ -715,6 +728,7 @@ def api_config():
         'competitors': competitors,
         'competitor_limit': competitor_limit,
         'competitor_count': len(competitors),
+        'active_competitor_ids': list(active_competitor_ids_for_user(g.user, competitors)),
         'schedule':    db_get_schedule(g.user_id),
     })
 
@@ -958,16 +972,23 @@ def api_history():
 def api_fetch():
     body = request.get_json() or {}
     cid  = body.get('id')
+    active_ids = active_competitor_ids_for_user(g.user)
     if cid:
         competitors = db_get_competitors(g.user_id)
         comp = next((c for c in competitors if c['id'] == cid), None)
         if not comp:
             return jsonify({'error': '경쟁사를 찾을 수 없습니다'}), 404
+        if cid not in active_ids:
+            return jsonify({'error': '현재 플랜에서는 등록순 상위 상품만 조회할 수 있습니다. 계속 조회하려면 플랜을 연장하거나 업그레이드해주세요.'}), 403
         result = fetch_single(comp)
         fetch_date, fetch_key = _stock_snapshot()
         db_save_stock(g.user_id, cid, fetch_date, result, fetch_key)
     else:
-        fetch_all(g.user_id)
+        competitors = active_competitors_for_user(g.user)
+        fetch_date, fetch_key = _stock_snapshot()
+        for comp in competitors:
+            result = fetch_single(comp)
+            db_save_stock(g.user_id, comp['id'], fetch_date, result, fetch_key)
     return jsonify({'ok': True})
 
 @app.route('/api/schedule', methods=['PUT'])
@@ -998,9 +1019,10 @@ def api_cookie():
 def api_ext_queue():
     body = request.get_json() or {}
     try:
-        queued = db_queue_competitors(g.user_id, body.get('id'))
+        queued = db_queue_competitors(g.user_id, body.get('id'), g.user)
     except ValueError as e:
-        return jsonify({'error': str(e)}), 404
+        status = 403 if '현재 플랜' in str(e) else 404
+        return jsonify({'error': str(e)}), status
     return jsonify({'ok': True, 'count': len(queued)})
 
 # ─── 크롬 확장프로그램용 Public API (인증 불필요) ────────────────
@@ -1008,12 +1030,15 @@ def api_ext_queue():
 @app.route('/api/public/competitors')
 @login_required
 def api_public_competitors():
-    return jsonify({'competitors': db_get_competitors(g.user_id)})
+    competitors = db_get_competitors(g.user_id)
+    return jsonify({'competitors': active_competitors_for_user(g.user, competitors)})
 
 @app.route('/api/public/queue', methods=['GET'])
 @login_required
 def api_public_queue_get():
-    return jsonify({'queue': db_get_ext_queue(g.user_id)})
+    queue = db_get_ext_queue(g.user_id)
+    active_ids = active_competitor_ids_for_user(g.user)
+    return jsonify({'queue': [comp for comp in queue if comp.get('id') in active_ids]})
 
 @app.route('/api/public/queue', methods=['DELETE'])
 @login_required
@@ -1028,10 +1053,11 @@ def api_public_queue_delete():
 def api_stock_data():
     body = request.get_json() or {}
     results = body.get('results', [])
+    active_ids = active_competitor_ids_for_user(g.user)
     fetch_date, fetch_key = _stock_snapshot()
     for r in results:
         cid = r.get('id')
-        if not cid:
+        if not cid or cid not in active_ids:
             continue
         image_url = (r.get('image_url') or '').strip()
         if image_url:
