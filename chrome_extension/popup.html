@@ -3,15 +3,24 @@
 <head>
 <meta charset="UTF-8">
 <style>
-  body { font-family: 'Segoe UI', sans-serif; width: 320px; padding: 16px; margin: 0; background: #f8fafc; }
-  h3 { font-size: 13px; font-weight: 700; color: #0f172a; margin: 0 0 14px; }
+  body { font-family: 'Segoe UI', sans-serif; width: 340px; padding: 0; margin: 0; background: #f8fafc; color:#0f172a; }
+  .shell { padding: 16px; }
+  .hero { background: linear-gradient(135deg,#06281c 0%,#065f46 52%,#03c75a 100%); color:#fff; padding:16px; }
+  .brand-row { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .brand { display:flex; align-items:center; gap:10px; }
+  .logo-mark { width:34px; height:34px; border-radius:9px; background:rgba(255,255,255,.16); display:flex; align-items:center; justify-content:center; font-weight:800; }
+  h3 { font-size: 14px; font-weight: 800; margin: 0; letter-spacing:-.2px; }
+  .subtitle { font-size:11px; opacity:.72; margin-top:2px; }
+  .version { padding:3px 8px; border:1px solid rgba(255,255,255,.28); border-radius:999px; font-size:10px; font-weight:700; background:rgba(255,255,255,.12); }
+  .hero-copy { margin-top:14px; font-size:12px; line-height:1.6; opacity:.9; }
   label { display:block; font-size:11px; font-weight:600; color:#475569; margin:8px 0 4px; }
   input { width:100%; padding:8px 9px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px; box-sizing:border-box; }
   .btn {
-    width: 100%; padding: 10px; border: none; border-radius: 8px;
-    font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit;
-    transition: background .15s;
+    width: 100%; padding: 11px; border: none; border-radius: 8px;
+    font-size: 13px; font-weight: 800; cursor: pointer; font-family: inherit;
+    transition: transform .12s, background .15s;
   }
+  .btn:hover { transform: translateY(-1px); }
   .btn-green  { background: #03c75a; color: #fff; }
   .btn-green:hover  { background: #02b350; }
   .btn-stop   { background: #ef4444; color: #fff; margin-top: 8px; display:none; }
@@ -26,44 +35,65 @@
   .divider { height: 1px; background: #e2e8f0; margin: 16px 0; }
   .progress-bar { height: 4px; background: #e2e8f0; border-radius: 2px; margin-top: 8px; overflow: hidden; display:none; }
   .progress-fill { height: 100%; background: #03c75a; border-radius: 2px; transition: width .3s; }
-  .tip { font-size: 10px; color: #94a3b8; margin-top: 8px; line-height: 1.6; }
+  .tip { font-size: 10.5px; color: #94a3b8; margin-top: 10px; line-height: 1.6; }
   .login-state { display:none; margin: 8px 0 10px; padding: 9px 11px; background:#ecfdf5; color:#166534; border-radius:6px; font-size:12px; line-height:1.5; }
   .login-state strong { display:block; color:#14532d; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .auth-loading { margin: 8px 0 10px; padding: 10px 11px; background:#f1f5f9; color:#475569; border-radius:6px; font-size:12px; line-height:1.5; }
   .link-btn { border:0; background:transparent; color:#475569; text-decoration:underline; padding:0; margin-top:6px; cursor:pointer; font-size:11px; }
-  .panel { margin-top: 10px; padding: 10px 11px; background:#fff; border:1px solid #e2e8f0; border-radius:8px; font-size:12px; color:#475569; line-height:1.6; }
+  .panel { margin-top: 10px; padding: 12px; background:#fff; border:1px solid #e2e8f0; border-radius:8px; font-size:12px; color:#475569; line-height:1.6; }
+  .steps { margin:10px 0 0; padding:0; list-style:none; display:grid; gap:7px; }
+  .steps li { display:flex; gap:8px; align-items:flex-start; }
+  .num { width:18px; height:18px; border-radius:50%; background:#dcfce7; color:#047857; display:inline-flex; align-items:center; justify-content:center; font-size:10px; font-weight:800; flex:0 0 auto; margin-top:1px; }
 </style>
 </head>
 <body>
 
-<h3>네이버 경쟁사 모니터링</h3>
-
-<div class="auth-loading" id="auth-loading">로그인 상태 확인 중...</div>
-<div class="login-state" id="login-state"></div>
-
-<button class="btn btn-green" id="open-dashboard-btn-main" type="button">웹 대시보드 열기</button>
-<div class="panel">
-  재고 조회는 웹 대시보드의 <strong>전체 조회</strong> 또는 각 상품의 <strong>재고 조회</strong> 버튼에서 시작하세요.
-  확장 프로그램은 네이버 상품 탭을 열고 재고 데이터를 수집하는 보조 도구입니다.
+<div class="hero">
+  <div class="brand-row">
+    <div class="brand">
+      <div class="logo-mark">↗</div>
+      <div>
+        <h3>네이버 경쟁사 모니터링</h3>
+        <div class="subtitle">옵션별 재고 수집 보조 도구</div>
+      </div>
+    </div>
+    <div class="version">v4.8</div>
+  </div>
+  <div class="hero-copy">웹 대시보드에서 조회를 시작하면 확장이 네이버 상품 탭을 열고 재고 데이터를 수집합니다.</div>
 </div>
-<div class="msg" id="login-msg"></div>
 
-<div class="divider"></div>
+<div class="shell">
+  <div class="auth-loading" id="auth-loading">웹 대시보드 연결 상태 확인 중...</div>
+  <div class="login-state" id="login-state"></div>
 
-<button class="btn btn-stop" id="stop-btn">STOP</button>
-<div class="progress-bar" id="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
-<div class="msg" id="fetch-msg"></div>
+  <button class="btn btn-green" id="open-dashboard-btn-main" type="button">지금 바로 시작하기</button>
+  <div class="panel">
+    <strong>사용 방법</strong>
+    <ul class="steps">
+      <li><span class="num">1</span><span>웹 대시보드에서 로그인합니다.</span></li>
+      <li><span class="num">2</span><span>전체 조회 또는 상품별 재고 조회를 누릅니다.</span></li>
+      <li><span class="num">3</span><span>열리는 네이버 탭을 그대로 두면 결과가 저장됩니다.</span></li>
+    </ul>
+  </div>
+  <div class="msg" id="login-msg"></div>
 
-<div id="queue-section" style="display:none">
   <div class="divider"></div>
-  <div style="font-size:12px;font-weight:600;color:#0f172a;margin-bottom:6px">대기 중인 개별 조회</div>
-  <div class="progress-bar" id="queue-bar"><div class="progress-fill" id="queue-fill"></div></div>
-  <div class="msg" id="queue-msg"></div>
-</div>
 
-<div class="tip">
-  웹에서 로그인하면 확장 프로그램에도 자동으로 연결됩니다.<br>
-  별도 확장 로그인은 필요하지 않습니다.
+  <button class="btn btn-stop" id="stop-btn">STOP</button>
+  <div class="progress-bar" id="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+  <div class="msg" id="fetch-msg"></div>
+
+  <div id="queue-section" style="display:none">
+    <div class="divider"></div>
+    <div style="font-size:12px;font-weight:600;color:#0f172a;margin-bottom:6px">대기 중인 개별 조회</div>
+    <div class="progress-bar" id="queue-bar"><div class="progress-fill" id="queue-fill"></div></div>
+    <div class="msg" id="queue-msg"></div>
+  </div>
+
+  <div class="tip">
+    무료 플랜은 경쟁사 3개까지 사용할 수 있습니다.<br>
+    베이직 19,900원/3개월, 프로 39,000원/6개월
+  </div>
 </div>
 
 <script src="popup.js"></script>

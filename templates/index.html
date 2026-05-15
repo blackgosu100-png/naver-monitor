@@ -686,12 +686,16 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
           <div class="card-header"><div class="card-title">🧩 크롬 확장 프로그램 설치 안내</div></div>
           <div style="padding:20px">
             <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:14px 16px;font-size:12px;line-height:2;color:#166534">
-              <strong>확장 프로그램을 설치한 뒤 서비스 계정으로 로그인하면 재고 조회를 실행할 수 있습니다.</strong><br>
+              <strong>확장 프로그램을 설치하면 웹 대시보드의 조회 버튼으로 바로 재고 조회를 실행할 수 있습니다.</strong><br>
               <span style="font-size:13px">① 아래 Chrome Web Store 링크를 열고 확장 프로그램을 설치합니다.</span><br>
               <code id="store-url" style="display:block;background:#dcfce7;padding:6px 10px;border-radius:6px;font-size:11px;word-break:break-all;margin:4px 0 6px;cursor:pointer" onclick="copyStoreUrl()" title="클릭하여 복사">https://chromewebstore.google.com/detail/네이버-경쟁사-모니터링/bihcbfmkldglanbhabgaiiccnhfbnmfk</code>
               <span style="font-size:13px">② Chrome 우측 상단 퍼즐 아이콘에서 <strong>네이버 경쟁사 모니터링</strong>을 고정합니다.</span><br>
-              <span style="font-size:13px">③ 확장 프로그램을 열고 서비스 이메일/비밀번호로 로그인합니다.</span><br>
-              <span style="font-size:13px">④ 대시보드에서 조회 대기열을 등록한 뒤 확장 프로그램에서 <strong>경쟁사 재고 전체 조회</strong>를 실행합니다.</span>
+              <span style="font-size:13px">③ 웹 대시보드에서 로그인한 뒤 <strong>전체 조회</strong> 또는 상품별 <strong>재고 조회</strong>를 누릅니다.</span><br>
+              <span style="font-size:13px">④ 조회 중 네이버 본인 확인이 뜨면 열린 탭에서 완료해주세요. 확장 프로그램 별도 로그인은 필요하지 않습니다.</span>
+            </div>
+            <div style="margin-top:12px;background:#fff;border:1px solid var(--border);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--text2);line-height:1.8">
+              <strong style="color:var(--text)">플랜 안내</strong><br>
+              무료: 경쟁사 3개 · 베이직: 19,900원 / 3개월 / 경쟁사 10개 · 프로: 39,000원 / 6개월 / 경쟁사 30개
             </div>
             <div style="margin-top:12px;display:flex;gap:8px">
               <button class="btn btn-sm btn-primary" onclick="openStoreUrl()">스토어 열기</button>
