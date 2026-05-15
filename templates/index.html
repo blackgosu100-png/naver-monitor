@@ -690,8 +690,8 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
               <span style="font-size:13px">① 아래 Chrome Web Store 링크를 열고 확장 프로그램을 설치합니다.</span><br>
               <code id="store-url" style="display:block;background:#dcfce7;padding:6px 10px;border-radius:6px;font-size:11px;word-break:break-all;margin:4px 0 6px;cursor:pointer" onclick="copyStoreUrl()" title="클릭하여 복사">https://chromewebstore.google.com/detail/네이버-경쟁사-모니터링/bihcbfmkldglanbhabgaiiccnhfbnmfk</code>
               <span style="font-size:13px">② Chrome 우측 상단 퍼즐 아이콘에서 <strong>네이버 경쟁사 모니터링</strong>을 고정합니다.</span><br>
-              <span style="font-size:13px">③ 처음 사용하는 경우 확장 프로그램의 <strong>지금 바로 시작하기</strong>를 눌러 회원가입을 신청합니다.</span><br>
-              <span style="font-size:13px">④ 승인 후 웹 대시보드에서 로그인하고 <strong>전체 조회</strong> 또는 상품별 <strong>재고 조회</strong>를 누릅니다.</span><br>
+              <span style="font-size:13px">③ 처음 사용하는 경우 확장 프로그램의 <strong>지금 바로 시작하기</strong>를 눌러 무료 계정을 만듭니다.</span><br>
+              <span style="font-size:13px">④ 웹 대시보드에서 로그인하고 <strong>전체 조회</strong> 또는 상품별 <strong>재고 조회</strong>를 누릅니다.</span><br>
               <span style="font-size:13px">⑤ 조회 중 네이버 본인 확인이 뜨면 열린 탭에서 완료해주세요. 확장 프로그램 별도 로그인은 필요하지 않습니다.</span>
             </div>
             <div style="margin-top:12px;background:#fff;border:1px solid var(--border);border-radius:8px;padding:12px 14px;font-size:12px;color:var(--text2);line-height:1.8">
@@ -719,8 +719,8 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
     <div class="content">
       <div class="card" style="max-width:1000px">
         <div class="card-header">
-          <div class="card-title">회원 승인 관리</div>
-          <div style="font-size:11px;color:var(--text3)">관리자가 승인한 회원만 서비스를 이용할 수 있습니다</div>
+          <div class="card-title">플랜 전환 관리</div>
+          <div style="font-size:11px;color:var(--text3)">무료 사용자는 즉시 이용 가능하며, 유료 전환만 관리자가 처리합니다</div>
         </div>
         <div id="admin-users">
           <div class="empty-state">
@@ -1612,7 +1612,7 @@ async function loadAdminUsers() {
     }
     el.innerHTML = `
       <div class="admin-row admin-head">
-        <div>이메일</div><div>가입 상태</div><div>승인 상태</div><div></div>
+        <div>이메일</div><div>가입 상태</div><div>플랜</div><div>유료 전환</div>
       </div>
       ${users.map(user => `
         <div class="admin-row">
@@ -1621,9 +1621,9 @@ async function loadAdminUsers() {
             <div class="admin-muted">가입 ${formatAdminDate(user.created_at)}</div>
           </div>
           <div>${user.email_confirmed_at ? '<span class="badge badge-green">인증됨</span>' : '<span class="badge badge-gray">대기중</span>'}</div>
-          <div>${user.is_admin ? '<span class="badge badge-green">관리자</span>' : user.approved ? '<span class="badge badge-green">승인됨</span>' : '<span class="badge badge-red">미승인</span>'}</div>
+          <div>${user.is_admin ? '<span class="badge badge-green">관리자</span>' : user.approved ? '<span class="badge badge-green">유료</span>' : '<span class="badge badge-gray">무료</span>'}</div>
           <div>
-            ${user.is_admin ? '' : `<button class="btn btn-sm ${user.approved ? '' : 'btn-primary'}" onclick="setUserApproval('${user.id}', ${user.approved ? 'false' : 'true'})">${user.approved ? '승인 취소' : '승인'}</button>`}
+            ${user.is_admin ? '' : `<button class="btn btn-sm ${user.approved ? '' : 'btn-primary'}" onclick="setUserApproval('${user.id}', ${user.approved ? 'false' : 'true'})">${user.approved ? '무료 전환' : '유료 전환'}</button>`}
           </div>
         </div>
       `).join('')}`;
@@ -1641,10 +1641,10 @@ async function setUserApproval(uid, approved) {
     });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(data.error || '승인 상태 변경 실패');
-    showToast(approved ? '회원 승인됨' : '승인 취소됨');
+    showToast(approved ? '유료 사용자로 전환됨' : '무료 사용자로 전환됨');
     await loadAdminUsers();
   } catch (e) {
-    showToast(e.message || '승인 상태 변경 실패');
+    showToast(e.message || '플랜 상태 변경 실패');
   }
 }
 

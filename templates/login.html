@@ -142,7 +142,7 @@
   </div>
 
   <div class="signup-notice" id="signup-notice">
-    회원가입 신청 후 관리자가 승인하면 서비스를 이용할 수 있습니다. 승인 전에는 로그인할 수 없습니다.
+    무료 플랜은 승인 없이 바로 사용할 수 있습니다. 경쟁사 상품 3개까지 등록할 수 있어요.
   </div>
 
   <div class="field">
@@ -158,7 +158,7 @@
   </div>
   <div class="msg" id="msg"></div>
   <button class="btn-login" id="btn" onclick="submitAuth()">로그인</button>
-  <div class="hint">회원가입 후 관리자 승인이 완료되면 로그인할 수 있습니다.</div>
+  <div class="hint">무료 플랜은 경쟁사 3개까지 바로 사용 가능합니다.</div>
 </div>
 
 <script>
@@ -212,7 +212,7 @@ async function submitAuth() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || '인증에 실패했습니다.');
     if (mode === 'signup') {
-      showMsg(data.message || '회원가입 신청이 완료되었습니다. 관리자 승인을 기다려주세요.', 'ok');
+      showMsg(data.message || '회원가입이 완료되었습니다. 무료 플랜으로 바로 로그인할 수 있습니다.', 'ok');
       setMode('login');
       return;
     }

@@ -97,7 +97,7 @@ async function setLoggedOutUi() {
   var loadingEl = document.getElementById('auth-loading');
   if (loadingEl) loadingEl.style.display = 'none';
   document.getElementById('login-state').style.display = 'none';
-  showMsg('login-msg', '처음이라면 지금 바로 시작하기로 회원가입을 신청하세요. 승인 후 웹 대시보드에서 조회할 수 있습니다.', 'info');
+  showMsg('login-msg', '처음이라면 지금 바로 시작하기로 무료 계정을 만드세요. 경쟁사 3개까지 바로 사용할 수 있습니다.', 'info');
 }
 
 function parseNaverUrl(url) {

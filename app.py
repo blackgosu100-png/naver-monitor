@@ -454,10 +454,7 @@ def _is_admin_user(user: dict) -> bool:
     ))
 
 def _is_approved_user(user: dict) -> bool:
-    if _is_admin_user(user):
-        return True
-    app_meta = user.get('app_metadata') or {}
-    return app_meta.get('approved') is True
+    return True
 
 def _verify_supabase_user(token: str) -> dict | None:
     auth_key = _auth_api_key()
@@ -481,8 +478,6 @@ def login_required(f):
         user = _verify_supabase_user(_bearer_token())
         if not user or not user.get('id'):
             return jsonify({'error': 'Unauthorized'}), 401
-        if not _is_approved_user(user):
-            return jsonify({'error': '관리자 승인 후 이용할 수 있습니다.'}), 403
         g.user = user
         g.user_id = user['id']
         return f(*args, **kwargs)
@@ -549,9 +544,6 @@ def api_auth_login():
     if r.status_code >= 400:
         return jsonify({'error': _auth_error(r, 'Login failed')}), 401
     data = r.json()
-    user = data.get('user') or {}
-    if not _is_approved_user(user):
-        return jsonify({'error': '회원가입은 완료되었습니다. 관리자 승인 후 로그인할 수 있습니다.'}), 403
     return jsonify(data)
 
 @app.route('/api/auth/signup', methods=['POST'])
@@ -571,7 +563,7 @@ def api_auth_signup():
         json={
             'email': email,
             'password': password,
-            'data': {'approved': False},
+            'data': {'plan': 'free'},
         },
         timeout=20,
     )
@@ -580,8 +572,8 @@ def api_auth_signup():
     data = r.json()
     return jsonify({
         'ok': True,
-        'requires_admin_approval': True,
-        'message': '회원가입 신청이 완료되었습니다. 관리자가 승인하면 로그인할 수 있습니다.',
+        'plan': 'free',
+        'message': '회원가입이 완료되었습니다. 무료 플랜으로 경쟁사 상품 3개까지 바로 사용할 수 있습니다.',
         'user': data.get('user'),
     })
 
@@ -659,6 +651,7 @@ def api_admin_users():
             'last_sign_in_at': user.get('last_sign_in_at') or '',
             'email_confirmed_at': user.get('email_confirmed_at') or user.get('confirmed_at') or '',
             'approved': app_meta.get('approved') is True or _is_admin_user(user),
+            'plan': str(app_meta.get('plan') or app_meta.get('tier') or 'free').lower(),
             'is_admin': _is_admin_user(user),
         })
     result.sort(key=lambda u: u.get('created_at') or '', reverse=True)
