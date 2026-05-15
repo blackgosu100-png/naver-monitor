@@ -29,6 +29,7 @@
   .tip { font-size: 10px; color: #94a3b8; margin-top: 8px; line-height: 1.6; }
   .login-state { display:none; margin: 8px 0 10px; padding: 9px 11px; background:#ecfdf5; color:#166534; border-radius:6px; font-size:12px; line-height:1.5; }
   .login-state strong { display:block; color:#14532d; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .auth-loading { margin: 8px 0 10px; padding: 10px 11px; background:#f1f5f9; color:#475569; border-radius:6px; font-size:12px; line-height:1.5; }
   .link-btn { border:0; background:transparent; color:#475569; text-decoration:underline; padding:0; margin-top:6px; cursor:pointer; font-size:11px; }
 </style>
 </head>
@@ -36,11 +37,12 @@
 
 <h3>네이버 경쟁사 모니터링</h3>
 
+<div class="auth-loading" id="auth-loading">로그인 상태 확인 중...</div>
 <div class="login-state" id="login-state"></div>
 
 <label>서버 주소</label>
 <input id="server-url" placeholder="https://your-app.up.railway.app">
-<div id="login-form">
+<div id="login-form" style="display:none">
   <label>이메일</label>
   <input id="login-email" type="email" placeholder="student@example.com">
   <label>비밀번호</label>

@@ -94,6 +94,8 @@ async function signInToService() {
 async function setLoggedInUi(email) {
   var stateEl = document.getElementById('login-state');
   var formEl = document.getElementById('login-form');
+  var loadingEl = document.getElementById('auth-loading');
+  if (loadingEl) loadingEl.style.display = 'none';
   stateEl.innerHTML = '<strong>' + (email || '로그인됨') + '</strong>서비스 로그인 상태입니다.<br><button class="link-btn" id="logout-btn">로그아웃</button>';
   stateEl.style.display = 'block';
   formEl.style.display = 'none';
@@ -106,6 +108,8 @@ async function setLoggedInUi(email) {
 }
 
 async function setLoggedOutUi() {
+  var loadingEl = document.getElementById('auth-loading');
+  if (loadingEl) loadingEl.style.display = 'none';
   document.getElementById('login-state').style.display = 'none';
   document.getElementById('login-form').style.display = 'block';
 }
