@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
@@ -630,6 +630,7 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
                 <input class="form-input wide" id="new-comp-url" placeholder="스마트스토어 상품 URL (https://smartstore.naver.com/...)">
                 <button class="btn btn-primary" onclick="addCompetitor()">추가</button>
               </div>
+              <div id="competitor-limit-note" style="margin-top:8px;font-size:12px;color:var(--text3)"></div>
             </div>
             <div class="settings-label" style="margin-top:20px">📌 등록된 경쟁사</div>
             <div class="comp-list" id="comp-list">
@@ -747,6 +748,7 @@ const HISTORY_MODE_KEY = 'naverMonitorHistoryMode:v1';
 const TIME_RANGE_KEY = 'naverMonitorTimeRange:v1';
 const TIME_COLUMN_LIMIT = 10;
 let accessToken = '';
+let appConfig = {};
 
 async function initAuth() {
   accessToken = localStorage.getItem('naverMonitorAccessToken') || '';
@@ -1076,10 +1078,12 @@ async function init() {
 }
 
 function applyConfig(cfg) {
+  appConfig = cfg || {};
   document.getElementById('user-info').innerHTML = `<strong>${cfg.username}</strong>로 로그인됨`;
   isAdminUser = !!cfg.is_admin;
   document.getElementById('nav-admin').style.display = isAdminUser ? '' : 'none';
   renderCompList(cfg.competitors || []);
+  renderCompetitorLimit(cfg);
 
   if (cfg.schedule) {
     document.getElementById('sched-enabled').checked = cfg.schedule.enabled;
@@ -1432,6 +1436,18 @@ async function fetchSingle(cid, name) {
 }
 
 // ─── Competitors ─────────────────────────────────────────────
+function renderCompetitorLimit(cfg) {
+  const note = document.getElementById('competitor-limit-note');
+  if (!note) return;
+  const competitors = (cfg && cfg.competitors) || [];
+  const limit = cfg ? cfg.competitor_limit : null;
+  if (limit === null || limit === undefined) {
+    note.textContent = `현재 등록 ${competitors.length}개 · 등록 제한 없음`;
+    return;
+  }
+  note.textContent = `무료 사용자는 경쟁사 상품을 ${limit}개까지 등록할 수 있습니다. 현재 ${competitors.length}/${limit}개`;
+}
+
 function renderCompList(competitors) {
   const el = document.getElementById('comp-list');
   if (!competitors.length) {
@@ -1455,6 +1471,12 @@ async function addCompetitor() {
   const name = document.getElementById('new-comp-name').value.trim();
   const url = document.getElementById('new-comp-url').value.trim();
   if (!name || !url) { showToast('이름과 URL을 입력해주세요'); return; }
+  const limit = appConfig.competitor_limit;
+  const currentCount = (appConfig.competitors || []).length;
+  if (limit !== null && limit !== undefined && currentCount >= limit) {
+    showToast(`무료 사용자는 경쟁사 상품을 ${limit}개까지만 등록할 수 있습니다.`);
+    return;
+  }
   try {
     const r = await fetch('/api/competitors', {
       method:'POST',

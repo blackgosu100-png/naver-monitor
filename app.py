@@ -34,6 +34,7 @@ SUPABASE_URL = os.environ.get('SUPABASE_URL', '').rstrip('/')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY', '')
 SUPABASE_ANON_KEY = os.environ.get('SUPABASE_ANON_KEY', '')
 KST = ZoneInfo('Asia/Seoul')
+FREE_COMPETITOR_LIMIT = int(os.environ.get('FREE_COMPETITOR_LIMIT', '3'))
 
 def _sb_headers(prefer: str = 'return=representation') -> dict:
     return {
@@ -299,6 +300,15 @@ def fetch_product_image(url: str) -> str:
 
 def db_get_competitors(user_id: str) -> list:
     return sb_select('competitors', f'?user_id=eq.{user_id}&order=created_at')
+
+def competitor_limit_for_user(user: dict) -> int | None:
+    if _is_admin_user(user):
+        return None
+    app_meta = user.get('app_metadata') or {}
+    plan = str(app_meta.get('plan') or app_meta.get('tier') or 'free').lower()
+    if plan in ('pro', 'paid', 'premium', 'unlimited'):
+        return None
+    return FREE_COMPETITOR_LIMIT
 
 def _stock_snapshot(now: datetime | None = None) -> tuple[str, str]:
     dt = (now or datetime.now(KST)).astimezone(KST)
@@ -611,12 +621,16 @@ def api_logout():
 @login_required
 def api_config():
     email = g.user.get('email') or g.user.get('phone') or g.user_id
+    competitors = db_get_competitors(g.user_id)
+    competitor_limit = competitor_limit_for_user(g.user)
     return jsonify({
         'username':    email,
         'user_id':     g.user_id,
         'is_admin':    _is_admin_user(g.user),
         'approved':    _is_approved_user(g.user),
-        'competitors': db_get_competitors(g.user_id),
+        'competitors': competitors,
+        'competitor_limit': competitor_limit,
+        'competitor_count': len(competitors),
         'schedule':    db_get_schedule(g.user_id),
     })
 
@@ -685,6 +699,9 @@ def api_add_competitor():
         return jsonify({'error': '이름과 URL을 입력해주세요'}), 400
     if not re.search(r'(?:smartstore|brand)\.naver\.com/.+/products/\d+', url):
         return jsonify({'error': 'smartstore.naver.com 또는 brand.naver.com URL이어야 합니다'}), 400
+    competitor_limit = competitor_limit_for_user(g.user)
+    if competitor_limit is not None and len(db_get_competitors(g.user_id)) >= competitor_limit:
+        return jsonify({'error': f'무료 사용자는 경쟁사 상품을 {competitor_limit}개까지만 등록할 수 있습니다.'}), 403
     cid = f"c{uuid.uuid4().hex}"
     sb_insert('competitors', {
         'id': cid,

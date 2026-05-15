@@ -91,15 +91,26 @@ async function signInToService() {
   await setLoggedInUi(email);
 }
 
+function openServicePage(path) {
+  var serverInput = document.getElementById('server-url');
+  var serverUrl = normalizeServerUrl(serverInput && serverInput.value ? serverInput.value.trim() : DEFAULT_SERVER);
+  chrome.storage.local.set({ serverUrl: serverUrl });
+  chrome.tabs.create({ url: serverUrl + (path || '/login'), active: true });
+}
+
 async function setLoggedInUi(email) {
   var stateEl = document.getElementById('login-state');
   var formEl = document.getElementById('login-form');
   var loadingEl = document.getElementById('auth-loading');
   if (loadingEl) loadingEl.style.display = 'none';
-  stateEl.innerHTML = '<strong>' + (email || '로그인됨') + '</strong>서비스 로그인 상태입니다.<br><button class="link-btn" id="logout-btn">로그아웃</button>';
+  stateEl.innerHTML = '<strong>' + (email || '로그인됨') + '</strong>서비스 로그인 상태입니다.<br><button class="link-btn" id="open-dashboard-btn">웹앱 열기</button> <button class="link-btn" id="logout-btn">로그아웃</button>';
   stateEl.style.display = 'block';
   formEl.style.display = 'none';
   document.getElementById('login-msg').style.display = 'none';
+  var dashboardBtn = document.getElementById('open-dashboard-btn');
+  if (dashboardBtn) dashboardBtn.addEventListener('click', function() {
+    openServicePage('/');
+  });
   var logoutBtn = document.getElementById('logout-btn');
   if (logoutBtn) logoutBtn.addEventListener('click', async function() {
     await chrome.storage.local.remove(['accessToken', 'refreshToken', 'loginEmail']);
@@ -359,6 +370,10 @@ document.getElementById('login-btn').addEventListener('click', async function() 
   } finally {
     btn.disabled = false;
   }
+});
+
+document.getElementById('open-login-page-btn').addEventListener('click', function() {
+  openServicePage('/login');
 });
 
 document.getElementById('fetch-btn').addEventListener('click', async function() {
