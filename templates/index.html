@@ -449,6 +449,58 @@ body { overflow-x: hidden; }
 }
 .toast.show { transform: translateX(-50%) translateY(0); }
 
+/* ── Upgrade Modal ── */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, .42);
+}
+.modal-backdrop.show { display: flex; }
+.upgrade-modal {
+  width: min(760px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, .28);
+}
+.upgrade-head { padding: 22px 24px 16px; border-bottom: 1px solid var(--border); display:flex; justify-content:space-between; gap:20px; }
+.upgrade-title { font-size:20px; font-weight:800; letter-spacing:0; color:var(--text); }
+.upgrade-desc { margin-top:6px; color:var(--text2); font-size:13px; line-height:1.7; }
+.modal-close { width:30px; height:30px; border:1px solid var(--border); background:var(--surface); border-radius:8px; cursor:pointer; color:var(--text2); }
+.upgrade-body { padding: 18px 24px 24px; }
+.plan-grid { display:grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap:12px; }
+.plan-card {
+  position:relative;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  min-height:190px;
+  padding:16px;
+  border:1px solid var(--border);
+  border-radius:8px;
+  background:#fff;
+}
+.plan-card.recommended { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent-border); }
+.plan-chip { align-self:flex-start; padding:3px 8px; border-radius:999px; background:var(--surface2); color:var(--text3); font-size:10px; font-weight:700; }
+.plan-card.recommended .plan-chip { background:var(--accent-bg); color:var(--green); }
+.plan-name { font-size:16px; font-weight:800; }
+.plan-price { font-size:22px; font-weight:800; font-family:var(--mono); letter-spacing:0; }
+.plan-meta { color:var(--text2); font-size:12px; line-height:1.7; flex:1; }
+.plan-card .btn { justify-content:center; width:100%; }
+.upgrade-foot { margin-top:14px; padding:12px 14px; border-radius:8px; background:#f8fafc; color:var(--text2); font-size:12px; line-height:1.7; }
+@media (max-width: 720px) {
+  .plan-grid { grid-template-columns:1fr; }
+  .upgrade-head { padding:18px; }
+  .upgrade-body { padding:16px 18px 18px; }
+}
+
 /* ── Loading ── */
 .loading-overlay {
   position: fixed; inset: 0;
@@ -746,6 +798,25 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
 
 <!-- Toast -->
 <div class="toast" id="toast"></div>
+
+<!-- Upgrade modal -->
+<div class="modal-backdrop" id="upgrade-modal" onclick="closeUpgradeModal(event)">
+  <div class="upgrade-modal" role="dialog" aria-modal="true" aria-labelledby="upgrade-title" onclick="event.stopPropagation()">
+    <div class="upgrade-head">
+      <div>
+        <div class="upgrade-title" id="upgrade-title">무료 등록 한도에 도달했습니다</div>
+        <div class="upgrade-desc" id="upgrade-desc">무료 플랜은 경쟁사 상품 3개까지 등록할 수 있습니다. 더 많은 상품을 관리하려면 유료 플랜을 신청해주세요.</div>
+      </div>
+      <button class="modal-close" type="button" onclick="closeUpgradeModal()" aria-label="닫기">×</button>
+    </div>
+    <div class="upgrade-body">
+      <div class="plan-grid" id="upgrade-plan-grid"></div>
+      <div class="upgrade-foot">
+        신청하면 관리자 보드에 요청이 남습니다. 결제는 아직 자동 처리되지 않으며, 관리자가 확인 후 플랜을 전환합니다.
+      </div>
+    </div>
+  </div>
+</div>
 
 <script>
 const nativeFetch = window.fetch.bind(window);
@@ -1464,6 +1535,61 @@ function renderCompetitorLimit(cfg) {
   note.textContent = `${planLabel} 플랜: 경쟁사 상품 ${limit}개까지 등록 가능 · 현재 ${competitors.length}/${limit}개 · 남은 ${remain}개`;
 }
 
+function getPaidPlans() {
+  const pricing = Array.isArray(appConfig.pricing) ? appConfig.pricing : [];
+  const paid = pricing.filter(plan => ['basic', 'pro', 'business'].includes(plan.id));
+  if (paid.length) return paid;
+  return [
+    {id:'basic', label:'베이직', price:'19,900원', period:'3개월', competitor_limit:10, note:'가볍게 확장'},
+    {id:'pro', label:'프로', price:'39,900원', period:'6개월', competitor_limit:20, recommended:true, note:'추천 플랜'},
+    {id:'business', label:'비즈니스', price:'149,000원', period:'6개월', competitor_limit:50, note:'상담 후 활성화'},
+  ];
+}
+
+function openUpgradeModal(reason) {
+  const modal = document.getElementById('upgrade-modal');
+  const grid = document.getElementById('upgrade-plan-grid');
+  const desc = document.getElementById('upgrade-desc');
+  const limit = appConfig.competitor_limit || 3;
+  const count = (appConfig.competitors || []).length;
+  desc.textContent = reason || `현재 ${count}/${limit}개를 등록했습니다. 더 많은 경쟁사 상품을 관리하려면 유료 플랜을 신청해주세요.`;
+  grid.innerHTML = getPaidPlans().map(plan => `
+    <div class="plan-card ${plan.recommended ? 'recommended' : ''}">
+      <div class="plan-chip">${plan.recommended ? '추천' : plan.note || '유료 플랜'}</div>
+      <div class="plan-name">${escHtml(plan.label)}</div>
+      <div class="plan-price">${escHtml(plan.price)}</div>
+      <div class="plan-meta">
+        ${plan.period ? `${escHtml(plan.period)} 이용<br>` : ''}
+        경쟁사 상품 ${plan.competitor_limit}개까지 등록<br>
+        ${plan.id === 'business' ? '많은 상품은 조회 간격을 조절해 운영하는 것을 권장합니다.' : '현재 업무량에 맞춰 바로 확장할 수 있습니다.'}
+      </div>
+      <button class="btn ${plan.recommended ? 'btn-green' : 'btn-primary'}" onclick="requestPlan('${plan.id}')">${plan.id === 'business' ? '상담 신청' : '플랜 신청'}</button>
+    </div>
+  `).join('');
+  modal.classList.add('show');
+}
+
+function closeUpgradeModal(event) {
+  if (event && event.target && event.target.id !== 'upgrade-modal') return;
+  document.getElementById('upgrade-modal').classList.remove('show');
+}
+
+async function requestPlan(plan) {
+  try {
+    const r = await fetch('/api/plan-request', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({plan})
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || '플랜 신청 실패');
+    closeUpgradeModal();
+    showToast(data.message || '플랜 신청이 접수되었습니다');
+  } catch (e) {
+    showToast(e.message || '플랜 신청 실패');
+  }
+}
+
 function renderCompList(competitors) {
   const el = document.getElementById('comp-list');
   if (!competitors.length) {
@@ -1490,7 +1616,7 @@ async function addCompetitor() {
   const limit = appConfig.competitor_limit;
   const currentCount = (appConfig.competitors || []).length;
   if (limit !== null && limit !== undefined && currentCount >= limit) {
-    showToast(`${appConfig.plan_label || '현재'} 플랜은 경쟁사 상품을 ${limit}개까지만 등록할 수 있습니다.`);
+    openUpgradeModal(`${appConfig.plan_label || '현재'} 플랜은 경쟁사 상품을 ${limit}개까지 등록할 수 있습니다. 지금 유료 플랜을 신청하면 더 많은 경쟁사 상품을 추가할 수 있습니다.`);
     return;
   }
   try {
@@ -1507,6 +1633,10 @@ async function addCompetitor() {
       await loadConfig();
       await loadHistory();
     } else {
+      if (r.status === 403) {
+        openUpgradeModal(data.error || '현재 플랜의 등록 한도에 도달했습니다.');
+        return;
+      }
       showToast(data.error || '추가 실패');
     }
   } catch {
@@ -1613,6 +1743,13 @@ function renderUserPlanBadge(user) {
   return `<span class="badge ${badgeClass}">${label} · ${limit}개</span>`;
 }
 
+function renderPlanRequest(user) {
+  const req = user.plan_request;
+  if (!req || !req.plan) return '';
+  const label = PLAN_LABELS[req.plan] || req.plan_label || req.plan;
+  return `<div class="admin-muted" style="margin-top:4px"><span class="badge badge-red">신청: ${escHtml(label.replace(' 추천', ''))}</span></div>`;
+}
+
 function renderPlanActions(user) {
   if (user.is_admin) return '';
   return `<div class="plan-actions">
@@ -1644,6 +1781,7 @@ async function loadAdminUsers() {
           <div>
             <div class="admin-email" title="${escHtml(user.email)}">${escHtml(user.email || user.id)}</div>
             <div class="admin-muted">가입 ${formatAdminDate(user.created_at)}</div>
+            ${renderPlanRequest(user)}
           </div>
           <div><span class="badge badge-green">가입 완료</span></div>
           <div>${renderUserPlanBadge(user)}</div>

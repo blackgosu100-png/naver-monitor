@@ -55,6 +55,7 @@ PLAN_PRICING = [
     {'id': 'pro', 'label': '프로', 'price': '39,900원', 'period': '6개월', 'competitor_limit': 20, 'recommended': True, 'note': '추천 플랜'},
     {'id': 'business', 'label': '비즈니스', 'price': '149,000원', 'period': '6개월', 'competitor_limit': 50, 'recommended': False, 'note': '상담 후 활성화'},
 ]
+PAID_PLAN_IDS = {'basic', 'pro', 'business'}
 
 def _sb_headers(prefer: str = 'return=representation') -> dict:
     return {
@@ -672,6 +673,34 @@ def api_config():
         'schedule':    db_get_schedule(g.user_id),
     })
 
+@app.route('/api/plan-request', methods=['POST'])
+@login_required
+def api_plan_request():
+    body = request.get_json() or {}
+    plan = str(body.get('plan') or '').strip().lower()
+    if plan not in PAID_PLAN_IDS:
+        return jsonify({'error': '신청할 수 없는 플랜입니다'}), 400
+    request_payload = {
+        'plan': plan,
+        'plan_label': PLAN_LABELS.get(plan, plan),
+        'status': 'pending',
+        'requested_at': datetime.now(KST).isoformat(),
+    }
+    sb_upsert(
+        'app_settings',
+        {
+            'user_id': g.user_id,
+            'key': 'plan_request',
+            'value': json.dumps(request_payload, ensure_ascii=False),
+        },
+        on_conflict='user_id,key',
+    )
+    return jsonify({
+        'ok': True,
+        'message': f'{PLAN_LABELS.get(plan, plan)} 플랜 신청이 접수되었습니다. 관리자가 확인 후 전환해드립니다.',
+        'request': request_payload,
+    })
+
 @app.route('/api/admin/users')
 @admin_required
 def api_admin_users():
@@ -687,6 +716,16 @@ def api_admin_users():
         return jsonify({'error': _auth_error(r, 'Failed to load users')}), 500
     data = r.json()
     users = data.get('users', data if isinstance(data, list) else [])
+    plan_requests = {}
+    try:
+        rows = sb_select('app_settings', '?select=user_id,value&key=eq.plan_request')
+        for row in rows:
+            try:
+                plan_requests[row.get('user_id')] = json.loads(row.get('value') or '{}')
+            except Exception:
+                plan_requests[row.get('user_id')] = {'status': 'pending'}
+    except Exception:
+        plan_requests = {}
     result = []
     for user in users:
         plan = user_plan(user)
@@ -700,6 +739,7 @@ def api_admin_users():
             'plan': plan,
             'plan_label': PLAN_LABELS.get(plan, '무료'),
             'competitor_limit': competitor_limit_for_user(user),
+            'plan_request': plan_requests.get(user.get('id')),
             'is_admin': _is_admin_user(user),
         })
     result.sort(key=lambda u: u.get('created_at') or '', reverse=True)
