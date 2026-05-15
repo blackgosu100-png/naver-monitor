@@ -72,7 +72,7 @@ async function apiFetch(path, options) {
 function openServicePage(path) {
   var serverUrl = DEFAULT_SERVER;
   chrome.storage.local.set({ serverUrl: serverUrl });
-  chrome.tabs.create({ url: serverUrl + (path || '/login'), active: true });
+  chrome.tabs.create({ url: serverUrl + (path || '/login?mode=signup'), active: true });
 }
 
 async function setLoggedInUi(email) {
@@ -97,7 +97,7 @@ async function setLoggedOutUi() {
   var loadingEl = document.getElementById('auth-loading');
   if (loadingEl) loadingEl.style.display = 'none';
   document.getElementById('login-state').style.display = 'none';
-  showMsg('login-msg', '웹 대시보드에서 로그인한 뒤 조회 버튼을 누르면 자동으로 연결됩니다.', 'info');
+  showMsg('login-msg', '처음이라면 지금 바로 시작하기로 회원가입을 신청하세요. 승인 후 웹 대시보드에서 조회할 수 있습니다.', 'info');
 }
 
 function parseNaverUrl(url) {
@@ -335,7 +335,7 @@ async function initializePopup() {
 initializePopup();
 
 document.getElementById('open-dashboard-btn-main').addEventListener('click', function() {
-  openServicePage('/');
+  openServicePage('/login?mode=signup');
 });
 
 document.getElementById('stop-btn').addEventListener('click', function() {

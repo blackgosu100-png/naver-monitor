@@ -172,6 +172,10 @@ init();
 
 async function init() {
   if (localStorage.getItem('naverMonitorAccessToken')) location.href = '/';
+  const params = new URLSearchParams(location.search);
+  if (params.get('mode') === 'signup' || params.get('signup') === '1') {
+    setMode('signup');
+  }
 }
 
 function setMode(next) {
