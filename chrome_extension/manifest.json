@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "네이버 경쟁사 모니터링",
-  "version": "4.7",
+  "version": "4.8",
   "description": "네이버 스마트스토어 경쟁사 재고를 자동 수집합니다",
   "icons": {
     "16": "icons/icon16.png",

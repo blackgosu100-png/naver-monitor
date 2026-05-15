@@ -69,43 +69,18 @@ async function apiFetch(path, options) {
   return res;
 }
 
-async function signInToService() {
-  var serverUrl = normalizeServerUrl(document.getElementById('server-url').value.trim());
-  var email = document.getElementById('login-email').value.trim();
-  var password = document.getElementById('login-password').value;
-  if (!email || !password) throw new Error('이메일과 비밀번호를 입력해주세요.');
-
-  var authRes = await fetch(serverUrl + '/api/auth/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: email, password: password })
-  });
-  var authData = await authRes.json();
-  if (!authRes.ok) throw new Error(authData.error || '로그인에 실패했습니다.');
-  await chrome.storage.local.set({
-    serverUrl: serverUrl,
-    accessToken: authData.access_token,
-    refreshToken: authData.refresh_token,
-    loginEmail: email
-  });
-  await setLoggedInUi(email);
-}
-
 function openServicePage(path) {
-  var serverInput = document.getElementById('server-url');
-  var serverUrl = normalizeServerUrl(serverInput && serverInput.value ? serverInput.value.trim() : DEFAULT_SERVER);
+  var serverUrl = DEFAULT_SERVER;
   chrome.storage.local.set({ serverUrl: serverUrl });
   chrome.tabs.create({ url: serverUrl + (path || '/login'), active: true });
 }
 
 async function setLoggedInUi(email) {
   var stateEl = document.getElementById('login-state');
-  var formEl = document.getElementById('login-form');
   var loadingEl = document.getElementById('auth-loading');
   if (loadingEl) loadingEl.style.display = 'none';
-  stateEl.innerHTML = '<strong>' + (email || '로그인됨') + '</strong>서비스 로그인 상태입니다.<br><button class="link-btn" id="open-dashboard-btn">웹앱 열기</button> <button class="link-btn" id="logout-btn">로그아웃</button>';
+  stateEl.innerHTML = '<strong>' + (email || '웹 대시보드 연결됨') + '</strong>웹 로그인 상태를 사용합니다.<br><button class="link-btn" id="open-dashboard-btn">웹앱 열기</button> <button class="link-btn" id="logout-btn">연결 해제</button>';
   stateEl.style.display = 'block';
-  formEl.style.display = 'none';
   document.getElementById('login-msg').style.display = 'none';
   var dashboardBtn = document.getElementById('open-dashboard-btn');
   if (dashboardBtn) dashboardBtn.addEventListener('click', function() {
@@ -122,7 +97,7 @@ async function setLoggedOutUi() {
   var loadingEl = document.getElementById('auth-loading');
   if (loadingEl) loadingEl.style.display = 'none';
   document.getElementById('login-state').style.display = 'none';
-  document.getElementById('login-form').style.display = 'block';
+  showMsg('login-msg', '웹 대시보드에서 로그인한 뒤 조회 버튼을 누르면 자동으로 연결됩니다.', 'info');
 }
 
 function parseNaverUrl(url) {
@@ -302,7 +277,8 @@ async function pollStatus() {
   var stopBtn = document.getElementById('stop-btn');
 
   if (s.running) {
-    document.getElementById('fetch-btn').disabled = true;
+    var fetchBtn = document.getElementById('fetch-btn');
+    if (fetchBtn) fetchBtn.disabled = true;
     stopBtn.style.display = 'block';
     bar.style.display = 'block';
     var pct = s.total > 0 ? Math.round(((s.current - 0.5) / s.total) * 85) : 0;
@@ -310,7 +286,8 @@ async function pollStatus() {
     var label = s.name ? '조회 중 (' + s.current + '/' + s.total + '): ' + s.name + (s.msg ? ' — ' + s.msg : '') : s.msg || '';
     showMsg('fetch-msg', label, 'info');
   } else if (s.done) {
-    document.getElementById('fetch-btn').disabled = false;
+    var fetchBtnDone = document.getElementById('fetch-btn');
+    if (fetchBtnDone) fetchBtnDone.disabled = false;
     stopBtn.style.display = 'none';
     fill.style.width = '100%';
     var okCount = (s.results || []).filter(function(r) { return !r.error; }).length;
@@ -318,7 +295,8 @@ async function pollStatus() {
     chrome.storage.local.remove('fetchStatus');
     if (statusPoller) { clearInterval(statusPoller); statusPoller = null; }
   } else if (s.stopped) {
-    document.getElementById('fetch-btn').disabled = false;
+    var fetchBtnStopped = document.getElementById('fetch-btn');
+    if (fetchBtnStopped) fetchBtnStopped.disabled = false;
     stopBtn.style.display = 'none';
     showMsg('fetch-msg', s.msg || '중지되었습니다', 'info');
     chrome.storage.local.remove('fetchStatus');
@@ -336,8 +314,6 @@ chrome.storage.local.get('fetchStatus', function(data) {
 // ─── 초기 상태 ───────────────────────────────────────────────
 async function initializePopup() {
   var state = await getAuthState();
-  document.getElementById('server-url').value = state.serverUrl;
-  if (state.loginEmail) document.getElementById('login-email').value = state.loginEmail;
 
   if (state.accessToken || state.refreshToken) {
     try {
@@ -358,53 +334,8 @@ async function initializePopup() {
 
 initializePopup();
 
-document.getElementById('login-btn').addEventListener('click', async function() {
-  var btn = document.getElementById('login-btn');
-  btn.disabled = true;
-  showMsg('login-msg', '로그인 중...', 'info');
-  try {
-    await signInToService();
-    showMsg('login-msg', '서비스 로그인 완료', 'ok');
-  } catch(e) {
-    showMsg('login-msg', String(e.message || e), 'err');
-  } finally {
-    btn.disabled = false;
-  }
-});
-
-document.getElementById('open-login-page-btn').addEventListener('click', function() {
-  openServicePage('/login');
-});
-
-document.getElementById('fetch-btn').addEventListener('click', async function() {
-  var btn = document.getElementById('fetch-btn');
-  var bar = document.getElementById('progress-bar');
-  var fill = document.getElementById('progress-fill');
-
-  try {
-    var listResp = await apiFetch('/api/public/competitors');
-    if (!listResp.ok) throw new Error('앱 서버 연결 실패 — run.bat이 실행 중인지 확인하세요');
-    var listData = await listResp.json();
-    var competitors = listData.competitors || [];
-    if (competitors.length === 0) throw new Error('등록된 경쟁사가 없습니다. 앱 설정에서 추가해주세요.');
-
-    btn.disabled = true;
-    document.getElementById('stop-btn').style.display = 'block';
-    bar.style.display = 'block';
-    fill.style.width = '0%';
-    showMsg('fetch-msg', '조회 시작 중... (팝업을 닫아도 계속 실행됩니다)', 'info');
-
-    chrome.runtime.sendMessage({ type: 'START_FETCH', competitors: competitors });
-
-    // 상태 폴링 시작
-    if (statusPoller) clearInterval(statusPoller);
-    statusPoller = setInterval(pollStatus, 800);
-
-  } catch(e) {
-    showMsg('fetch-msg', '❌ ' + e.message, 'err');
-    btn.disabled = false;
-    document.getElementById('stop-btn').style.display = 'none';
-  }
+document.getElementById('open-dashboard-btn-main').addEventListener('click', function() {
+  openServicePage('/');
 });
 
 document.getElementById('stop-btn').addEventListener('click', function() {
@@ -418,7 +349,8 @@ document.getElementById('stop-btn').addEventListener('click', function() {
       return;
     }
     stopBtn.style.display = 'none';
-    document.getElementById('fetch-btn').disabled = false;
+    var fetchBtn = document.getElementById('fetch-btn');
+    if (fetchBtn) fetchBtn.disabled = false;
     showMsg('fetch-msg', '조회 중지 요청을 보냈습니다.', 'info');
   });
 });

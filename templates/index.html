@@ -1316,6 +1316,12 @@ function getDashboardCompetitors() {
 function requestExtensionFetch(competitors) {
   return new Promise((resolve, reject) => {
     const requestId = `fetch-${Date.now()}-${++extensionRequestSeq}`;
+    const auth = {
+      serverUrl: location.origin,
+      accessToken: localStorage.getItem('naverMonitorAccessToken') || '',
+      refreshToken: localStorage.getItem('naverMonitorRefreshToken') || '',
+      loginEmail: (appConfig && appConfig.username) || ''
+    };
     const timer = setTimeout(() => {
       window.removeEventListener('message', onMessage);
       reject(new Error('확장 프로그램 연결을 확인할 수 없습니다.'));
@@ -1336,6 +1342,7 @@ function requestExtensionFetch(competitors) {
       source: 'naver-monitor-dashboard',
       type: 'START_FETCH',
       requestId,
+      auth,
       competitors
     }, '*');
   });
