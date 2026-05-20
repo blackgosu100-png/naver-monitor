@@ -200,6 +200,28 @@ async function checkAndProcessQueue() {
     qSec.style.display = 'block';
     qBar.style.display = 'block';
     qFill.style.width = '0%';
+    showMsg('queue-msg', '대기 중인 조회 ' + queue.length + '개를 백그라운드에서 시작합니다.', 'info');
+
+    await new Promise(function(resolve, reject) {
+      chrome.runtime.sendMessage({ type: 'START_FETCH', competitors: queue }, function(response) {
+        var error = chrome.runtime.lastError ? chrome.runtime.lastError.message : '';
+        if (error || !(response && response.ok)) {
+          reject(new Error(error || (response && response.error) || '대기 조회 시작 실패'));
+          return;
+        }
+        resolve();
+      });
+    });
+
+    await apiFetch('/api/public/queue', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: queue.map(function(c) { return c.id; }) })
+    });
+
+    qFill.style.width = '100%';
+    showMsg('queue-msg', '백그라운드에서 대기 조회를 시작했습니다. 완료되면 대시보드가 새로고침됩니다.', 'ok');
+    return;
     showMsg('queue-msg', '대기 중인 조회 ' + queue.length + '개 처리 시작...', 'info');
 
     var results = [];
