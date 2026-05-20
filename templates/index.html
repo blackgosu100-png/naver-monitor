@@ -1596,7 +1596,25 @@ async function stopFetch() {
 
 async function fetchAll() {
   if (currentMarket() === 'ohouse') {
-    showToast('오늘의집 재고 조회는 수집기 연결 준비중입니다');
+    showLoading('오늘의집 전체 조회 중...');
+    const btn = document.getElementById('fetch-btn');
+    btn.disabled = true;
+    try {
+      const r = await fetch('/api/fetch', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({})
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || '오늘의집 조회 실패');
+      showToast('오늘의집 재고 조회가 완료되었습니다');
+      await loadHistory();
+    } catch (e) {
+      showToast(e.message || '오늘의집 조회 실패');
+    } finally {
+      hideLoading();
+      btn.disabled = false;
+    }
     return;
   }
   showLoading('크롬 확장 프로그램에 전체 조회 요청 중...');
@@ -1625,7 +1643,22 @@ async function fetchAll() {
 
 async function fetchSingle(cid, name) {
   if (currentMarket() === 'ohouse') {
-    showToast('오늘의집 재고 조회는 수집기 연결 준비중입니다');
+    showLoading(`${name} 오늘의집 재고 조회 중...`);
+    try {
+      const r = await fetch('/api/fetch', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({id: cid})
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || '오늘의집 조회 실패');
+      showToast(`${name} 재고 조회가 완료되었습니다`);
+      await loadHistory();
+    } catch (e) {
+      showToast(e.message || '오늘의집 조회 실패');
+    } finally {
+      hideLoading();
+    }
     return;
   }
   showLoading(`${name} 재고 조회 요청 중...`);

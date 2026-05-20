@@ -198,8 +198,57 @@ def _parse_product_response(data: dict):
         return _ok([{'name': '전체', 'qty': sq}])
     return None
 
+def is_ohouse_url(url: str) -> bool:
+    return bool(re.search(r'store\.ohou\.se/goods/\d+', url or '', re.I))
+
+def ohouse_goods_id(url: str) -> str | None:
+    match = re.search(r'store\.ohou\.se/goods/(\d+)', url or '', re.I)
+    return match.group(1) if match else None
+
+def _fetch_ohouse(url: str) -> dict:
+    gid = ohouse_goods_id(url)
+    if not gid:
+        return _err('오늘의집 상품 ID를 찾을 수 없습니다')
+    try:
+        r = httpx.get(
+            f'https://store.ohou.se/api/goods/options?id={gid}',
+            headers={
+                'User-Agent': (
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                    'AppleWebKit/537.36 (KHTML, like Gecko) '
+                    'Chrome/136.0.0.0 Safari/537.36'
+                ),
+                'Accept': 'application/json, text/plain, */*',
+                'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+                'Referer': f'https://store.ohou.se/goods/{gid}',
+            },
+            timeout=20,
+            follow_redirects=True,
+        )
+        if r.status_code >= 400:
+            return _err(f'오늘의집 옵션 API 오류: HTTP {r.status_code}')
+        data = r.json()
+        production = data.get('production') or {}
+        options = []
+        for opt in production.get('options') or []:
+            name_parts = [opt.get('explain') or '', opt.get('explain2') or '']
+            name = ' / '.join(part for part in name_parts if part).strip() or '옵션'
+            stock = opt.get('stock')
+            if stock is None:
+                continue
+            options.append({'name': name, 'qty': int(stock)})
+        if not options:
+            if production.get('isSoldOut') is True:
+                return _ok([{'name': '전체', 'qty': 0}])
+            return _err('오늘의집 옵션 재고를 찾을 수 없습니다')
+        return _ok(options)
+    except Exception as e:
+        return _err(str(e)[:300])
+
 def _fetch_one(browser, url: str) -> dict:
     """Playwright 브라우저 컨텍스트 1개로 URL 1개 조회"""
+    if is_ohouse_url(url):
+        return _fetch_ohouse(url)
     context = browser.new_context(
         user_agent=(
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
