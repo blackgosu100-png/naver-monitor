@@ -1144,13 +1144,16 @@ def api_fetch():
             return jsonify({'error': '경쟁사를 찾을 수 없습니다'}), 404
         if cid not in active_ids:
             return jsonify({'error': '현재 플랜에서는 등록순 상위 상품만 조회할 수 있습니다. 계속 조회하려면 플랜을 연장하거나 업그레이드해주세요.'}), 403
+        if competitor_market(comp.get('url') or '') != 'ohouse':
+            return jsonify({'error': '이 조회 버튼은 오늘의집 전용입니다. 네이버와 쿠팡은 각 탭에서 확장프로그램 조회로 실행해주세요.'}), 400
         result = fetch_single(comp)
         fetch_date, fetch_key = _stock_snapshot()
         db_save_stock(g.user_id, cid, fetch_date, result, fetch_key)
     else:
         competitors = active_competitors_for_user(g.user)
-        if market in ('naver', 'ohouse', 'coupang'):
-            competitors = [comp for comp in competitors if competitor_market(comp.get('url') or '') == market]
+        if market and market != 'ohouse':
+            return jsonify({'error': '서버 직접조회는 오늘의집만 실행합니다. 네이버와 쿠팡은 확장프로그램 조회를 사용해주세요.'}), 400
+        competitors = [comp for comp in competitors if competitor_market(comp.get('url') or '') == 'ohouse']
         fetch_date, fetch_key = _stock_snapshot()
         for comp in competitors:
             result = fetch_single(comp)
