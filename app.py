@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 import httpx
 from flask import Flask, request, jsonify, session, render_template, redirect, g, send_from_directory
 from apscheduler.schedulers.background import BackgroundScheduler
+from urllib.parse import parse_qs, urlparse
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'naver-monitor-dev-secret-2024')
@@ -201,9 +202,28 @@ def _parse_product_response(data: dict):
 def is_ohouse_url(url: str) -> bool:
     return bool(re.search(r'store\.ohou\.se/goods/\d+', url or '', re.I))
 
+def is_coupang_url(url: str) -> bool:
+    return bool(re.search(r'coupang\.com/(?:vp/)?products/\d+', url or '', re.I))
+
 def ohouse_goods_id(url: str) -> str | None:
     match = re.search(r'store\.ohou\.se/goods/(\d+)', url or '', re.I)
     return match.group(1) if match else None
+
+def coupang_product_params(url: str) -> tuple[str | None, str | None, str | None]:
+    parsed = urlparse(url or '')
+    query = parse_qs(parsed.query)
+    product_match = re.search(r'/products/(\d+)', parsed.path or '', re.I)
+    product_id = product_match.group(1) if product_match else None
+    item_id = (query.get('itemId') or query.get('itemid') or [None])[0]
+    vendor_item_id = (query.get('vendorItemId') or query.get('vendoritemid') or [None])[0]
+    return product_id, item_id, vendor_item_id
+
+def competitor_market(url: str) -> str:
+    if is_ohouse_url(url):
+        return 'ohouse'
+    if is_coupang_url(url):
+        return 'coupang'
+    return 'naver'
 
 def _fetch_ohouse(url: str) -> dict:
     gid = ohouse_goods_id(url)
@@ -245,10 +265,90 @@ def _fetch_ohouse(url: str) -> dict:
     except Exception as e:
         return _err(str(e)[:300])
 
+def _fetch_coupang(url: str) -> dict:
+    product_id, item_id, vendor_item_id = coupang_product_params(url)
+    if not product_id:
+        return _err('쿠팡 상품 ID를 찾을 수 없습니다')
+
+    headers = {
+        'User-Agent': (
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+            'AppleWebKit/537.36 (KHTML, like Gecko) '
+            'Chrome/136.0.0.0 Safari/537.36'
+        ),
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Referer': url,
+    }
+
+    try:
+        if not vendor_item_id:
+            page = httpx.get(url, headers={**headers, 'Accept': 'text/html,application/xhtml+xml'}, timeout=20, follow_redirects=True)
+            if page.status_code >= 400:
+                return _err(f'쿠팡 상품 페이지 오류: HTTP {page.status_code}')
+            vendor_match = re.search(r'"vendorItemId"\s*:\s*"?(\d+)"?', page.text)
+            item_match = re.search(r'"itemId"\s*:\s*"?(\d+)"?', page.text)
+            vendor_item_id = vendor_match.group(1) if vendor_match else None
+            item_id = item_id or (item_match.group(1) if item_match else None)
+
+        if not vendor_item_id:
+            return _err('쿠팡 vendorItemId를 찾을 수 없습니다. 상품 URL에 vendorItemId가 포함되어야 합니다.')
+
+        params = {
+            'productId': product_id,
+            'vendorItemId': vendor_item_id,
+            'deliveryToggle': 'true',
+            'landingProductId': product_id,
+            'landingVendorItemId': vendor_item_id,
+        }
+        if item_id:
+            params['landingItemId'] = item_id
+
+        r = httpx.get(
+            'https://www.coupang.com/next-api/products/quantity-info',
+            params=params,
+            headers=headers,
+            timeout=20,
+            follow_redirects=True,
+        )
+        if r.status_code >= 400:
+            return _err(f'쿠팡 월간 구매 API 오류: HTTP {r.status_code}')
+
+        data = r.json()
+        base = data[0] if isinstance(data, list) and data else data
+        modules = base.get('moduleData') if isinstance(base, dict) else []
+        social = next((
+            item for item in (modules or [])
+            if item.get('viewType') == 'PRODUCT_DETAIL_SOCIAL_PROOF_NUDGE'
+            and item.get('type') == 'purchase'
+        ), None)
+        if not social:
+            return _err('쿠팡 월간 구매 데이터가 노출되지 않는 상품입니다')
+
+        count = social.get('socialProofNumUsers')
+        if count is None:
+            highlight_digits = re.sub(r'\D+', '', social.get('highlightText') or '')
+            count = int(highlight_digits) if highlight_digits else None
+        if count is None:
+            return _err('쿠팡 월간 구매 수치를 찾을 수 없습니다')
+
+        count = int(count)
+        highlight = (social.get('highlightText') or '').strip()
+        return {
+            'total': count,
+            'options': [{'name': highlight or '한 달간 구매 추정', 'qty': count}],
+            'error': None,
+            'fetched_at': datetime.now().isoformat(),
+        }
+    except Exception as e:
+        return _err(str(e)[:300])
+
 def _fetch_one(browser, url: str) -> dict:
     """Playwright 브라우저 컨텍스트 1개로 URL 1개 조회"""
     if is_ohouse_url(url):
         return _fetch_ohouse(url)
+    if is_coupang_url(url):
+        return _fetch_coupang(url)
     context = browser.new_context(
         user_agent=(
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
@@ -763,6 +863,7 @@ def api_logout():
 def api_config():
     email = g.user.get('email') or g.user.get('phone') or g.user_id
     competitors = db_get_competitors(g.user_id)
+    competitors = [{**comp, 'market': competitor_market(comp.get('url') or '')} for comp in competitors]
     competitor_limit = competitor_limit_for_user(g.user)
     plan = user_plan(g.user)
     plan_dates = user_plan_dates(g.user)
@@ -941,8 +1042,9 @@ def api_add_competitor():
         return jsonify({'error': '이름과 URL을 입력해주세요'}), 400
     is_naver_url = re.search(r'(?:smartstore|brand)\.naver\.com/.+/products/\d+', url)
     is_ohouse_url = re.search(r'store\.ohou\.se/goods/\d+', url)
-    if not (is_naver_url or is_ohouse_url):
-        return jsonify({'error': '네이버 스마트스토어 또는 오늘의집 상품 URL이어야 합니다'}), 400
+    is_coupang_product_url = is_coupang_url(url)
+    if not (is_naver_url or is_ohouse_url or is_coupang_product_url):
+        return jsonify({'error': '네이버 스마트스토어, 오늘의집, 쿠팡 상품 URL이어야 합니다'}), 400
     competitor_limit = competitor_limit_for_user(g.user)
     if competitor_limit is not None and len(db_get_competitors(g.user_id)) >= competitor_limit:
         return jsonify({'error': f'{user_plan_label(g.user)} 플랜은 경쟁사 상품을 {competitor_limit}개까지만 등록할 수 있습니다.'}), 403
@@ -996,6 +1098,7 @@ def api_history():
             'id': cid,
             'name': comp['name'],
             'url': comp['url'],
+            'market': competitor_market(comp.get('url') or ''),
             'image_url': comp.get('image_url') or '',
             'days': {},
         }
@@ -1005,7 +1108,10 @@ def api_history():
             row = hmap.get(cid, {}).get(d)
             if row:
                 total = row.get('total')
-                sales = (prev_total - total) if (total is not None and prev_total is not None) else None
+                if total is not None and prev_total is not None:
+                    sales = (total - prev_total) if entry['market'] == 'coupang' else (prev_total - total)
+                else:
+                    sales = None
                 entry['days'][d] = {
                     'total':      total,
                     'sales':      sales,
@@ -1027,6 +1133,7 @@ def api_history():
 def api_fetch():
     body = request.get_json() or {}
     cid  = body.get('id')
+    market = str(body.get('market') or '').strip().lower()
     active_ids = active_competitor_ids_for_user(g.user)
     if cid:
         competitors = db_get_competitors(g.user_id)
@@ -1040,6 +1147,8 @@ def api_fetch():
         db_save_stock(g.user_id, cid, fetch_date, result, fetch_key)
     else:
         competitors = active_competitors_for_user(g.user)
+        if market in ('naver', 'ohouse', 'coupang'):
+            competitors = [comp for comp in competitors if competitor_market(comp.get('url') or '') == market]
         fetch_date, fetch_key = _stock_snapshot()
         for comp in competitors:
             result = fetch_single(comp)

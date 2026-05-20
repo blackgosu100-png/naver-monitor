@@ -82,6 +82,16 @@ function parseNaverUrl(url) {
   return m ? { slug: m[1], pid: m[2] } : null;
 }
 
+function parseCoupangUrl(url) {
+  var m = (url || '').match(/coupang\.com\/(?:vp\/)?products\/(\d+)/);
+  return m ? { pid: m[1] } : null;
+}
+
+function detectMarket(url) {
+  if (parseCoupangUrl(url)) return 'coupang';
+  return 'naver';
+}
+
 function readStockFromCache(pid) {
   function deepFind(obj, key, depth) {
     depth = depth || 0;
@@ -122,6 +132,70 @@ function readStockFromCache(pid) {
   if (options.length === 0) return { ok: false, error: '재고 데이터 없음' };
   var total = options.reduce(function(s, o) { return s + o.qty; }, 0);
   return { ok: true, options: options, total: total, image_url: imageUrl };
+}
+
+function readCoupangMonthlyPurchase(pid) {
+  function getImageUrl() {
+    var meta = document.querySelector('meta[property="og:image"], meta[name="og:image"]');
+    if (meta && meta.content) return meta.content;
+    var img = document.querySelector('img[src*="coupangcdn.com"]');
+    return img && img.src ? img.src : '';
+  }
+
+  function findSocial(data) {
+    var root = Array.isArray(data) ? data[0] : data;
+    var modules = root && root.moduleData;
+    if (!Array.isArray(modules)) return null;
+    for (var i = 0; i < modules.length; i++) {
+      var item = modules[i];
+      if (
+        item &&
+        item.viewType === 'PRODUCT_DETAIL_SOCIAL_PROOF_NUDGE' &&
+        item.type === 'purchase'
+      ) return item;
+    }
+    return null;
+  }
+
+  function socialFromText(text) {
+    if (!text) return null;
+    var normalized = text.replace(/\\"/g, '"');
+    var idx = normalized.indexOf('PRODUCT_DETAIL_SOCIAL_PROOF_NUDGE');
+    if (idx < 0) return null;
+    var start = Math.max(0, idx - 600);
+    var end = Math.min(normalized.length, idx + 400);
+    var chunk = normalized.slice(start, end);
+    if (chunk.indexOf('"type":"purchase"') < 0 && chunk.indexOf('"type": "purchase"') < 0) return null;
+    var countMatch = chunk.match(/"socialProofNumUsers"\s*:\s*(\d+)/);
+    if (!countMatch) return null;
+    var highlightMatch = chunk.match(/"highlightText"\s*:\s*"([^"]*)"/);
+    return {
+      socialProofNumUsers: Number(countMatch[1]),
+      highlightText: highlightMatch ? highlightMatch[1] : ''
+    };
+  }
+
+  var data = window.__coupangQuantityCache && window.__coupangQuantityCache[pid];
+  var social = data ? findSocial(data) : null;
+  if (!social) {
+    var scripts = document.querySelectorAll('script:not([src])');
+    for (var i = 0; i < scripts.length && !social; i++) {
+      social = socialFromText(scripts[i].textContent || '');
+    }
+  }
+  if (!social) social = socialFromText(document.documentElement.innerHTML || '');
+  if (!social || social.socialProofNumUsers == null) {
+    return { ok: false, error: '쿠팡 월간 구매 데이터가 노출되지 않는 상품입니다' };
+  }
+
+  var total = Number(social.socialProofNumUsers);
+  var label = (social.highlightText || '').trim() || '한 달간 구매 추정';
+  return {
+    ok: true,
+    total: total,
+    options: [{ name: label, qty: total }],
+    image_url: getImageUrl()
+  };
 }
 
 async function setStatus(status) {
@@ -253,6 +327,29 @@ async function waitForCache(tabId, pid, onStatus) {
   return { ok: false, error: '타임아웃' };
 }
 
+async function waitForCoupangMonthly(tabId, pid) {
+  var elapsed = 0;
+  var maxWait = 45000;
+  while (elapsed < maxWait) {
+    if (shouldStop()) return { ok: false, stopped: true, error: '?ъ슜??以묒?' };
+    try {
+      var res = await chrome.scripting.executeScript({
+        target: { tabId },
+        world: 'MAIN',
+        func: readCoupangMonthlyPurchase,
+        args: [pid]
+      });
+      var cr = res && res[0] && res[0].result;
+      if (cr && cr.ok) return cr;
+    } catch(e) {
+      return { ok: false, error: '쿠팡 데이터 읽기 실패' };
+    }
+    await new Promise(r => setTimeout(r, 1000));
+    elapsed += 1000;
+  }
+  return { ok: false, error: '쿠팡 월간 구매 데이터 대기 시간 초과' };
+}
+
 async function runFetch(competitors) {
   if (fetchRunning) return;
   fetchRunning = true;
@@ -264,7 +361,8 @@ async function runFetch(competitors) {
   for (var i = 0; i < competitors.length; i++) {
     if (shouldStop()) { stopped = true; break; }
     var comp = competitors[i];
-    var parsed = parseNaverUrl(comp.url);
+    var market = detectMarket(comp.url);
+    var parsed = market === 'coupang' ? parseCoupangUrl(comp.url) : parseNaverUrl(comp.url);
 
     await setStatus({
       running: true,
@@ -285,9 +383,11 @@ async function runFetch(competitors) {
       tabId = await openTab(comp.url);
       currentFetchTabId = tabId;
       if (shouldStop()) { stopped = true; break; }
-      var cr = await waitForCache(tabId, parsed.pid, async (msg) => {
-        await setStatus({ running: true, current: i + 1, total: competitors.length, name: comp.name, msg, results });
-      });
+      var cr = market === 'coupang'
+        ? await waitForCoupangMonthly(tabId, parsed.pid)
+        : await waitForCache(tabId, parsed.pid, async (msg) => {
+            await setStatus({ running: true, current: i + 1, total: competitors.length, name: comp.name, msg, results });
+          });
 
       if (cr && cr.stopped) {
         stopped = true;

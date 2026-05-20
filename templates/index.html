@@ -600,6 +600,7 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
     <div class="nav-section-label">MARKET</div>
     <div class="nav-item nav-market active" id="nav-market-naver" onclick="setMarket('naver')">네이버</div>
     <div class="nav-item nav-market" id="nav-market-ohouse" onclick="setMarket('ohouse')">오늘의집</div>
+    <div class="nav-item nav-market" id="nav-market-coupang" onclick="setMarket('coupang')">쿠팡</div>
     <div class="nav-item" id="nav-settings" onclick="showView('settings')">
       <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="2.5"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41"/></svg>
       설정
@@ -832,7 +833,7 @@ const HISTORY_MODE_KEY = 'naverMonitorHistoryMode:v1';
 const TIME_RANGE_KEY = 'naverMonitorTimeRange:v1';
 const MARKET_KEY = 'naverMonitorMarket:v1';
 const TIME_COLUMN_LIMIT = 10;
-const MARKET_LABELS = {naver:'네이버', ohouse:'오늘의집'};
+const MARKET_LABELS = {naver:'네이버', ohouse:'오늘의집', coupang:'쿠팡'};
 let accessToken = '';
 let appConfig = {};
 
@@ -1067,6 +1068,7 @@ function renderKPIs(data) {
   });
   const successRate = competitors.length > 0 ? Math.round(successCount / competitors.length * 100) : 0;
   const dateLabel = latestDate ? snapshotLabel(latestDate, true) + ' 기준' : '—';
+  const isCoupang = currentMarket() === 'coupang';
 
   el.style.display = 'grid';
   el.innerHTML = `
@@ -1076,14 +1078,14 @@ function renderKPIs(data) {
       <div class="kpi-sub">등록된 상품 수</div>
     </div>
     <div class="kpi-card kpi-accent-blue">
-      <div class="kpi-label">판매 추정 (${dateLabel})</div>
+      <div class="kpi-label">${isCoupang ? '월간 구매 신호' : '판매 추정'} (${dateLabel})</div>
       <div class="kpi-value blue">${totalSales.toLocaleString()}<span style="font-size:14px;font-weight:500;margin-left:3px">개</span></div>
-      <div class="kpi-sub">전일 대비 재고 감소 합산</div>
+      <div class="kpi-sub">${isCoupang ? '전회 대비 월간 구매 수 증가 합산' : '전일 대비 재고 감소 합산'}</div>
     </div>
     <div class="kpi-card kpi-accent-amber">
-      <div class="kpi-label">재입고 감지</div>
+      <div class="kpi-label">${isCoupang ? '구매 신호 감소' : '재입고 감지'}</div>
       <div class="kpi-value amber">${restockCount}<span style="font-size:14px;font-weight:500;margin-left:3px">건</span></div>
-      <div class="kpi-sub">재고 증가 경쟁사 수</div>
+      <div class="kpi-sub">${isCoupang ? '전회 대비 수치가 낮아진 상품 수' : '재고 증가 경쟁사 수'}</div>
     </div>
     <div class="kpi-card ${successRate >= 80 ? 'kpi-accent-green' : 'kpi-accent-red'}">
       <div class="kpi-label">조회 성공률</div>
@@ -1307,8 +1309,13 @@ function renderTable(data) {
         const sales = day.sales;
         const totalStr = total !== null ? total.toLocaleString() : '—';
         let deltaHtml = '';
-        if (sales !== null && sales > 0) {
+        const isCoupangRow = competitorMarket(comp) === 'coupang';
+        if (sales !== null && sales > 0 && isCoupangRow) {
+          deltaHtml = `<div class="d-delta" style="color:#2563EB">[+${sales.toLocaleString()}]</div>`;
+        } else if (sales !== null && sales > 0) {
           deltaHtml = `<div class="d-delta">[-${sales.toLocaleString()}]</div>`;
+        } else if (sales !== null && sales < 0 && isCoupangRow) {
+          deltaHtml = `<div class="d-delta">[${sales.toLocaleString()}]</div>`;
         } else if (sales !== null && sales < 0) {
           deltaHtml = `<div class="d-delta" style="color:#2563EB">[+${Math.abs(sales).toLocaleString()}]</div>`;
         }
@@ -1421,18 +1428,21 @@ function syncMarketUI() {
   const market = currentMarket();
   document.getElementById('nav-market-naver')?.classList.toggle('active', market === 'naver');
   document.getElementById('nav-market-ohouse')?.classList.toggle('active', market === 'ohouse');
+  document.getElementById('nav-market-coupang')?.classList.toggle('active', market === 'coupang');
   const title = document.querySelector('#view-dashboard .topbar-title');
-  if (title) title.textContent = `${marketLabel()} 재고 현황`;
+  if (title) title.textContent = market === 'coupang' ? '쿠팡 월간 구매 현황' : `${marketLabel()} 재고 현황`;
   const urlInput = document.getElementById('new-comp-url');
   if (urlInput) {
     urlInput.placeholder = market === 'ohouse'
       ? '오늘의집 상품 URL (https://store.ohou.se/goods/...)'
-      : '스마트스토어 상품 URL (https://smartstore.naver.com/...)';
+      : market === 'coupang'
+        ? '쿠팡 상품 URL (https://www.coupang.com/vp/products/...)'
+        : '스마트스토어 상품 URL (https://smartstore.naver.com/...)';
   }
 }
 
 function setMarket(market) {
-  localStorage.setItem(MARKET_KEY, market === 'ohouse' ? 'ohouse' : 'naver');
+  localStorage.setItem(MARKET_KEY, ['ohouse', 'coupang'].includes(market) ? market : 'naver');
   showView('dashboard');
   syncMarketUI();
   renderCompList(appConfig.competitors || []);
@@ -1442,13 +1452,16 @@ function setMarket(market) {
 }
 
 function competitorMarket(comp) {
+  if (comp && ['naver', 'ohouse', 'coupang'].includes(comp.market)) return comp.market;
   const url = String((comp && comp.url) || '').toLowerCase();
   if (url.includes('store.ohou.se/goods/')) return 'ohouse';
+  if (url.includes('coupang.com/') && url.includes('/products/')) return 'coupang';
   return 'naver';
 }
 
 function currentMarket() {
-  return localStorage.getItem(MARKET_KEY) === 'ohouse' ? 'ohouse' : 'naver';
+  const market = localStorage.getItem(MARKET_KEY);
+  return ['naver', 'ohouse', 'coupang'].includes(market) ? market : 'naver';
 }
 
 function marketLabel() {
@@ -1596,21 +1609,22 @@ async function stopFetch() {
 
 async function fetchAll() {
   if (currentMarket() === 'ohouse') {
-    showLoading('오늘의집 전체 조회 중...');
+    const label = marketLabel();
+    showLoading(`${label} 전체 조회 중...`);
     const btn = document.getElementById('fetch-btn');
     btn.disabled = true;
     try {
       const r = await fetch('/api/fetch', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({})
+        body: JSON.stringify({market: currentMarket()})
       });
       const data = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(data.error || '오늘의집 조회 실패');
-      showToast('오늘의집 재고 조회가 완료되었습니다');
+      if (!r.ok) throw new Error(data.error || `${label} 조회 실패`);
+      showToast(`${label} 재고 조회가 완료되었습니다`);
       await loadHistory();
     } catch (e) {
-      showToast(e.message || '오늘의집 조회 실패');
+      showToast(e.message || `${label} 조회 실패`);
     } finally {
       hideLoading();
       btn.disabled = false;
@@ -1643,7 +1657,8 @@ async function fetchAll() {
 
 async function fetchSingle(cid, name) {
   if (currentMarket() === 'ohouse') {
-    showLoading(`${name} 오늘의집 재고 조회 중...`);
+    const label = marketLabel();
+    showLoading(`${name} ${label} 재고 조회 중...`);
     try {
       const r = await fetch('/api/fetch', {
         method:'POST',
@@ -1651,11 +1666,11 @@ async function fetchSingle(cid, name) {
         body: JSON.stringify({id: cid})
       });
       const data = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(data.error || '오늘의집 조회 실패');
+      if (!r.ok) throw new Error(data.error || `${label} 조회 실패`);
       showToast(`${name} 재고 조회가 완료되었습니다`);
       await loadHistory();
     } catch (e) {
-      showToast(e.message || '오늘의집 조회 실패');
+      showToast(e.message || `${label} 조회 실패`);
     } finally {
       hideLoading();
     }
@@ -1693,19 +1708,20 @@ function renderCompetitorLimit(cfg) {
   const competitors = (cfg && cfg.competitors) || [];
   const naverCount = competitors.filter(comp => competitorMarket(comp) === 'naver').length;
   const ohouseCount = competitors.filter(comp => competitorMarket(comp) === 'ohouse').length;
+  const coupangCount = competitors.filter(comp => competitorMarket(comp) === 'coupang').length;
   const totalCount = competitors.length;
   const limit = cfg ? cfg.competitor_limit : null;
   const planLabel = (cfg && cfg.plan_label) || '무료';
   if (limit === null || limit === undefined) {
-    note.textContent = `전체 ${totalCount}개 · 네이버 ${naverCount}개 · 오늘의집 ${ohouseCount}개 · 등록 제한 없음`;
+    note.textContent = `전체 ${totalCount}개 · 네이버 ${naverCount}개 · 오늘의집 ${ohouseCount}개 · 쿠팡 ${coupangCount}개 · 등록 제한 없음`;
     return;
   }
   if (cfg && cfg.plan_expired) {
-    note.textContent = `${planLabel} 플랜 이용 기간이 만료되어 추가 등록은 무료 한도 ${limit}개 기준으로 제한됩니다. 전체 ${totalCount}/${limit}개 · 네이버 ${naverCount}개 · 오늘의집 ${ohouseCount}개`;
+    note.textContent = `${planLabel} 플랜 이용 기간이 만료되어 추가 등록은 무료 한도 ${limit}개 기준으로 제한됩니다. 전체 ${totalCount}/${limit}개 · 네이버 ${naverCount}개 · 오늘의집 ${ohouseCount}개 · 쿠팡 ${coupangCount}개`;
     return;
   }
   const remain = Math.max(limit - totalCount, 0);
-  note.textContent = `${planLabel} 플랜: 경쟁사 상품 ${limit}개까지 등록 가능 · 전체 ${totalCount}/${limit}개 · 네이버 ${naverCount}개 · 오늘의집 ${ohouseCount}개 · 남은 ${remain}개`;
+  note.textContent = `${planLabel} 플랜: 경쟁사 상품 ${limit}개까지 등록 가능 · 전체 ${totalCount}/${limit}개 · 네이버 ${naverCount}개 · 오늘의집 ${ohouseCount}개 · 쿠팡 ${coupangCount}개 · 남은 ${remain}개`;
 }
 
 function getPaidPlans() {

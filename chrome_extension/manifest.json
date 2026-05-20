@@ -12,12 +12,13 @@
   "permissions": ["tabs", "scripting", "storage"],
   "host_permissions": [
     "*://*.naver.com/*",
+    "*://*.coupang.com/*",
     "https://*.up.railway.app/*",
     "https://*.railway.app/*"
   ],
   "content_scripts": [
     {
-      "matches": ["*://*.smartstore.naver.com/*", "*://brand.naver.com/*"],
+      "matches": ["*://*.smartstore.naver.com/*", "*://brand.naver.com/*", "*://*.coupang.com/*"],
       "js": ["content.js"],
       "run_at": "document_start",
       "world": "MAIN"
