@@ -88,6 +88,8 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); min-
 .nav-item:hover { background: var(--sidebar-hover); color: #e4e4e7; }
 .nav-item.active { background: rgba(3,199,90,.12); color: var(--accent); }
 .nav-icon { width: 16px; height: 16px; flex-shrink: 0; opacity: .8; }
+.nav-section-label { margin: 14px 10px 6px; font-size: 10px; color: #71717a; font-weight: 700; letter-spacing: .5px; }
+.nav-market { padding-left: 34px; font-size: 12px; }
 .sidebar-bottom {
   padding: 10px 8px 12px;
   border-top: 1px solid rgba(255,255,255,.07);
@@ -595,6 +597,9 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
       <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
       대시보드
     </div>
+    <div class="nav-section-label">MARKET</div>
+    <div class="nav-item nav-market active" id="nav-market-naver" onclick="setMarket('naver')">네이버</div>
+    <div class="nav-item nav-market" id="nav-market-ohouse" onclick="setMarket('ohouse')">오늘의집</div>
     <div class="nav-item" id="nav-settings" onclick="showView('settings')">
       <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="2.5"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41"/></svg>
       설정
@@ -825,7 +830,9 @@ const CONFIG_CACHE_KEY = 'naverMonitorConfigCache:v1';
 const HISTORY_CACHE_KEY = 'naverMonitorHistoryCache:v1';
 const HISTORY_MODE_KEY = 'naverMonitorHistoryMode:v1';
 const TIME_RANGE_KEY = 'naverMonitorTimeRange:v1';
+const MARKET_KEY = 'naverMonitorMarket:v1';
 const TIME_COLUMN_LIMIT = 10;
+const MARKET_LABELS = {naver:'네이버', ohouse:'오늘의집'};
 let accessToken = '';
 let appConfig = {};
 
@@ -1030,7 +1037,12 @@ function toDailyHistory(data) {
 }
 
 function getDisplayHistory(data) {
-  return currentHistoryMode() === 'time' ? data : toDailyHistory(data);
+  if (!data) return data;
+  const filtered = {
+    ...data,
+    competitors: filterByCurrentMarket(data.competitors || []),
+  };
+  return currentHistoryMode() === 'time' ? filtered : toDailyHistory(filtered);
 }
 
 function renderKPIs(data) {
@@ -1152,6 +1164,7 @@ function renderChart(data, sortedDates) {
 async function init() {
   await initAuth();
   syncHistoryModeButtons();
+  syncMarketUI();
   hydrateFromCache();
   await Promise.all([loadHistory(), loadConfig()]);
 }
@@ -1161,7 +1174,8 @@ function applyConfig(cfg) {
   document.getElementById('user-info').innerHTML = `<strong>${cfg.username}</strong>로 로그인됨`;
   isAdminUser = !!cfg.is_admin;
   document.getElementById('nav-admin').style.display = isAdminUser ? '' : 'none';
-  renderCompList(cfg.competitors || []);
+  syncMarketUI();
+  renderCompList(filterByCurrentMarket(cfg.competitors || []));
   renderPlanStatus(cfg);
   renderCompetitorLimit(cfg);
   if (historyData && historyData.competitors) renderTable(historyData);
@@ -1194,6 +1208,12 @@ function showView(view) {
   document.getElementById('nav-dashboard').className = 'nav-item' + (view === 'dashboard' ? ' active' : '');
   document.getElementById('nav-settings').className = 'nav-item' + (view === 'settings' ? ' active' : '');
   document.getElementById('nav-admin').className = 'nav-item' + (view === 'admin' ? ' active' : '');
+  syncMarketUI();
+  if (view === 'settings') {
+    renderCompList(filterByCurrentMarket(appConfig.competitors || []));
+    renderCompetitorLimit(appConfig);
+    renderPlanStatus(appConfig);
+  }
   if (view === 'admin') loadAdminUsers();
 }
 
@@ -1216,6 +1236,7 @@ function renderTable(data) {
   data = getDisplayHistory(data);
   const wrap = document.getElementById('table-wrap');
   const { dates, competitors } = data;
+  const label = marketLabel();
 
   if (data.last_fetched) {
     const dt = new Date(data.last_fetched);
@@ -1223,15 +1244,15 @@ function renderTable(data) {
       `마지막 조회: ${dt.toLocaleDateString('ko-KR')} ${dt.toLocaleTimeString('ko-KR', {hour:'2-digit',minute:'2-digit'})}`;
   }
 
-  document.getElementById('monitor-count').textContent = `경쟁사 ${competitors.length}명`;
+  document.getElementById('monitor-count').textContent = `${label} 경쟁사 ${competitors.length}명`;
   document.getElementById('monitor-mode-label').textContent = historyModeLabel();
   renderKPIs(data);
 
   if (competitors.length === 0) {
     wrap.innerHTML = `<div class="empty-state">
       <div class="empty-state-icon">🔍</div>
-      <div class="empty-state-title">경쟁사를 추가해주세요</div>
-      <div class="empty-state-desc">설정에서 모니터링할 스마트스토어 상품 URL을 추가하세요</div>
+      <div class="empty-state-title">${label} 경쟁사를 추가해주세요</div>
+      <div class="empty-state-desc">설정에서 모니터링할 ${label} 상품 URL을 추가하세요</div>
     </div>`;
     return;
   }
@@ -1257,7 +1278,7 @@ function renderTable(data) {
 
   // Header row
   html += `<div class="m-row m-head" style="grid-template-columns:${colTpl}">`;
-  html += `<div>URL 바로가기 / 경쟁사 상품명</div>`;
+  html += `<div>URL 바로가기 / ${label} 상품명</div>`;
   sortedDates.forEach(d => {
     const dt = new Date(snapshotDate(d));
     const dow = ['일','월','화','수','목','금','토'][dt.getDay()];
@@ -1270,7 +1291,7 @@ function renderTable(data) {
     const isExpanded = expandedRows.has(comp.id);
     html += `<div class="m-row${isExpanded ? ' m-expanded' : ''}" data-cid="${comp.id}" style="grid-template-columns:${colTpl}" onclick="toggleExpand('${comp.id}')">`;
     html += `<div class="biz-name"><div class="biz-cell">
-      <button class="product-link-btn" type="button" onclick="event.stopPropagation(); window.open('${escHtml(comp.url)}','_blank')" title="네이버 상품 페이지 열기" aria-label="네이버 상품 페이지 열기">
+      <button class="product-link-btn" type="button" onclick="event.stopPropagation(); window.open('${escHtml(comp.url)}','_blank')" title="${label} 상품 페이지 열기" aria-label="${label} 상품 페이지 열기">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6.5 3H3.8A1.8 1.8 0 002 4.8v7.4A1.8 1.8 0 003.8 14h7.4a1.8 1.8 0 001.8-1.8V9.5"/><path d="M9 2h5v5"/><path d="M8 8l6-6"/></svg>
       </button>
       ${productThumb(comp)}<div class="biz-cell-main"><span class="biz-dot"></span>${escHtml(comp.name)}<span class="expand-arr">▾</span></div></div></div>`;
@@ -1391,8 +1412,51 @@ function toggleExpand(cid) {
 // ─── Fetch ───────────────────────────────────────────────────
 function getDashboardCompetitors() {
   return ((historyData && historyData.competitors) || [])
+    .filter(comp => competitorMarket(comp) === currentMarket())
     .map(comp => ({ id: comp.id, name: comp.name, url: comp.url }))
     .filter(comp => comp.id && comp.url);
+}
+
+function syncMarketUI() {
+  const market = currentMarket();
+  document.getElementById('nav-market-naver')?.classList.toggle('active', market === 'naver');
+  document.getElementById('nav-market-ohouse')?.classList.toggle('active', market === 'ohouse');
+  const title = document.querySelector('#view-dashboard .topbar-title');
+  if (title) title.textContent = `${marketLabel()} 재고 현황`;
+  const urlInput = document.getElementById('new-comp-url');
+  if (urlInput) {
+    urlInput.placeholder = market === 'ohouse'
+      ? '오늘의집 상품 URL (https://store.ohou.se/goods/...)'
+      : '스마트스토어 상품 URL (https://smartstore.naver.com/...)';
+  }
+}
+
+function setMarket(market) {
+  localStorage.setItem(MARKET_KEY, market === 'ohouse' ? 'ohouse' : 'naver');
+  showView('dashboard');
+  syncMarketUI();
+  renderCompList(filterByCurrentMarket(appConfig.competitors || []));
+  renderCompetitorLimit(appConfig);
+  renderPlanStatus(appConfig);
+  renderTable(historyData);
+}
+
+function competitorMarket(comp) {
+  const url = String((comp && comp.url) || '').toLowerCase();
+  if (url.includes('store.ohou.se/goods/')) return 'ohouse';
+  return 'naver';
+}
+
+function currentMarket() {
+  return localStorage.getItem(MARKET_KEY) === 'ohouse' ? 'ohouse' : 'naver';
+}
+
+function marketLabel() {
+  return MARKET_LABELS[currentMarket()] || '네이버';
+}
+
+function filterByCurrentMarket(competitors) {
+  return (competitors || []).filter(comp => competitorMarket(comp) === currentMarket());
 }
 
 function getActiveCompetitorIdSet() {
@@ -1461,6 +1525,7 @@ function formatPlanDate(value) {
 function renderPlanStatus(cfg) {
   const el = document.getElementById('plan-status-card');
   if (!el || !cfg) return;
+  const marketCount = filterByCurrentMarket(cfg.competitors || []).length;
   const limit = cfg.competitor_limit == null ? '제한 없음' : `${cfg.competitor_limit}개`;
   const count = cfg.competitor_count ?? ((cfg.competitors || []).length);
   const expired = !!cfg.plan_expired;
@@ -1476,7 +1541,7 @@ function renderPlanStatus(cfg) {
       <div>
         <strong style="color:var(--text)">${escHtml(cfg.plan_label || '무료')} 플랜${expired ? ' · 만료됨' : ''}</strong><br>
         ${periodText}<br>
-        경쟁사 상품 ${limit}까지 등록 가능 · 현재 ${count}개 등록${overLimitText}
+        경쟁사 상품 ${limit}까지 등록 가능 · 전체 ${count}개 등록 · ${marketLabel()} ${marketCount}개${overLimitText}
       </div>
       ${expired ? '<button class="btn btn-sm btn-primary" onclick="openUpgradeModal(\'이용 기간이 만료되었습니다. 계속 사용하려면 유료 플랜을 다시 신청해주세요.\')">연장 신청</button>' : ''}
     </div>`;
@@ -1530,6 +1595,10 @@ async function stopFetch() {
 }
 
 async function fetchAll() {
+  if (currentMarket() === 'ohouse') {
+    showToast('오늘의집 재고 조회는 수집기 연결 준비중입니다');
+    return;
+  }
   showLoading('크롬 확장 프로그램에 전체 조회 요청 중...');
   const btn = document.getElementById('fetch-btn');
   btn.disabled = true;
@@ -1555,6 +1624,10 @@ async function fetchAll() {
 }
 
 async function fetchSingle(cid, name) {
+  if (currentMarket() === 'ohouse') {
+    showToast('오늘의집 재고 조회는 수집기 연결 준비중입니다');
+    return;
+  }
   showLoading(`${name} 재고 조회 요청 중...`);
   try {
     const comp = getDashboardCompetitors().find(item => item.id === cid);
@@ -1584,19 +1657,20 @@ async function fetchSingle(cid, name) {
 function renderCompetitorLimit(cfg) {
   const note = document.getElementById('competitor-limit-note');
   if (!note) return;
-  const competitors = (cfg && cfg.competitors) || [];
+  const competitors = filterByCurrentMarket((cfg && cfg.competitors) || []);
+  const totalCount = ((cfg && cfg.competitors) || []).length;
   const limit = cfg ? cfg.competitor_limit : null;
   const planLabel = (cfg && cfg.plan_label) || '무료';
   if (limit === null || limit === undefined) {
-    note.textContent = `현재 등록 ${competitors.length}개 · 등록 제한 없음`;
+    note.textContent = `${marketLabel()} 현재 등록 ${competitors.length}개 · 전체 ${totalCount}개 · 등록 제한 없음`;
     return;
   }
   if (cfg && cfg.plan_expired) {
-    note.textContent = `${planLabel} 플랜 이용 기간이 만료되어 추가 등록은 무료 한도 ${limit}개 기준으로 제한됩니다. 현재 ${competitors.length}/${limit}개`;
+    note.textContent = `${planLabel} 플랜 이용 기간이 만료되어 추가 등록은 무료 한도 ${limit}개 기준으로 제한됩니다. ${marketLabel()} ${competitors.length}개 · 전체 ${totalCount}/${limit}개`;
     return;
   }
-  const remain = Math.max(limit - competitors.length, 0);
-  note.textContent = `${planLabel} 플랜: 경쟁사 상품 ${limit}개까지 등록 가능 · 현재 ${competitors.length}/${limit}개 · 남은 ${remain}개`;
+  const remain = Math.max(limit - totalCount, 0);
+  note.textContent = `${planLabel} 플랜: 경쟁사 상품 ${limit}개까지 등록 가능 · ${marketLabel()} ${competitors.length}개 · 전체 ${totalCount}/${limit}개 · 남은 ${remain}개`;
 }
 
 function getPaidPlans() {

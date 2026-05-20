@@ -886,8 +886,10 @@ def api_add_competitor():
     url  = (body.get('url')  or '').strip()
     if not name or not url:
         return jsonify({'error': '이름과 URL을 입력해주세요'}), 400
-    if not re.search(r'(?:smartstore|brand)\.naver\.com/.+/products/\d+', url):
-        return jsonify({'error': 'smartstore.naver.com 또는 brand.naver.com URL이어야 합니다'}), 400
+    is_naver_url = re.search(r'(?:smartstore|brand)\.naver\.com/.+/products/\d+', url)
+    is_ohouse_url = re.search(r'store\.ohou\.se/goods/\d+', url)
+    if not (is_naver_url or is_ohouse_url):
+        return jsonify({'error': '네이버 스마트스토어 또는 오늘의집 상품 URL이어야 합니다'}), 400
     competitor_limit = competitor_limit_for_user(g.user)
     if competitor_limit is not None and len(db_get_competitors(g.user_id)) >= competitor_limit:
         return jsonify({'error': f'{user_plan_label(g.user)} 플랜은 경쟁사 상품을 {competitor_limit}개까지만 등록할 수 있습니다.'}), 403
