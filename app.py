@@ -251,6 +251,7 @@ def _fetch_ohouse(url: str) -> dict:
             return _err(f'오늘의집 옵션 API 오류: HTTP {r.status_code}')
         data = r.json()
         production = data.get('production') or {}
+        image_url = ((production.get('image') or {}).get('url') or '').strip()
         options = []
         for opt in production.get('options') or []:
             name_parts = [opt.get('explain') or '', opt.get('explain2') or '']
@@ -263,7 +264,10 @@ def _fetch_ohouse(url: str) -> dict:
             if production.get('isSoldOut') is True:
                 return _ok([{'name': '전체', 'qty': 0}])
             return _err('오늘의집 옵션 재고를 찾을 수 없습니다')
-        return _ok(options)
+        result = _ok(options)
+        if image_url:
+            result['image_url'] = image_url
+        return result
     except Exception as e:
         return _err(str(e)[:300])
 
@@ -564,6 +568,9 @@ def _stock_snapshot(now: datetime | None = None) -> tuple[str, str]:
     return dt.date().isoformat(), dt.strftime('%Y-%m-%d %H:%M')
 
 def db_save_stock(user_id: str, cid: str, fetch_date: str, result: dict, fetch_key: str | None = None):
+    image_url = (result.get('image_url') or '').strip()
+    if image_url:
+        sb_update('competitors', {'image_url': image_url}, 'id', cid, f'&user_id=eq.{user_id}')
     sb_upsert('stock_history', {
         'user_id':       user_id,
         'competitor_id': cid,
