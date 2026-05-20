@@ -134,7 +134,12 @@ def handle_supabase_error(exc):
 
 # ─── Admin 계정 (Railway 환경변수로 설정) ──────────────────────
 ADMIN_USERNAME     = os.environ.get('ADMIN_USERNAME', 'admin')
-ADMIN_EMAIL        = os.environ.get('ADMIN_EMAIL', ADMIN_USERNAME)
+ADMIN_EMAIL        = os.environ.get('ADMIN_EMAIL', 'noahpark12@naver.com')
+ADMIN_EMAILS       = [
+    email.strip().lower()
+    for email in os.environ.get('ADMIN_EMAILS', ADMIN_EMAIL).split(',')
+    if email.strip()
+]
 ADMIN_PASSWORD_HASH = os.environ.get(
     'ADMIN_PASSWORD_HASH',
     hashlib.sha256(b'1234').hexdigest()
@@ -541,10 +546,9 @@ def _admin_api_headers() -> dict:
 
 def _is_admin_user(user: dict) -> bool:
     email = (user.get('email') or '').strip().lower()
-    admin_email = (ADMIN_EMAIL or '').strip().lower()
     admin_name = (ADMIN_USERNAME or '').strip().lower()
     return bool(email and (
-        email == admin_email
+        email in ADMIN_EMAILS
         or email.split('@', 1)[0] == admin_name
         or (admin_name and email == admin_name)
     ))
