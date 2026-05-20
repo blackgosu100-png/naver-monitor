@@ -245,6 +245,8 @@ def _fetch_ohouse(url: str) -> dict:
             timeout=20,
             follow_redirects=True,
         )
+        if r.status_code == 404:
+            return _err('오늘의집 상품을 찾을 수 없습니다. URL의 goods 번호가 실제 오늘의집 상품인지 확인해주세요.')
         if r.status_code >= 400:
             return _err(f'오늘의집 옵션 API 오류: HTTP {r.status_code}')
         data = r.json()
