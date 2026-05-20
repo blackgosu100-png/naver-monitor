@@ -1175,7 +1175,7 @@ function applyConfig(cfg) {
   isAdminUser = !!cfg.is_admin;
   document.getElementById('nav-admin').style.display = isAdminUser ? '' : 'none';
   syncMarketUI();
-  renderCompList(filterByCurrentMarket(cfg.competitors || []));
+  renderCompList(cfg.competitors || []);
   renderPlanStatus(cfg);
   renderCompetitorLimit(cfg);
   if (historyData && historyData.competitors) renderTable(historyData);
@@ -1210,7 +1210,7 @@ function showView(view) {
   document.getElementById('nav-admin').className = 'nav-item' + (view === 'admin' ? ' active' : '');
   syncMarketUI();
   if (view === 'settings') {
-    renderCompList(filterByCurrentMarket(appConfig.competitors || []));
+    renderCompList(appConfig.competitors || []);
     renderCompetitorLimit(appConfig);
     renderPlanStatus(appConfig);
   }
@@ -1435,7 +1435,7 @@ function setMarket(market) {
   localStorage.setItem(MARKET_KEY, market === 'ohouse' ? 'ohouse' : 'naver');
   showView('dashboard');
   syncMarketUI();
-  renderCompList(filterByCurrentMarket(appConfig.competitors || []));
+  renderCompList(appConfig.competitors || []);
   renderCompetitorLimit(appConfig);
   renderPlanStatus(appConfig);
   renderTable(historyData);
@@ -1657,20 +1657,22 @@ async function fetchSingle(cid, name) {
 function renderCompetitorLimit(cfg) {
   const note = document.getElementById('competitor-limit-note');
   if (!note) return;
-  const competitors = filterByCurrentMarket((cfg && cfg.competitors) || []);
-  const totalCount = ((cfg && cfg.competitors) || []).length;
+  const competitors = (cfg && cfg.competitors) || [];
+  const naverCount = competitors.filter(comp => competitorMarket(comp) === 'naver').length;
+  const ohouseCount = competitors.filter(comp => competitorMarket(comp) === 'ohouse').length;
+  const totalCount = competitors.length;
   const limit = cfg ? cfg.competitor_limit : null;
   const planLabel = (cfg && cfg.plan_label) || '무료';
   if (limit === null || limit === undefined) {
-    note.textContent = `${marketLabel()} 현재 등록 ${competitors.length}개 · 전체 ${totalCount}개 · 등록 제한 없음`;
+    note.textContent = `전체 ${totalCount}개 · 네이버 ${naverCount}개 · 오늘의집 ${ohouseCount}개 · 등록 제한 없음`;
     return;
   }
   if (cfg && cfg.plan_expired) {
-    note.textContent = `${planLabel} 플랜 이용 기간이 만료되어 추가 등록은 무료 한도 ${limit}개 기준으로 제한됩니다. ${marketLabel()} ${competitors.length}개 · 전체 ${totalCount}/${limit}개`;
+    note.textContent = `${planLabel} 플랜 이용 기간이 만료되어 추가 등록은 무료 한도 ${limit}개 기준으로 제한됩니다. 전체 ${totalCount}/${limit}개 · 네이버 ${naverCount}개 · 오늘의집 ${ohouseCount}개`;
     return;
   }
   const remain = Math.max(limit - totalCount, 0);
-  note.textContent = `${planLabel} 플랜: 경쟁사 상품 ${limit}개까지 등록 가능 · ${marketLabel()} ${competitors.length}개 · 전체 ${totalCount}/${limit}개 · 남은 ${remain}개`;
+  note.textContent = `${planLabel} 플랜: 경쟁사 상품 ${limit}개까지 등록 가능 · 전체 ${totalCount}/${limit}개 · 네이버 ${naverCount}개 · 오늘의집 ${ohouseCount}개 · 남은 ${remain}개`;
 }
 
 function getPaidPlans() {
@@ -1736,10 +1738,11 @@ function renderCompList(competitors) {
   }
   el.innerHTML = competitors.map(c => {
     const canFetch = isCompetitorFetchAllowed(c.id);
+    const marketName = MARKET_LABELS[competitorMarket(c)] || '네이버';
     return `
     <div class="comp-list-item" id="cli-${c.id}">
       ${productThumb(c)}
-      <div class="comp-list-name">${escHtml(c.name)}${canFetch ? '' : ' <span class="badge badge-gray">보존됨 · 조회 제한</span>'}</div>
+      <div class="comp-list-name">${escHtml(c.name)} <span class="badge badge-gray">${marketName}</span>${canFetch ? '' : ' <span class="badge badge-gray">보존됨 · 조회 제한</span>'}</div>
       <div class="comp-list-url" title="${escHtml(c.url)}">${escHtml(c.url)}</div>
       <div class="comp-list-actions">
         <button class="btn btn-sm" onclick="editCompetitor('${c.id}','${escHtml(c.name)}','${escHtml(c.url)}')">수정</button>
