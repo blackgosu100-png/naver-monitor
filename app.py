@@ -1153,19 +1153,23 @@ def api_fetch():
             return jsonify({'error': '현재 플랜에서는 등록순 상위 상품만 조회할 수 있습니다. 계속 조회하려면 플랜을 연장하거나 업그레이드해주세요.'}), 403
         if competitor_market(comp.get('url') or '') != 'ohouse':
             return jsonify({'error': '이 조회 버튼은 오늘의집 전용입니다. 네이버와 쿠팡은 각 탭에서 확장프로그램 조회로 실행해주세요.'}), 400
-        result = fetch_single(comp)
-        fetch_date, fetch_key = _stock_snapshot()
-        db_save_stock(g.user_id, cid, fetch_date, result, fetch_key)
+        queued = db_queue_competitors(g.user_id, cid, g.user)
+        return jsonify({'ok': True, 'queued': True, 'count': len(queued)})
     else:
         competitors = active_competitors_for_user(g.user)
         if market and market != 'ohouse':
             return jsonify({'error': '서버 직접조회는 오늘의집만 실행합니다. 네이버와 쿠팡은 확장프로그램 조회를 사용해주세요.'}), 400
-        competitors = [comp for comp in competitors if competitor_market(comp.get('url') or '') == 'ohouse']
-        fetch_date, fetch_key = _stock_snapshot()
-        for comp in competitors:
-            result = fetch_single(comp)
-            db_save_stock(g.user_id, comp['id'], fetch_date, result, fetch_key)
-    return jsonify({'ok': True})
+        ohouse_ids = [
+            comp['id'] for comp in competitors
+            if competitor_market(comp.get('url') or '') == 'ohouse'
+        ]
+        queued_ids = db_get_ext_queue_ids(g.user_id)
+        for target_id in ohouse_ids:
+            if target_id not in queued_ids:
+                queued_ids.append(target_id)
+        db_save_ext_queue_ids(g.user_id, queued_ids)
+        return jsonify({'ok': True, 'queued': True, 'count': len(ohouse_ids)})
+    return jsonify({'ok': True, 'queued': True})
 
 @app.route('/api/schedule', methods=['PUT'])
 @login_required
