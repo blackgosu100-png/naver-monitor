@@ -87,7 +87,13 @@ function parseCoupangUrl(url) {
   return m ? { pid: m[1] } : null;
 }
 
+function parseOhouseUrl(url) {
+  var m = (url || '').match(/store\.ohou\.se\/goods\/(\d+)/);
+  return m ? { pid: m[1] } : null;
+}
+
 function detectMarket(url) {
+  if (parseOhouseUrl(url)) return 'ohouse';
   if (parseCoupangUrl(url)) return 'coupang';
   return 'naver';
 }
@@ -196,6 +202,47 @@ function readCoupangMonthlyPurchase(pid) {
     options: [{ name: label, qty: total }],
     image_url: getImageUrl()
   };
+}
+
+async function readOhouseStock(pid) {
+  function getImageUrl(data) {
+    var image = data && data.production && data.production.image;
+    if (image && image.url) return image.url;
+    var meta = document.querySelector('meta[property="og:image"], meta[name="og:image"]');
+    if (meta && meta.content) return meta.content;
+    var img = document.querySelector('img[src*="ohouse"], img[src*="ohou.se"]');
+    return img && img.src ? img.src : '';
+  }
+
+  var res = await fetch('https://store.ohou.se/api/goods/options?id=' + pid, {
+    headers: {
+      'Accept': 'application/json, text/plain, */*',
+      'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7'
+    },
+    credentials: 'include'
+  });
+  if (res.status === 404) return { ok: false, error: '오늘의집 상품을 찾을 수 없습니다' };
+  if (!res.ok) return { ok: false, error: '오늘의집 옵션 API 오류: HTTP ' + res.status };
+
+  var data = await res.json();
+  var production = data.production || {};
+  var options = [];
+  (production.options || []).forEach(function(opt) {
+    if (opt.stock == null) return;
+    var parts = [opt.explain || '', opt.explain2 || ''].filter(Boolean);
+    options.push({
+      name: parts.join(' / ') || '옵션',
+      qty: Number(opt.stock) || 0
+    });
+  });
+
+  if (!options.length) {
+    if (production.isSoldOut === true) options.push({ name: '전체', qty: 0 });
+    else return { ok: false, error: '오늘의집 옵션 재고를 찾을 수 없습니다' };
+  }
+
+  var total = options.reduce(function(sum, item) { return sum + item.qty; }, 0);
+  return { ok: true, total: total, options: options, image_url: getImageUrl(data) };
 }
 
 async function setStatus(status) {
@@ -350,6 +397,30 @@ async function waitForCoupangMonthly(tabId, pid) {
   return { ok: false, error: '쿠팡 월간 구매 데이터 대기 시간 초과' };
 }
 
+async function waitForOhouseStock(tabId, pid) {
+  var elapsed = 0;
+  var maxWait = 45000;
+  while (elapsed < maxWait) {
+    if (shouldStop()) return { ok: false, stopped: true, error: '?ъ슜??以묒?' };
+    try {
+      var res = await chrome.scripting.executeScript({
+        target: { tabId },
+        world: 'MAIN',
+        func: readOhouseStock,
+        args: [pid]
+      });
+      var cr = res && res[0] && res[0].result;
+      if (cr && cr.ok) return cr;
+      if (cr && cr.error && !String(cr.error).includes('HTTP 403')) return cr;
+    } catch(e) {
+      return { ok: false, error: '오늘의집 데이터 읽기 실패' };
+    }
+    await new Promise(r => setTimeout(r, 1000));
+    elapsed += 1000;
+  }
+  return { ok: false, error: '오늘의집 재고 데이터 대기 시간 초과' };
+}
+
 async function runFetch(competitors) {
   if (fetchRunning) return;
   fetchRunning = true;
@@ -362,7 +433,11 @@ async function runFetch(competitors) {
     if (shouldStop()) { stopped = true; break; }
     var comp = competitors[i];
     var market = detectMarket(comp.url);
-    var parsed = market === 'coupang' ? parseCoupangUrl(comp.url) : parseNaverUrl(comp.url);
+    var parsed = market === 'coupang'
+      ? parseCoupangUrl(comp.url)
+      : market === 'ohouse'
+        ? parseOhouseUrl(comp.url)
+        : parseNaverUrl(comp.url);
 
     await setStatus({
       running: true,
@@ -385,9 +460,11 @@ async function runFetch(competitors) {
       if (shouldStop()) { stopped = true; break; }
       var cr = market === 'coupang'
         ? await waitForCoupangMonthly(tabId, parsed.pid)
-        : await waitForCache(tabId, parsed.pid, async (msg) => {
-            await setStatus({ running: true, current: i + 1, total: competitors.length, name: comp.name, msg, results });
-          });
+        : market === 'ohouse'
+          ? await waitForOhouseStock(tabId, parsed.pid)
+          : await waitForCache(tabId, parsed.pid, async (msg) => {
+              await setStatus({ running: true, current: i + 1, total: competitors.length, name: comp.name, msg, results });
+            });
 
       if (cr && cr.stopped) {
         stopped = true;
