@@ -898,6 +898,8 @@ let expandedRows = new Set();
 let chartInstance = null;
 let isAdminUser = false;
 let extensionRequestSeq = 0;
+let historyAutoRefreshTimer = null;
+let historyAutoRefreshInFlight = false;
 const EXTENSION_STORE_URL = 'https://chromewebstore.google.com/detail/%EB%84%A4%EC%9D%B4%EB%B2%84-%EA%B2%BD%EC%9F%81%EC%82%AC-%EB%AA%A8%EB%8B%88%ED%84%B0%EB%A7%81/bihcbfmkldglanbhabgaiiccnhfbnmfk';
 
 function readCache(key) {
@@ -1039,9 +1041,23 @@ function toDailyHistory(data) {
 
 function getDisplayHistory(data) {
   if (!data) return data;
+  const competitors = filterByCurrentMarket(data.competitors || []);
+  const activeDateSet = new Set();
+  let lastFetched = '';
+  competitors.forEach(comp => {
+    Object.entries(comp.days || {}).forEach(([key, day]) => {
+      if (!day) return;
+      activeDateSet.add(key);
+      if (day.fetched_at && (!lastFetched || day.fetched_at > lastFetched)) {
+        lastFetched = day.fetched_at;
+      }
+    });
+  });
   const filtered = {
     ...data,
-    competitors: filterByCurrentMarket(data.competitors || []),
+    dates: (data.dates || []).filter(key => activeDateSet.has(key)),
+    competitors,
+    last_fetched: lastFetched,
   };
   return currentHistoryMode() === 'time' ? filtered : toDailyHistory(filtered);
 }
@@ -1220,7 +1236,7 @@ function showView(view) {
 }
 
 // ─── History / Table ─────────────────────────────────────────
-async function loadHistory() {
+async function loadHistory(silent = false) {
   const days = document.getElementById('days-select').value;
   try {
     const r = await fetch(`/api/history?days=${days}`);
@@ -1229,8 +1245,35 @@ async function loadHistory() {
     writeCache(HISTORY_CACHE_KEY, {days, data: historyData});
     renderTable(historyData);
   } catch (e) {
-    showToast('데이터 로드 실패');
+    if (!silent) showToast('데이터 로드 실패');
   }
+}
+
+function startHistoryAutoRefresh(expectedCount = 1) {
+  if (historyAutoRefreshTimer) {
+    clearInterval(historyAutoRefreshTimer);
+    historyAutoRefreshTimer = null;
+  }
+
+  const maxMs = Math.min(10 * 60 * 1000, Math.max(90 * 1000, expectedCount * 55 * 1000 + 20 * 1000));
+  const endAt = Date.now() + maxMs;
+
+  async function refreshOnce() {
+    if (historyAutoRefreshInFlight) return;
+    historyAutoRefreshInFlight = true;
+    try {
+      await loadHistory(true);
+    } finally {
+      historyAutoRefreshInFlight = false;
+      if (Date.now() >= endAt && historyAutoRefreshTimer) {
+        clearInterval(historyAutoRefreshTimer);
+        historyAutoRefreshTimer = null;
+      }
+    }
+  }
+
+  setTimeout(refreshOnce, 3500);
+  historyAutoRefreshTimer = setInterval(refreshOnce, 5000);
 }
 
 function renderTable(data) {
@@ -1244,6 +1287,8 @@ function renderTable(data) {
     const dt = new Date(data.last_fetched);
     document.getElementById('last-updated').textContent =
       `마지막 조회: ${dt.toLocaleDateString('ko-KR')} ${dt.toLocaleTimeString('ko-KR', {hour:'2-digit',minute:'2-digit'})}`;
+  } else {
+    document.getElementById('last-updated').textContent = '마지막 조회: —';
   }
 
   document.getElementById('monitor-count').textContent = `${label} 경쟁사 ${competitors.length}명`;
@@ -1619,6 +1664,7 @@ async function fetchAll() {
     }
     try {
       await requestExtensionFetch(competitors);
+      startHistoryAutoRefresh(competitors.length);
       showToast(`확장 프로그램에서 ${competitors.length}개 상품 조회를 시작했습니다`);
     } catch (e) {
       const data = await queueFetchForExtension();
@@ -1646,6 +1692,7 @@ async function fetchSingle(cid, name) {
     }
     try {
       await requestExtensionFetch([comp]);
+      startHistoryAutoRefresh(1);
       showToast(`${name} 재고 조회를 시작했습니다`);
     } catch (e) {
       await queueFetchForExtension(cid);
