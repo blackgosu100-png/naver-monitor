@@ -1207,6 +1207,29 @@ def api_ext_queue():
 
 # ─── 크롬 확장프로그램용 Public API (인증 불필요) ────────────────
 
+@app.route('/api/coupang/monthly', methods=['POST'])
+@login_required
+def api_coupang_monthly():
+    body = request.get_json() or {}
+    cid = body.get('id')
+    url = (body.get('url') or '').strip()
+    active_ids = active_competitor_ids_for_user(g.user)
+
+    if cid:
+        if cid not in active_ids:
+            return jsonify({'error': '현재 플랜에서 조회할 수 없는 상품입니다'}), 403
+        competitors = db_get_competitors(g.user_id)
+        comp = next((c for c in competitors if c.get('id') == cid), None)
+        if not comp:
+            return jsonify({'error': '상품을 찾을 수 없습니다'}), 404
+        url = comp.get('url') or url
+
+    if not is_coupang_url(url):
+        return jsonify({'error': '쿠팡 상품 URL이 아닙니다'}), 400
+
+    result = _fetch_coupang(url)
+    return jsonify({'ok': not bool(result.get('error')), **result})
+
 @app.route('/api/public/competitors')
 @login_required
 def api_public_competitors():

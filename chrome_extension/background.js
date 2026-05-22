@@ -604,6 +604,29 @@ async function waitForCoupangMonthly(tabId, pid) {
   return { ok: false, error: '쿠팡 월간 구매 데이터 대기 시간 초과' };
 }
 
+async function fetchCoupangMonthlyFromServer(comp) {
+  try {
+    var res = await apiFetch('/api/coupang/monthly', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: comp.id, url: comp.url })
+    });
+    var data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) {
+      return { ok: false, error: data.error || ('HTTP ' + res.status) };
+    }
+    return {
+      ok: true,
+      total: data.total,
+      options: data.options || [],
+      image_url: data.image_url || '',
+      fetched_at: data.fetched_at || ''
+    };
+  } catch(e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
 async function waitForCoupangWingViews(tabId, parsed, comp) {
   var keywords = [
     (comp && comp.url) || '',
@@ -727,25 +750,7 @@ async function runFetch(competitors) {
     try {
       var cr;
       if (market === 'coupang') {
-        var monthly = null;
-        var productTabId = null;
-        try {
-          await setStatus({
-            running: true,
-            current: i + 1,
-            total: competitors.length,
-            name: comp.name,
-            msg: 'Coupang monthly sales...',
-            results
-          });
-          productTabId = await openTab(comp.url, false);
-          monthly = await waitForCoupangMonthly(productTabId, parsed.pid);
-        } catch(e) {
-          monthly = { ok: false, error: String(e) };
-        } finally {
-          if (productTabId !== null) chrome.tabs.remove(productTabId, () => {});
-          if (currentFetchTabId === productTabId) currentFetchTabId = null;
-        }
+        var monthlyPromise = fetchCoupangMonthlyFromServer(comp);
 
         if (coupangWingTabId === null) {
           coupangWingTabId = await openTab('https://wing.coupang.com/tenants/seller-web/vendor-inventory/formV2', false);
@@ -764,6 +769,7 @@ async function runFetch(competitors) {
         });
 
         var wing = await waitForCoupangWingViews(coupangWingTabId, parsed, comp);
+        var monthly = await monthlyPromise;
         if (wing && wing.stopped) {
           cr = wing;
         } else if ((wing && wing.ok) || (monthly && monthly.ok)) {
