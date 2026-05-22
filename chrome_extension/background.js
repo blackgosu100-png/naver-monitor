@@ -475,7 +475,8 @@ async function stopCurrentFetch() {
   });
 }
 
-async function openTab(url) {
+async function openTab(url, active) {
+  if (active === undefined) active = true;
   return new Promise((resolve, reject) => {
     var done = false;
     var timer = setTimeout(() => {
@@ -509,7 +510,7 @@ async function openTab(url) {
       }
     }
 
-    chrome.tabs.create({ url, active: true }, (tab) => {
+    chrome.tabs.create({ url, active }, (tab) => {
       if (chrome.runtime.lastError) { clearTimeout(timer); reject(new Error(chrome.runtime.lastError.message)); return; }
       tid = tab.id;
       currentFetchTabId = tid;
@@ -654,7 +655,7 @@ async function waitForCoupangWingViews(tabId, parsed, comp) {
 async function collectCoupangWingViews(parsed, comp) {
   var tabId = null;
   try {
-    tabId = await openTab('https://wing.coupang.com/tenants/seller-web/vendor-inventory/formV2');
+    tabId = await openTab('https://wing.coupang.com/tenants/seller-web/vendor-inventory/formV2', false);
     currentFetchTabId = tabId;
     return await waitForCoupangWingViews(tabId, parsed, comp);
   } catch(e) {
@@ -727,7 +728,7 @@ async function runFetch(competitors) {
       var cr;
       if (market === 'coupang') {
         if (coupangWingTabId === null) {
-          coupangWingTabId = await openTab('https://wing.coupang.com/tenants/seller-web/vendor-inventory/formV2');
+          coupangWingTabId = await openTab('https://wing.coupang.com/tenants/seller-web/vendor-inventory/formV2', false);
           await new Promise(r => setTimeout(r, 1200));
         }
         currentFetchTabId = coupangWingTabId;
