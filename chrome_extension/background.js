@@ -378,6 +378,7 @@ async function readOhouseStock(pid) {
   function getImageUrl(data) {
     var image = data && data.production && data.production.image;
     if (image && image.url) return image.url;
+    if (typeof document === 'undefined') return '';
     var meta = document.querySelector('meta[property="og:image"], meta[name="og:image"]');
     if (meta && meta.content) return meta.content;
     var img = document.querySelector('img[src*="ohouse"], img[src*="ohou.se"]');
@@ -655,6 +656,7 @@ async function runFetch(competitors) {
   fetchRunning = true;
   stopRequested = false;
   currentFetchTabId = null;
+  var coupangWingTabId = null;
   var results = [];
   var stopped = false;
 
@@ -684,18 +686,13 @@ async function runFetch(competitors) {
 
     var tabId = null;
     try {
-      tabId = await openTab(comp.url);
-      currentFetchTabId = tabId;
-      if (shouldStop()) { stopped = true; break; }
       var cr;
       if (market === 'coupang') {
-        cr = await waitForCoupangMonthly(tabId, parsed.pid);
-        if (tabId !== null) {
-          chrome.tabs.remove(tabId, () => {});
-          if (currentFetchTabId === tabId) currentFetchTabId = null;
-          tabId = null;
-          await new Promise(r => setTimeout(r, 700));
+        if (coupangWingTabId === null) {
+          coupangWingTabId = await openTab('https://wing.coupang.com/tenants/seller-web/vendor-inventory/formV2');
+          await new Promise(r => setTimeout(r, 1200));
         }
+        currentFetchTabId = coupangWingTabId;
         if (shouldStop()) { stopped = true; break; }
 
         await setStatus({
@@ -707,29 +704,26 @@ async function runFetch(competitors) {
           results
         });
 
-        var wing = await collectCoupangWingViews(parsed, comp);
+        var wing = await waitForCoupangWingViews(coupangWingTabId, parsed, comp);
         if (wing && wing.stopped) {
           cr = wing;
         } else if (wing && wing.ok) {
           var options = [{ name: '\uC870\uD68C\uC218(\uCD5C\uADFC 28\uC77C)', qty: Number(wing.views28) || 0 }];
-          if (cr && cr.ok && cr.total != null) {
-            var monthlyName = cr.options && cr.options[0] && cr.options[0].name
-              ? cr.options[0].name
-              : '\uC6D4 \uAD6C\uB9E4 \uC2E0\uD638';
-            options.push({ name: monthlyName, qty: Number(cr.total) || 0 });
-          }
           cr = {
             ok: true,
             total: Number(wing.views28) || 0,
             options: options,
-            image_url: wing.image_url || (cr && cr.image_url) || ''
+            image_url: wing.image_url || ''
           };
         } else {
           cr = { ok: false, error: (wing && wing.error) || 'Wing views not found' };
         }
       } else if (market === 'ohouse') {
-        cr = await waitForOhouseStock(tabId, parsed.pid);
+        cr = await readOhouseStock(parsed.pid);
       } else {
+        tabId = await openTab(comp.url);
+        currentFetchTabId = tabId;
+        if (shouldStop()) { stopped = true; break; }
         cr = await waitForCache(tabId, parsed.pid, async (msg) => {
           await setStatus({ running: true, current: i + 1, total: competitors.length, name: comp.name, msg, results });
         });
@@ -752,12 +746,17 @@ async function runFetch(competitors) {
 
     if (shouldStop()) { stopped = true; break; }
     if (i < competitors.length - 1) {
-      await new Promise(r => setTimeout(r, 3000));
+      await new Promise(r => setTimeout(r, market === 'naver' ? 3000 : 900));
       if (shouldStop()) { stopped = true; break; }
     }
   }
 
   // 결과 서버에 저장
+  if (coupangWingTabId !== null) {
+    try { await chrome.tabs.remove(coupangWingTabId); } catch(e) {}
+    if (currentFetchTabId === coupangWingTabId) currentFetchTabId = null;
+  }
+
   if (results.length) {
     try {
       await apiFetch('/api/stock-data', {
