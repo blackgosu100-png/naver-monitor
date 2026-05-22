@@ -727,6 +727,26 @@ async function runFetch(competitors) {
     try {
       var cr;
       if (market === 'coupang') {
+        var monthly = null;
+        var productTabId = null;
+        try {
+          await setStatus({
+            running: true,
+            current: i + 1,
+            total: competitors.length,
+            name: comp.name,
+            msg: 'Coupang monthly sales...',
+            results
+          });
+          productTabId = await openTab(comp.url, false);
+          monthly = await waitForCoupangMonthly(productTabId, parsed.pid);
+        } catch(e) {
+          monthly = { ok: false, error: String(e) };
+        } finally {
+          if (productTabId !== null) chrome.tabs.remove(productTabId, () => {});
+          if (currentFetchTabId === productTabId) currentFetchTabId = null;
+        }
+
         if (coupangWingTabId === null) {
           coupangWingTabId = await openTab('https://wing.coupang.com/tenants/seller-web/vendor-inventory/formV2', false);
           await new Promise(r => setTimeout(r, 1200));
@@ -746,16 +766,22 @@ async function runFetch(competitors) {
         var wing = await waitForCoupangWingViews(coupangWingTabId, parsed, comp);
         if (wing && wing.stopped) {
           cr = wing;
-        } else if (wing && wing.ok) {
-          var options = [{ name: '\uC870\uD68C\uC218(\uCD5C\uADFC 28\uC77C)', qty: Number(wing.views28) || 0 }];
+        } else if ((wing && wing.ok) || (monthly && monthly.ok)) {
+          var views = wing && wing.ok ? Number(wing.views28) || 0 : null;
+          var monthlySales = monthly && monthly.ok ? Number(monthly.total) || 0 : null;
+          var conversionRate = views && monthlySales !== null ? (monthlySales / views) * 100 : null;
+          var options = [];
+          if (views !== null) options.push({ name: '\uC870\uD68C\uC218', qty: views });
+          if (monthlySales !== null) options.push({ name: '\uC6D4\uD310\uB9E4\uC218\uB7C9', qty: monthlySales });
+          if (conversionRate !== null) options.push({ name: '\uC804\uD658\uC728', qty: Number(conversionRate.toFixed(2)) });
           cr = {
             ok: true,
-            total: Number(wing.views28) || 0,
+            total: monthlySales,
             options: options,
-            image_url: wing.image_url || ''
+            image_url: (monthly && monthly.image_url) || (wing && wing.image_url) || ''
           };
         } else {
-          cr = { ok: false, error: (wing && wing.error) || 'Wing views not found' };
+          cr = { ok: false, error: (monthly && monthly.error) || (wing && wing.error) || 'Coupang data not found' };
         }
       } else if (market === 'ohouse') {
         cr = await readOhouseStock(parsed.pid);

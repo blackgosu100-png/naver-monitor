@@ -1021,7 +1021,10 @@ function toDailyHistory(data) {
       }
 
       const total = latest.total;
-      const sales = (total !== null && prevTotal !== null) ? prevTotal - total : null;
+      const isCoupangDaily = competitorMarket(comp) === 'coupang';
+      const sales = (total !== null && prevTotal !== null)
+        ? (isCoupangDaily ? total - prevTotal : prevTotal - total)
+        : null;
       entry.days[dayKey] = {
         ...latest,
         sales,
@@ -1094,14 +1097,14 @@ function renderKPIs(data) {
       <div class="kpi-sub">등록된 상품 수</div>
     </div>
     <div class="kpi-card kpi-accent-blue">
-      <div class="kpi-label">${isCoupang ? '조회수 변화' : '판매 추정'} (${dateLabel})</div>
+      <div class="kpi-label">${isCoupang ? '월판매량 변화' : '판매 추정'} (${dateLabel})</div>
       <div class="kpi-value blue">${totalSales.toLocaleString()}<span style="font-size:14px;font-weight:500;margin-left:3px">개</span></div>
-      <div class="kpi-sub">${isCoupang ? '전회 대비 조회수 증가 합산' : '전일 대비 재고 감소 합산'}</div>
+      <div class="kpi-sub">${isCoupang ? '전회 대비 월판매수량 증가 합산' : '전일 대비 재고 감소 합산'}</div>
     </div>
     <div class="kpi-card kpi-accent-amber">
-      <div class="kpi-label">${isCoupang ? '조회수 감소' : '재입고 감지'}</div>
+      <div class="kpi-label">${isCoupang ? '월판매량 감소' : '재입고 감지'}</div>
       <div class="kpi-value amber">${restockCount}<span style="font-size:14px;font-weight:500;margin-left:3px">건</span></div>
-      <div class="kpi-sub">${isCoupang ? '전회 대비 조회수가 낮아진 상품 수' : '재고 증가 경쟁사 수'}</div>
+      <div class="kpi-sub">${isCoupang ? '전회 대비 월판매수량이 낮아진 상품 수' : '재고 증가 경쟁사 수'}</div>
     </div>
     <div class="kpi-card ${successRate >= 80 ? 'kpi-accent-green' : 'kpi-accent-red'}">
       <div class="kpi-label">조회 성공률</div>
@@ -1373,7 +1376,11 @@ function renderTable(data) {
       <button class="btn btn-sm ${canFetch ? '' : 'btn-primary'}" onclick="fetchSingle('${comp.id}','${escHtml(comp.name)}')" title="${canFetch ? '이 상품만 재고 조회' : '현재 플랜 한도 밖 상품입니다'}">${canFetch ? '선택상품조회' : '연장/업그레이드'}</button>
     </div></div>`;
 
-    html += `<div class="m-detail${isExpanded ? ' open' : ''}" id="opt-${comp.id}">${renderOptionsDetailGrid(comp, sortedDates, colTpl)}</div>`;
+    html += `<div class="m-detail${isExpanded ? ' open' : ''}" id="opt-${comp.id}">${
+      competitorMarket(comp) === 'coupang'
+        ? renderCoupangMetricsDetailGrid(comp, sortedDates, colTpl)
+        : renderOptionsDetailGrid(comp, sortedDates, colTpl)
+    }</div>`;
   });
 
   html += `</div>`;
@@ -1448,6 +1455,80 @@ function renderOptionsDetailGrid(comp, sortedDates, colTpl) {
   return html;
 }
 
+function getCoupangOptionValue(day, aliases) {
+  if (!day || !Array.isArray(day.options)) return null;
+  const opt = day.options.find(o => aliases.includes(o.name));
+  if (opt == null || opt.qty == null) return null;
+  const value = Number(opt.qty);
+  return Number.isFinite(value) ? value : null;
+}
+
+function coupangMetricValue(day, metric) {
+  if (!day || day.error) return null;
+  if (metric === 'views') {
+    return getCoupangOptionValue(day, ['조회수', '조회수(최근 28일)']);
+  }
+  if (metric === 'monthly') {
+    const optionValue = getCoupangOptionValue(day, ['월판매수량', '월간 구매 신호', '한 달간 구매 추정']);
+    if (optionValue !== null) return optionValue;
+    return day.total !== null && day.total !== undefined ? Number(day.total) : null;
+  }
+  if (metric === 'conversion') {
+    const optionValue = getCoupangOptionValue(day, ['전환율']);
+    if (optionValue !== null) return optionValue;
+    const views = coupangMetricValue(day, 'views');
+    const monthly = coupangMetricValue(day, 'monthly');
+    if (!views || monthly === null) return null;
+    return Number(((monthly / views) * 100).toFixed(2));
+  }
+  return null;
+}
+
+function formatCoupangMetric(value, metric) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return '—';
+  if (metric === 'conversion') return `${Number(value).toFixed(2)}%`;
+  return Number(value).toLocaleString();
+}
+
+function renderCoupangMetricsDetailGrid(comp, sortedDates, colTpl) {
+  const rows = [
+    { key: 'views', label: '조회수' },
+    { key: 'monthly', label: '월판매수량' },
+    { key: 'conversion', label: '전환율' },
+  ];
+
+  let hasData = false;
+  sortedDates.forEach(d => {
+    const day = comp.days[d];
+    rows.forEach(row => {
+      if (coupangMetricValue(day, row.key) !== null) hasData = true;
+    });
+  });
+  if (!hasData) {
+    return '<div style="color:var(--text3);font-size:12px;padding:12px 20px">쿠팡 지표 데이터 없음</div>';
+  }
+
+  let html = '';
+  html += `<div class="m-row m-opt-head" style="grid-template-columns:${colTpl}">`;
+  html += `<div style="padding-left:20px">지표</div>`;
+  sortedDates.forEach(d => {
+    html += `<div class="date-cell"><div class="d-label">${snapshotLabel(d)}</div><div></div></div>`;
+  });
+  html += `<div></div></div>`;
+
+  rows.forEach(row => {
+    html += `<div class="m-row m-opt-row" style="grid-template-columns:${colTpl}">`;
+    html += `<div class="opt-name">${row.label}</div>`;
+    sortedDates.forEach(d => {
+      const value = coupangMetricValue(comp.days[d], row.key);
+      html += `<div class="date-cell"><div class="d-num${value === null ? ' mute' : ''}">${formatCoupangMetric(value, row.key)}</div><div></div></div>`;
+    });
+    html += `<div></div></div>`;
+  });
+
+  return html;
+}
+
 function toggleExpand(cid) {
   if (expandedRows.has(cid)) {
     expandedRows.delete(cid);
@@ -1475,7 +1556,7 @@ function syncMarketUI() {
   document.getElementById('nav-market-ohouse')?.classList.toggle('active', market === 'ohouse');
   document.getElementById('nav-market-coupang')?.classList.toggle('active', market === 'coupang');
   const title = document.querySelector('#view-dashboard .topbar-title');
-  if (title) title.textContent = market === 'coupang' ? '쿠팡 조회수 현황' : `${marketLabel()} 재고 현황`;
+  if (title) title.textContent = market === 'coupang' ? '쿠팡 월판매량 현황' : `${marketLabel()} 재고 현황`;
   const urlInput = document.getElementById('new-comp-url');
   if (urlInput) {
     urlInput.placeholder = market === 'ohouse'
