@@ -655,6 +655,14 @@ async function fetchCoupangMonthlyDirect(comp, parsed) {
     }) || null;
   }
 
+  function firstMatch(text, patterns) {
+    for (var i = 0; i < patterns.length; i++) {
+      var m = text.match(patterns[i]);
+      if (m && m[1]) return m[1];
+    }
+    return '';
+  }
+
   var productId = parsed && parsed.pid;
   var itemId = parsed && parsed.itemId;
   var vendorItemId = parsed && parsed.vendorItemId;
@@ -667,11 +675,22 @@ async function fetchCoupangMonthlyDirect(comp, parsed) {
         cache: 'no-store'
       });
       var html = await pageRes.text();
-      var vendorMatch = html.match(/"vendorItemId"\s*:\s*"?(\d+)"?/);
-      var itemMatch = html.match(/"itemId"\s*:\s*"?(\d+)"?/);
+      var decoded = html;
+      try { decoded = decodeURIComponent(html); } catch(e) {}
+      var joined = html + '\n' + decoded;
       var imageMatch = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i);
-      vendorItemId = vendorMatch ? vendorMatch[1] : vendorItemId;
-      itemId = itemId || (itemMatch ? itemMatch[1] : '');
+      vendorItemId = firstMatch(joined, [
+        /[?&]vendorItemId=(\d+)/,
+        /"vendorItemId"\s*:\s*"?(\d+)"?/,
+        /\\"vendorItemId\\"\s*:\s*\\"?(\d+)/,
+        /vendorItemId["'=:\s]+(\d+)/
+      ]) || vendorItemId;
+      itemId = itemId || firstMatch(joined, [
+        /[?&]itemId=(\d+)/,
+        /"itemId"\s*:\s*"?(\d+)"?/,
+        /\\"itemId\\"\s*:\s*\\"?(\d+)/,
+        /itemId["'=:\s]+(\d+)/
+      ]);
       imageUrl = imageMatch ? imageMatch[1] : '';
     }
 
@@ -871,7 +890,9 @@ async function runFetch(competitors) {
           var options = [];
           if (views !== null) options.push({ name: '\uC870\uD68C\uC218', qty: views });
           if (monthlySales !== null) options.push({ name: '\uC6D4\uD310\uB9E4\uC218\uB7C9', qty: monthlySales });
+          else if (monthly && !monthly.ok) options.push({ name: '\uC6D4\uD310\uB9E4\uC218\uB7C9 \uC624\uB958', qty: null, text: monthly.error || 'Monthly sales unavailable' });
           if (conversionRate !== null) options.push({ name: '\uC804\uD658\uC728', qty: Number(conversionRate.toFixed(2)) });
+          else if (views !== null && monthly && !monthly.ok) options.push({ name: '\uC804\uD658\uC728 \uC624\uB958', qty: null, text: '\uC6D4\uD310\uB9E4\uC218\uB7C9\uC774 \uC5C6\uC5B4 \uACC4\uC0B0\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4' });
           cr = {
             ok: true,
             total: monthlySales,
