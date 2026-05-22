@@ -845,7 +845,11 @@ async function runFetch(competitors) {
   // 대시보드 탭 새로고침
   var state = await getAuthState();
   chrome.tabs.query({ url: `${state.serverUrl}/*` }, (tabs) => {
-    if (tabs.length) chrome.tabs.reload(tabs[0].id);
+    tabs.forEach((tab) => {
+      chrome.tabs.sendMessage(tab.id, { type: 'HISTORY_UPDATED' }, () => {
+        void chrome.runtime.lastError;
+      });
+    });
   });
 }
 

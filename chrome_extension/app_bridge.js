@@ -44,3 +44,12 @@ window.addEventListener('message', function(event) {
     return;
   }
 });
+
+chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
+  if (!msg || msg.type !== 'HISTORY_UPDATED') return;
+  window.postMessage({
+    source: 'naver-monitor-extension',
+    type: 'HISTORY_UPDATED'
+  }, '*');
+  sendResponse({ ok: true });
+});

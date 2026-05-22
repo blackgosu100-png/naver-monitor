@@ -278,7 +278,11 @@ async function checkAndProcessQueue() {
 
     var state = await getAuthState();
     chrome.tabs.query({ url: state.serverUrl + '/*' }, function(tabs) {
-      if (tabs.length) chrome.tabs.reload(tabs[0].id);
+      tabs.forEach(function(tab) {
+        chrome.tabs.sendMessage(tab.id, { type: 'HISTORY_UPDATED' }, function() {
+          void chrome.runtime.lastError;
+        });
+      });
     });
   } catch(e) {
     // 서버 미실행 등 — 조용히 무시

@@ -900,6 +900,7 @@ let isAdminUser = false;
 let extensionRequestSeq = 0;
 let historyAutoRefreshTimer = null;
 let historyAutoRefreshInFlight = false;
+let extensionHistoryRefreshTimer = null;
 const EXTENSION_STORE_URL = 'https://chromewebstore.google.com/detail/%EB%84%A4%EC%9D%B4%EB%B2%84-%EA%B2%BD%EC%9F%81%EC%82%AC-%EB%AA%A8%EB%8B%88%ED%84%B0%EB%A7%81/bihcbfmkldglanbhabgaiiccnhfbnmfk';
 
 function readCache(key) {
@@ -1251,6 +1252,23 @@ async function loadHistory(silent = false) {
     if (!silent) showToast('데이터 로드 실패');
   }
 }
+
+function refreshHistoryFromExtension() {
+  if (extensionHistoryRefreshTimer) clearTimeout(extensionHistoryRefreshTimer);
+  extensionHistoryRefreshTimer = setTimeout(async () => {
+    extensionHistoryRefreshTimer = null;
+    await loadHistory(true);
+    showToast('조회 결과를 갱신했습니다');
+  }, 250);
+}
+
+window.addEventListener('message', event => {
+  if (event.source !== window) return;
+  const msg = event.data || {};
+  if (msg.source === 'naver-monitor-extension' && msg.type === 'HISTORY_UPDATED') {
+    refreshHistoryFromExtension();
+  }
+});
 
 function startHistoryAutoRefresh(expectedCount = 1) {
   if (historyAutoRefreshTimer) {
