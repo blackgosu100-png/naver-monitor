@@ -237,11 +237,25 @@ function readCoupangWingCatalogViews(keyword, productId, productUrl, expectedNam
   function findSearchInput() {
     var inputs = Array.from(document.querySelectorAll('input')).filter(function(input) {
       if (!visible(input)) return false;
+      if (input.disabled || input.readOnly) return false;
       var type = (input.getAttribute('type') || 'text').toLowerCase();
       return ['text', 'search', ''].indexOf(type) >= 0;
     });
     inputs.sort(function(a, b) {
-      return b.getBoundingClientRect().width - a.getBoundingClientRect().width;
+      function score(input) {
+        var label = [
+          input.placeholder || '',
+          input.getAttribute('aria-label') || '',
+          input.getAttribute('name') || ''
+        ].join(' ');
+        var scoreValue = input.getBoundingClientRect().width;
+        if (label.indexOf('\uC0C1\uD488') >= 0) scoreValue += 2000;
+        if (label.indexOf('URL') >= 0) scoreValue += 1000;
+        if (label.indexOf('\uCFE0\uD321') >= 0) scoreValue += 1000;
+        if (input.closest('[role="dialog"], .modal, [class*="modal"], [class*="Modal"]')) scoreValue += 500;
+        return scoreValue;
+      }
+      return score(b) - score(a);
     });
     return inputs[0] || null;
   }
@@ -261,8 +275,17 @@ function readCoupangWingCatalogViews(keyword, productId, productUrl, expectedNam
   }
 
   function clickSearch(input) {
-    var scope = input && (input.closest('form') || input.closest('section') || input.closest('[class*="search"]')) || document;
-    var buttons = Array.from((scope || document).querySelectorAll('button')).filter(visible);
+    var scopes = [
+      input && input.closest('[role="dialog"], .modal, [class*="modal"], [class*="Modal"]'),
+      input && input.closest('form'),
+      input && input.closest('section'),
+      document
+    ].filter(Boolean);
+    var buttons = [];
+    scopes.some(function(scope) {
+      buttons = Array.from(scope.querySelectorAll('button')).filter(visible);
+      return buttons.length > 0;
+    });
     var productSearchText = '\uC0C1\uD488 \uAC80\uC0C9';
     var searchText = '\uAC80\uC0C9';
     var btn = buttons.find(function(button) {
@@ -281,17 +304,29 @@ function readCoupangWingCatalogViews(keyword, productId, productUrl, expectedNam
 
   function runSearchOnce() {
     var stamp = window.__naverMonitorCoupangWingSearch || {};
-    if (stamp.keyword === keyword && Date.now() - stamp.startedAt < 90000) return true;
+    if (!keyword) return false;
     var input = findSearchInput();
     if (!input) {
       openCatalogDialog();
       return false;
     }
+    if (stamp.keyword === keyword && Date.now() - (stamp.clickedAt || 0) < 2500) return true;
+    input.focus();
+    try { input.scrollIntoView({ block: 'center', inline: 'center' }); } catch(e) {}
     var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-    setter.call(input, keyword);
-    input.dispatchEvent(new Event('input', { bubbles: true }));
+    if (setter) setter.call(input, keyword);
+    else input.value = keyword;
+    try {
+      input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: keyword }));
+    } catch(e) {
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
     input.dispatchEvent(new Event('change', { bubbles: true }));
-    window.__naverMonitorCoupangWingSearch = { keyword: keyword, startedAt: Date.now() };
+    window.__naverMonitorCoupangWingSearch = {
+      keyword: keyword,
+      startedAt: stamp.keyword === keyword ? stamp.startedAt : Date.now(),
+      clickedAt: Date.now()
+    };
     return clickSearch(input);
   }
 
@@ -586,7 +621,7 @@ async function waitForCoupangWingViews(tabId, parsed, comp) {
       if (shouldStop()) return { ok: false, stopped: true, error: 'stopped' };
       try {
         var res = await chrome.scripting.executeScript({
-          target: { tabId },
+          target: { tabId, allFrames: true },
           world: 'MAIN',
           func: readCoupangWingCatalogViews,
           args: [
@@ -596,7 +631,10 @@ async function waitForCoupangWingViews(tabId, parsed, comp) {
             (comp && comp.name) || ''
           ]
         });
-        var cr = res && res[0] && res[0].result;
+        var frameResults = (res || []).map(function(item) { return item && item.result; }).filter(Boolean);
+        var cr = frameResults.find(function(item) { return item && item.ok; })
+          || frameResults.find(function(item) { return item && item.final; })
+          || frameResults.find(function(item) { return item && item.error; });
         if (cr && cr.ok) return cr;
         if (cr && cr.final) {
           lastError = cr.error || lastError;
