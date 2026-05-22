@@ -326,7 +326,7 @@ function readCoupangWingCatalogViews(keyword, productId, productUrl, expectedNam
       openCatalogDialog();
       return false;
     }
-    if (stamp.keyword === keyword && Date.now() - (stamp.clickedAt || 0) < 2500) return true;
+    if (stamp.keyword === keyword && stamp.clickedAt) return true;
     input.focus();
     try { input.scrollIntoView({ block: 'center', inline: 'center' }); } catch(e) {}
     var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
@@ -411,7 +411,12 @@ function readCoupangWingCatalogViews(keyword, productId, productUrl, expectedNam
     return parsed[0] || null;
   }
 
-  var noResultText = '\uAC80\uC0C9\uACB0\uACFC\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4';
+  var noResultPatterns = [
+    '\uAC80\uC0C9\uACB0\uACFC\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4',
+    '\uAC80\uC0C9 \uACB0\uACFC\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4',
+    '\uAC80\uC0C9\uB41C \uC0C1\uD488\uC774 \uC5C6\uC2B5\uB2C8\uB2E4'
+  ];
+  var bodyText = text(document.body);
   var stamp = window.__naverMonitorCoupangWingSearch || {};
   if (stamp.keyword === keyword) {
     var result = readResults();
@@ -425,15 +430,18 @@ function readCoupangWingCatalogViews(keyword, productId, productUrl, expectedNam
     }
   }
 
-  if (stamp.keyword === keyword && text(document.body).indexOf(noResultText) >= 0) {
+  if (stamp.keyword === keyword && noResultPatterns.some(function(pattern) { return bodyText.indexOf(pattern) >= 0; })) {
     return { ok: false, final: true, error: 'Wing search returned no results' };
   }
   if (
     stamp.keyword === keyword &&
     Date.now() - (stamp.clickedAt || 0) > 4500 &&
-    text(document.body).indexOf('\uC870\uD68C\uC218') >= 0
+    bodyText.indexOf('\uC870\uD68C\uC218') >= 0
   ) {
     return { ok: false, final: true, error: 'Wing search returned non-matching results' };
+  }
+  if (stamp.keyword === keyword && Date.now() - (stamp.clickedAt || 0) > 9000) {
+    return { ok: false, final: true, error: 'Wing search produced no matching result' };
   }
 
   if (!runSearchOnce()) {
