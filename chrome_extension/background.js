@@ -156,31 +156,47 @@ function readCoupangMonthlyPurchase(pid) {
   }
 
   function findSocial(data) {
-    var root = Array.isArray(data) ? data[0] : data;
-    var modules = root && root.moduleData;
-    if (!Array.isArray(modules)) return null;
-    for (var i = 0; i < modules.length; i++) {
-      var item = modules[i];
+    var seen = new Set();
+    function visit(node, depth) {
+      if (!node || typeof node !== 'object' || depth > 14 || seen.has(node)) return null;
+      seen.add(node);
       if (
-        item &&
-        item.viewType === 'PRODUCT_DETAIL_SOCIAL_PROOF_NUDGE' &&
-        item.type === 'purchase'
-      ) return item;
+        node.viewType === 'PRODUCT_DETAIL_SOCIAL_PROOF_NUDGE' &&
+        node.type === 'purchase' &&
+        node.socialProofNumUsers != null
+      ) return node;
+      if (Array.isArray(node)) {
+        for (var i = 0; i < node.length; i++) {
+          var arrFound = visit(node[i], depth + 1);
+          if (arrFound) return arrFound;
+        }
+        return null;
+      }
+      var keys = Object.keys(node);
+      for (var j = 0; j < keys.length; j++) {
+        var found = visit(node[keys[j]], depth + 1);
+        if (found) return found;
+      }
+      return null;
     }
-    return null;
+    return visit(data, 0);
   }
 
   function socialFromText(text) {
     if (!text) return null;
     var normalized = text.replace(/\\"/g, '"');
-    var idx = normalized.indexOf('PRODUCT_DETAIL_SOCIAL_PROOF_NUDGE');
-    if (idx < 0) return null;
-    var start = Math.max(0, idx - 600);
-    var end = Math.min(normalized.length, idx + 400);
-    var chunk = normalized.slice(start, end);
-    if (chunk.indexOf('"type":"purchase"') < 0 && chunk.indexOf('"type": "purchase"') < 0) return null;
-    var countMatch = chunk.match(/"socialProofNumUsers"\s*:\s*(\d+)/);
+    var patterns = [
+      /"viewType"\s*:\s*"PRODUCT_DETAIL_SOCIAL_PROOF_NUDGE"[\s\S]{0,2500}?"type"\s*:\s*"purchase"[\s\S]{0,2500}?"socialProofNumUsers"\s*:\s*(\d+)/,
+      /"type"\s*:\s*"purchase"[\s\S]{0,2500}?"viewType"\s*:\s*"PRODUCT_DETAIL_SOCIAL_PROOF_NUDGE"[\s\S]{0,2500}?"socialProofNumUsers"\s*:\s*(\d+)/,
+      /PRODUCT_DETAIL_SOCIAL_PROOF_NUDGE[\s\S]{0,2500}?socialProofNumUsers\s*["']?\s*:\s*(\d+)/
+    ];
+    var countMatch = null;
+    for (var i = 0; i < patterns.length && !countMatch; i++) {
+      countMatch = normalized.match(patterns[i]);
+    }
     if (!countMatch) return null;
+    var idx = normalized.indexOf(countMatch[0]);
+    var chunk = normalized.slice(Math.max(0, idx - 500), Math.min(normalized.length, idx + countMatch[0].length + 800));
     var highlightMatch = chunk.match(/"highlightText"\s*:\s*"([^"]*)"/);
     return {
       socialProofNumUsers: Number(countMatch[1]),
@@ -381,7 +397,8 @@ function readCoupangWingCatalogViews(keyword, productId, productUrl, expectedNam
       }
       if (viewNumber == null) return;
       var score = cardScore(card, cardText);
-      if (score <= 0) return;
+      if (productId && score < 100) return;
+      if (!productId && score <= 0) return;
       parsed.push({
         score: score,
         views28: viewNumber,
@@ -620,6 +637,20 @@ async function waitForCoupangMonthly(tabId, pid) {
   return { ok: false, error: '쿠팡 월간 구매 데이터 대기 시간 초과' };
 }
 
+async function collectCoupangMonthlyFromPage(comp, parsed) {
+  var tabId = null;
+  try {
+    tabId = await openTab(comp.url, true);
+    currentFetchTabId = tabId;
+    return await waitForCoupangMonthly(tabId, parsed.pid);
+  } catch(e) {
+    return { ok: false, error: String(e) };
+  } finally {
+    if (tabId !== null) chrome.tabs.remove(tabId, () => {});
+    if (currentFetchTabId === tabId) currentFetchTabId = null;
+  }
+}
+
 async function fetchCoupangMonthlyFromServer(comp) {
   try {
     var res = await apiFetch('/api/coupang/monthly', {
@@ -739,8 +770,7 @@ async function fetchCoupangMonthlyDirect(comp, parsed) {
 async function waitForCoupangWingViews(tabId, parsed, comp) {
   var keywords = [
     (comp && comp.url) || '',
-    (parsed && parsed.pid) || '',
-    (comp && comp.name) || ''
+    (parsed && parsed.pid) || ''
   ].filter(Boolean).filter(function(value, index, list) {
     return list.indexOf(value) === index;
   });
@@ -859,9 +889,20 @@ async function runFetch(competitors) {
     try {
       var cr;
       if (market === 'coupang') {
-        var monthlyPromise = fetchCoupangMonthlyDirect(comp, parsed).then(async function(monthly) {
-          return monthly && monthly.ok ? monthly : await fetchCoupangMonthlyFromServer(comp);
+        await setStatus({
+          running: true,
+          current: i + 1,
+          total: competitors.length,
+          name: comp.name,
+          msg: '\uCFE0\uD321 \uC6D4\uD310\uB9E4\uC218\uB7C9 \uD655\uC778 \uC911...',
+          results
         });
+
+        var monthly = await collectCoupangMonthlyFromPage(comp, parsed);
+        if (monthly && monthly.stopped) {
+          cr = monthly;
+        }
+        if (shouldStop()) { stopped = true; break; }
 
         if (coupangWingTabId === null) {
           coupangWingTabId = await openTab('https://wing.coupang.com/tenants/seller-web/vendor-inventory/formV2', false);
@@ -880,7 +921,6 @@ async function runFetch(competitors) {
         });
 
         var wing = await waitForCoupangWingViews(coupangWingTabId, parsed, comp);
-        var monthly = await monthlyPromise;
         if (wing && wing.stopped) {
           cr = wing;
         } else if ((wing && wing.ok) || (monthly && monthly.ok)) {
