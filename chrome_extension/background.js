@@ -314,8 +314,13 @@ function readCoupangWingCatalogViews(keyword, productId, productUrl, expectedNam
     input.focus();
     try { input.scrollIntoView({ block: 'center', inline: 'center' }); } catch(e) {}
     var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-    if (setter) setter.call(input, keyword);
-    else input.value = keyword;
+    if (setter) {
+      setter.call(input, '');
+      setter.call(input, keyword);
+    } else {
+      input.value = '';
+      input.value = keyword;
+    }
     try {
       input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: keyword }));
     } catch(e) {
@@ -375,8 +380,10 @@ function readCoupangWingCatalogViews(keyword, productId, productUrl, expectedNam
         if (m) viewNumber = toNumber(m[1]);
       }
       if (viewNumber == null) return;
+      var score = cardScore(card, cardText);
+      if (score <= 0) return;
       parsed.push({
-        score: cardScore(card, cardText),
+        score: score,
         views28: viewNumber,
         name: text(card.querySelector('.product-name')) || expectedName || '',
         image_url: getImageUrl(card)
@@ -387,20 +394,29 @@ function readCoupangWingCatalogViews(keyword, productId, productUrl, expectedNam
     return parsed[0] || null;
   }
 
-  var result = readResults();
-  if (result) {
-    return {
-      ok: true,
-      views28: result.views28,
-      name: result.name,
-      image_url: result.image_url
-    };
-  }
-
   var noResultText = '\uAC80\uC0C9\uACB0\uACFC\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4';
   var stamp = window.__naverMonitorCoupangWingSearch || {};
+  if (stamp.keyword === keyword) {
+    var result = readResults();
+    if (result) {
+      return {
+        ok: true,
+        views28: result.views28,
+        name: result.name,
+        image_url: result.image_url
+      };
+    }
+  }
+
   if (stamp.keyword === keyword && text(document.body).indexOf(noResultText) >= 0) {
     return { ok: false, final: true, error: 'Wing search returned no results' };
+  }
+  if (
+    stamp.keyword === keyword &&
+    Date.now() - (stamp.clickedAt || 0) > 4500 &&
+    text(document.body).indexOf('\uC870\uD68C\uC218') >= 0
+  ) {
+    return { ok: false, final: true, error: 'Wing search returned non-matching results' };
   }
 
   if (!runSearchOnce()) {
@@ -627,6 +643,80 @@ async function fetchCoupangMonthlyFromServer(comp) {
   }
 }
 
+async function fetchCoupangMonthlyDirect(comp, parsed) {
+  function findSocial(data) {
+    var root = Array.isArray(data) ? data[0] : data;
+    var modules = root && root.moduleData;
+    if (!Array.isArray(modules)) return null;
+    return modules.find(function(item) {
+      return item &&
+        item.viewType === 'PRODUCT_DETAIL_SOCIAL_PROOF_NUDGE' &&
+        item.type === 'purchase';
+    }) || null;
+  }
+
+  var productId = parsed && parsed.pid;
+  var itemId = parsed && parsed.itemId;
+  var vendorItemId = parsed && parsed.vendorItemId;
+  var imageUrl = '';
+
+  try {
+    if (!vendorItemId) {
+      var pageRes = await fetch(comp.url, {
+        credentials: 'include',
+        cache: 'no-store'
+      });
+      var html = await pageRes.text();
+      var vendorMatch = html.match(/"vendorItemId"\s*:\s*"?(\d+)"?/);
+      var itemMatch = html.match(/"itemId"\s*:\s*"?(\d+)"?/);
+      var imageMatch = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i);
+      vendorItemId = vendorMatch ? vendorMatch[1] : vendorItemId;
+      itemId = itemId || (itemMatch ? itemMatch[1] : '');
+      imageUrl = imageMatch ? imageMatch[1] : '';
+    }
+
+    if (!productId || !vendorItemId) {
+      return { ok: false, error: 'Coupang product identifiers not found' };
+    }
+
+    var params = new URLSearchParams({
+      productId: productId,
+      vendorItemId: vendorItemId,
+      deliveryToggle: 'true',
+      landingProductId: productId,
+      landingVendorItemId: vendorItemId
+    });
+    if (itemId) params.set('landingItemId', itemId);
+
+    var res = await fetch('https://www.coupang.com/next-api/products/quantity-info?' + params.toString(), {
+      credentials: 'include',
+      cache: 'no-store',
+      headers: {
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7'
+      }
+    });
+    if (!res.ok) return { ok: false, error: 'Coupang monthly HTTP ' + res.status };
+    var data = await res.json();
+    var social = findSocial(data);
+    if (!social) return { ok: false, error: 'Coupang monthly sales not found' };
+    var count = social.socialProofNumUsers;
+    if (count == null) {
+      var digits = String(social.highlightText || '').replace(/\D+/g, '');
+      count = digits ? Number(digits) : null;
+    }
+    if (count == null) return { ok: false, error: 'Coupang monthly sales count not found' };
+    return {
+      ok: true,
+      total: Number(count),
+      options: [{ name: '\uC6D4\uD310\uB9E4\uC218\uB7C9', qty: Number(count) }],
+      image_url: imageUrl
+    };
+  } catch(e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
 async function waitForCoupangWingViews(tabId, parsed, comp) {
   var keywords = [
     (comp && comp.url) || '',
@@ -635,7 +725,7 @@ async function waitForCoupangWingViews(tabId, parsed, comp) {
   ].filter(Boolean).filter(function(value, index, list) {
     return list.indexOf(value) === index;
   });
-  var maxWaitPerKeyword = 35000;
+  var maxWaitPerKeyword = 12000;
   var lastError = 'Wing views timed out';
 
   for (var k = 0; k < keywords.length; k++) {
@@ -750,7 +840,9 @@ async function runFetch(competitors) {
     try {
       var cr;
       if (market === 'coupang') {
-        var monthlyPromise = fetchCoupangMonthlyFromServer(comp);
+        var monthlyPromise = fetchCoupangMonthlyDirect(comp, parsed).then(async function(monthly) {
+          return monthly && monthly.ok ? monthly : await fetchCoupangMonthlyFromServer(comp);
+        });
 
         if (coupangWingTabId === null) {
           coupangWingTabId = await openTab('https://wing.coupang.com/tenants/seller-web/vendor-inventory/formV2', false);
@@ -764,7 +856,7 @@ async function runFetch(competitors) {
           current: i + 1,
           total: competitors.length,
           name: comp.name,
-          msg: 'Coupang Wing views...',
+          msg: '\uCFE0\uD321 \uC870\uD68C\uC218 \uD655\uC778 \uC911...',
           results
         });
 

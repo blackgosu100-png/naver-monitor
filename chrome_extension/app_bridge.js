@@ -45,6 +45,14 @@ window.addEventListener('message', function(event) {
   }
 });
 
+function postFetchStatus(status) {
+  window.postMessage({
+    source: 'naver-monitor-extension',
+    type: 'FETCH_STATUS',
+    status: status || null
+  }, '*');
+}
+
 chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
   if (!msg || msg.type !== 'HISTORY_UPDATED') return;
   window.postMessage({
@@ -52,4 +60,13 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
     type: 'HISTORY_UPDATED'
   }, '*');
   sendResponse({ ok: true });
+});
+
+chrome.storage.onChanged.addListener(function(changes, areaName) {
+  if (areaName !== 'local' || !changes.fetchStatus) return;
+  postFetchStatus(changes.fetchStatus.newValue || null);
+});
+
+chrome.storage.local.get('fetchStatus', function(data) {
+  if (data && data.fetchStatus) postFetchStatus(data.fetchStatus);
 });
