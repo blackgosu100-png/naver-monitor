@@ -84,7 +84,14 @@ function parseNaverUrl(url) {
 
 function parseCoupangUrl(url) {
   var m = (url || '').match(/coupang\.com\/(?:vp\/)?products\/(\d+)/);
-  return m ? { pid: m[1] } : null;
+  if (!m) return null;
+  var item = (url || '').match(/[?&]itemId=(\d+)/);
+  var vendor = (url || '').match(/[?&]vendorItemId=(\d+)/);
+  return {
+    pid: m[1],
+    itemId: item ? item[1] : '',
+    vendorItemId: vendor ? vendor[1] : ''
+  };
 }
 
 function parseOhouseUrl(url) {
@@ -202,6 +209,169 @@ function readCoupangMonthlyPurchase(pid) {
     options: [{ name: label, qty: total }],
     image_url: getImageUrl()
   };
+}
+
+function readCoupangWingCatalogViews(keyword, productId, productUrl, expectedName) {
+  function visible(el) {
+    if (!el) return false;
+    var style = window.getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+    var rect = el.getBoundingClientRect();
+    return rect.width > 20 && rect.height > 10;
+  }
+
+  function text(el) {
+    return (el && el.textContent || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function toNumber(value) {
+    var m = String(value || '').match(/[0-9][0-9,]*/);
+    return m ? Number(m[0].replace(/,/g, '')) : null;
+  }
+
+  function getImageUrl(card) {
+    var img = card && card.querySelector('img');
+    return img && img.src ? img.src : '';
+  }
+
+  function findSearchInput() {
+    var inputs = Array.from(document.querySelectorAll('input')).filter(function(input) {
+      if (!visible(input)) return false;
+      var type = (input.getAttribute('type') || 'text').toLowerCase();
+      return ['text', 'search', ''].indexOf(type) >= 0;
+    });
+    inputs.sort(function(a, b) {
+      return b.getBoundingClientRect().width - a.getBoundingClientRect().width;
+    });
+    return inputs[0] || null;
+  }
+
+  function openCatalogDialog() {
+    var catalogText = '\uCE74\uD0C8\uB85C\uADF8';
+    var matchingText = '\uB9E4\uCE6D';
+    var productSearchText = '\uC0C1\uD488 \uAC80\uC0C9';
+    var triggers = Array.from(document.querySelectorAll('button, a, [role="button"]')).filter(visible);
+    var trigger = triggers.find(function(el) {
+      var t = text(el);
+      return t.indexOf(catalogText) >= 0 || t.indexOf(productSearchText) >= 0 || t.indexOf(matchingText) >= 0;
+    });
+    if (!trigger) return false;
+    trigger.click();
+    return true;
+  }
+
+  function clickSearch(input) {
+    var scope = input && (input.closest('form') || input.closest('section') || input.closest('[class*="search"]')) || document;
+    var buttons = Array.from((scope || document).querySelectorAll('button')).filter(visible);
+    var productSearchText = '\uC0C1\uD488 \uAC80\uC0C9';
+    var searchText = '\uAC80\uC0C9';
+    var btn = buttons.find(function(button) {
+      return text(button).indexOf(productSearchText) >= 0;
+    }) || buttons.find(function(button) {
+      return text(button).indexOf(searchText) >= 0;
+    });
+    if (btn) {
+      btn.click();
+      return true;
+    }
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
+    return true;
+  }
+
+  function runSearchOnce() {
+    var stamp = window.__naverMonitorCoupangWingSearch || {};
+    if (stamp.keyword === keyword && Date.now() - stamp.startedAt < 90000) return true;
+    var input = findSearchInput();
+    if (!input) {
+      openCatalogDialog();
+      return false;
+    }
+    var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    setter.call(input, keyword);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    window.__naverMonitorCoupangWingSearch = { keyword: keyword, startedAt: Date.now() };
+    return clickSearch(input);
+  }
+
+  function cardScore(card, cardText) {
+    var score = 0;
+    if (productId && cardText.indexOf(productId) >= 0) score += 100;
+    if (productId) {
+      var links = Array.from(card.querySelectorAll('a[href]'));
+      if (links.some(function(a) { return (a.href || '').indexOf(productId) >= 0; })) score += 100;
+    }
+    if (productUrl && cardText.indexOf(productUrl) >= 0) score += 20;
+    if (expectedName) {
+      var name = text(card.querySelector('.product-name')) || cardText;
+      var cleanExpected = expectedName.replace(/\s+/g, '');
+      var cleanName = name.replace(/\s+/g, '');
+      if (cleanExpected && cleanName.indexOf(cleanExpected.slice(0, Math.min(8, cleanExpected.length))) >= 0) score += 10;
+    }
+    return score;
+  }
+
+  function readResults() {
+    var viewLabel = '\uC870\uD68C\uC218';
+    var cards = Array.from(document.querySelectorAll('.result-row, .product-info')).filter(function(card) {
+      return text(card).indexOf(viewLabel) >= 0;
+    });
+    if (!cards.length) {
+      cards = Array.from(document.querySelectorAll('div, article, li')).filter(function(card) {
+        var t = text(card);
+        return t.indexOf(viewLabel) >= 0 && t.length < 3000;
+      });
+    }
+
+    var parsed = [];
+    cards.forEach(function(card) {
+      var cardText = text(card);
+      var viewNumber = null;
+      var rows = Array.from(card.querySelectorAll('tr'));
+      for (var i = 0; i < rows.length; i++) {
+        var rowText = text(rows[i]);
+        if (rowText.indexOf(viewLabel) < 0) continue;
+        viewNumber = toNumber(rowText.replace(viewLabel, ''));
+        if (viewNumber != null) break;
+      }
+      if (viewNumber == null) {
+        var m = cardText.match(new RegExp(viewLabel + '\\s*([0-9,]+)'));
+        if (m) viewNumber = toNumber(m[1]);
+      }
+      if (viewNumber == null) return;
+      parsed.push({
+        score: cardScore(card, cardText),
+        views28: viewNumber,
+        name: text(card.querySelector('.product-name')) || expectedName || '',
+        image_url: getImageUrl(card)
+      });
+    });
+
+    parsed.sort(function(a, b) { return b.score - a.score; });
+    return parsed[0] || null;
+  }
+
+  var result = readResults();
+  if (result) {
+    return {
+      ok: true,
+      views28: result.views28,
+      name: result.name,
+      image_url: result.image_url
+    };
+  }
+
+  var noResultText = '\uAC80\uC0C9\uACB0\uACFC\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4';
+  var stamp = window.__naverMonitorCoupangWingSearch || {};
+  if (stamp.keyword === keyword && text(document.body).indexOf(noResultText) >= 0) {
+    return { ok: false, final: true, error: 'Wing search returned no results' };
+  }
+
+  if (!runSearchOnce()) {
+    return { ok: false, pending: true, error: 'Wing search input not ready' };
+  }
+  return { ok: false, pending: true, error: 'Waiting for Wing search results' };
 }
 
 async function readOhouseStock(pid) {
@@ -397,6 +567,65 @@ async function waitForCoupangMonthly(tabId, pid) {
   return { ok: false, error: '쿠팡 월간 구매 데이터 대기 시간 초과' };
 }
 
+async function waitForCoupangWingViews(tabId, parsed, comp) {
+  var keywords = [
+    (comp && comp.url) || '',
+    (parsed && parsed.pid) || '',
+    (comp && comp.name) || ''
+  ].filter(Boolean).filter(function(value, index, list) {
+    return list.indexOf(value) === index;
+  });
+  var maxWaitPerKeyword = 35000;
+  var lastError = 'Wing views timed out';
+
+  for (var k = 0; k < keywords.length; k++) {
+    var elapsed = 0;
+    var keyword = keywords[k];
+    while (elapsed < maxWaitPerKeyword) {
+      if (shouldStop()) return { ok: false, stopped: true, error: 'stopped' };
+      try {
+        var res = await chrome.scripting.executeScript({
+          target: { tabId },
+          world: 'MAIN',
+          func: readCoupangWingCatalogViews,
+          args: [
+            keyword,
+            (parsed && parsed.pid) || '',
+            (comp && comp.url) || '',
+            (comp && comp.name) || ''
+          ]
+        });
+        var cr = res && res[0] && res[0].result;
+        if (cr && cr.ok) return cr;
+        if (cr && cr.final) {
+          lastError = cr.error || lastError;
+          break;
+        }
+        if (cr && cr.error) lastError = cr.error;
+      } catch(e) {
+        return { ok: false, error: 'Wing views script failed' };
+      }
+      await new Promise(r => setTimeout(r, 1500));
+      elapsed += 1500;
+    }
+  }
+  return { ok: false, error: lastError };
+}
+
+async function collectCoupangWingViews(parsed, comp) {
+  var tabId = null;
+  try {
+    tabId = await openTab('https://wing.coupang.com/tenants/seller-web/vendor-inventory/formV2');
+    currentFetchTabId = tabId;
+    return await waitForCoupangWingViews(tabId, parsed, comp);
+  } catch(e) {
+    return { ok: false, error: String(e) };
+  } finally {
+    if (tabId !== null) chrome.tabs.remove(tabId, () => {});
+    if (currentFetchTabId === tabId) currentFetchTabId = null;
+  }
+}
+
 async function waitForOhouseStock(tabId, pid) {
   var elapsed = 0;
   var maxWait = 45000;
@@ -458,13 +687,53 @@ async function runFetch(competitors) {
       tabId = await openTab(comp.url);
       currentFetchTabId = tabId;
       if (shouldStop()) { stopped = true; break; }
-      var cr = market === 'coupang'
-        ? await waitForCoupangMonthly(tabId, parsed.pid)
-        : market === 'ohouse'
-          ? await waitForOhouseStock(tabId, parsed.pid)
-          : await waitForCache(tabId, parsed.pid, async (msg) => {
-              await setStatus({ running: true, current: i + 1, total: competitors.length, name: comp.name, msg, results });
-            });
+      var cr;
+      if (market === 'coupang') {
+        cr = await waitForCoupangMonthly(tabId, parsed.pid);
+        if (tabId !== null) {
+          chrome.tabs.remove(tabId, () => {});
+          if (currentFetchTabId === tabId) currentFetchTabId = null;
+          tabId = null;
+          await new Promise(r => setTimeout(r, 700));
+        }
+        if (shouldStop()) { stopped = true; break; }
+
+        await setStatus({
+          running: true,
+          current: i + 1,
+          total: competitors.length,
+          name: comp.name,
+          msg: 'Coupang Wing views...',
+          results
+        });
+
+        var wing = await collectCoupangWingViews(parsed, comp);
+        if (wing && wing.stopped) {
+          cr = wing;
+        } else if (wing && wing.ok) {
+          var options = [{ name: '\uC870\uD68C\uC218(\uCD5C\uADFC 28\uC77C)', qty: Number(wing.views28) || 0 }];
+          if (cr && cr.ok && cr.total != null) {
+            var monthlyName = cr.options && cr.options[0] && cr.options[0].name
+              ? cr.options[0].name
+              : '\uC6D4 \uAD6C\uB9E4 \uC2E0\uD638';
+            options.push({ name: monthlyName, qty: Number(cr.total) || 0 });
+          }
+          cr = {
+            ok: true,
+            total: Number(wing.views28) || 0,
+            options: options,
+            image_url: wing.image_url || (cr && cr.image_url) || ''
+          };
+        } else {
+          cr = { ok: false, error: (wing && wing.error) || 'Wing views not found' };
+        }
+      } else if (market === 'ohouse') {
+        cr = await waitForOhouseStock(tabId, parsed.pid);
+      } else {
+        cr = await waitForCache(tabId, parsed.pid, async (msg) => {
+          await setStatus({ running: true, current: i + 1, total: competitors.length, name: comp.name, msg, results });
+        });
+      }
 
       if (cr && cr.stopped) {
         stopped = true;

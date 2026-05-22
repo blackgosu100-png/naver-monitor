@@ -1094,14 +1094,14 @@ function renderKPIs(data) {
       <div class="kpi-sub">등록된 상품 수</div>
     </div>
     <div class="kpi-card kpi-accent-blue">
-      <div class="kpi-label">${isCoupang ? '월간 구매 신호' : '판매 추정'} (${dateLabel})</div>
+      <div class="kpi-label">${isCoupang ? '조회수 변화' : '판매 추정'} (${dateLabel})</div>
       <div class="kpi-value blue">${totalSales.toLocaleString()}<span style="font-size:14px;font-weight:500;margin-left:3px">개</span></div>
-      <div class="kpi-sub">${isCoupang ? '전회 대비 월간 구매 수 증가 합산' : '전일 대비 재고 감소 합산'}</div>
+      <div class="kpi-sub">${isCoupang ? '전회 대비 조회수 증가 합산' : '전일 대비 재고 감소 합산'}</div>
     </div>
     <div class="kpi-card kpi-accent-amber">
-      <div class="kpi-label">${isCoupang ? '구매 신호 감소' : '재입고 감지'}</div>
+      <div class="kpi-label">${isCoupang ? '조회수 감소' : '재입고 감지'}</div>
       <div class="kpi-value amber">${restockCount}<span style="font-size:14px;font-weight:500;margin-left:3px">건</span></div>
-      <div class="kpi-sub">${isCoupang ? '전회 대비 수치가 낮아진 상품 수' : '재고 증가 경쟁사 수'}</div>
+      <div class="kpi-sub">${isCoupang ? '전회 대비 조회수가 낮아진 상품 수' : '재고 증가 경쟁사 수'}</div>
     </div>
     <div class="kpi-card ${successRate >= 80 ? 'kpi-accent-green' : 'kpi-accent-red'}">
       <div class="kpi-label">조회 성공률</div>
@@ -1475,7 +1475,7 @@ function syncMarketUI() {
   document.getElementById('nav-market-ohouse')?.classList.toggle('active', market === 'ohouse');
   document.getElementById('nav-market-coupang')?.classList.toggle('active', market === 'coupang');
   const title = document.querySelector('#view-dashboard .topbar-title');
-  if (title) title.textContent = market === 'coupang' ? '쿠팡 월간 구매 현황' : `${marketLabel()} 재고 현황`;
+  if (title) title.textContent = market === 'coupang' ? '쿠팡 조회수 현황' : `${marketLabel()} 재고 현황`;
   const urlInput = document.getElementById('new-comp-url');
   if (urlInput) {
     urlInput.placeholder = market === 'ohouse'
