@@ -1,6 +1,12 @@
 // 백그라운드 서비스 워커 — 팝업이 닫혀도 조회 계속 실행
 
 const DEFAULT_SERVER = 'https://naver-monitor-production.up.railway.app';
+const COUPANG_CACHE_KEY = 'coupangMetricCacheV1';
+const COUPANG_MONTHLY_TTL = 12 * 60 * 60 * 1000;
+const COUPANG_VIEWS_TTL = 24 * 60 * 60 * 1000;
+const COUPANG_PB_TTL = 30 * 24 * 60 * 60 * 1000;
+const COUPANG_VIEW_FAILURE_TTL = 7 * 24 * 60 * 60 * 1000;
+const COUPANG_PB_BRANDS = ['코멧', '곰곰', '탐사', '비타할로', '홈플래닛', '캐럿', '베이스알파', '줌베이직', '줌 베이직'];
 var stopRequested = false;
 var currentFetchTabId = null;
 var fetchRunning = false;
@@ -103,6 +109,114 @@ function detectMarket(url) {
   if (parseOhouseUrl(url)) return 'ohouse';
   if (parseCoupangUrl(url)) return 'coupang';
   return 'naver';
+}
+
+function coupangCacheKey(parsed) {
+  return parsed && parsed.pid ? String(parsed.pid) : '';
+}
+
+function isFreshCache(entry, ttl) {
+  return !!entry && !!entry.ts && Date.now() - entry.ts < ttl;
+}
+
+function isLikelyCoupangPb(comp) {
+  var name = String((comp && comp.name) || '');
+  return COUPANG_PB_BRANDS.some(function(brand) {
+    return name.indexOf(brand) >= 0;
+  });
+}
+
+function emptyCoupangCache() {
+  return { monthly: {}, views: {}, pb: {}, viewFailures: {} };
+}
+
+async function getCoupangCache() {
+  var data = await chrome.storage.local.get(COUPANG_CACHE_KEY);
+  var cache = data[COUPANG_CACHE_KEY] || {};
+  return Object.assign(emptyCoupangCache(), cache);
+}
+
+function pruneCoupangCacheBucket(bucket, limit) {
+  var entries = Object.entries(bucket || {});
+  if (entries.length <= limit) return bucket || {};
+  entries.sort(function(a, b) { return (b[1].ts || 0) - (a[1].ts || 0); });
+  return Object.fromEntries(entries.slice(0, limit));
+}
+
+async function saveCoupangCache(cache) {
+  cache.monthly = pruneCoupangCacheBucket(cache.monthly, 400);
+  cache.views = pruneCoupangCacheBucket(cache.views, 400);
+  cache.pb = pruneCoupangCacheBucket(cache.pb, 400);
+  cache.viewFailures = pruneCoupangCacheBucket(cache.viewFailures, 400);
+  await chrome.storage.local.set({ [COUPANG_CACHE_KEY]: cache });
+}
+
+async function getCachedCoupangMetric(kind, key, ttl) {
+  if (!key) return null;
+  var cache = await getCoupangCache();
+  var entry = cache[kind] && cache[kind][key];
+  if (!isFreshCache(entry, ttl)) return null;
+  return Object.assign({}, entry.data || {}, { source: 'cache' });
+}
+
+async function setCachedCoupangMetric(kind, key, data) {
+  if (!key || !data || !data.ok) return;
+  var cache = await getCoupangCache();
+  cache[kind] = cache[kind] || {};
+  cache[kind][key] = {
+    ts: Date.now(),
+    data: {
+      ok: true,
+      total: data.total,
+      options: data.options || [],
+      views28: data.views28,
+      image_url: data.image_url || ''
+    }
+  };
+  await saveCoupangCache(cache);
+}
+
+async function markCoupangPb(key, reason) {
+  if (!key) return;
+  var cache = await getCoupangCache();
+  cache.pb[key] = { ts: Date.now(), reason: reason || 'PB 상품으로 쿠팡 지표 조회 제외' };
+  await saveCoupangCache(cache);
+}
+
+async function getCachedCoupangPb(key) {
+  if (!key) return null;
+  var cache = await getCoupangCache();
+  var entry = cache.pb[key];
+  return isFreshCache(entry, COUPANG_PB_TTL) ? entry : null;
+}
+
+async function recordCoupangViewFailure(key, reason) {
+  if (!key) return;
+  var cache = await getCoupangCache();
+  var prev = cache.viewFailures[key] || {};
+  cache.viewFailures[key] = {
+    ts: Date.now(),
+    failures: (prev.failures || 0) + 1,
+    reason: reason || 'Wing 조회수 매칭 실패'
+  };
+  await saveCoupangCache(cache);
+}
+
+async function clearCoupangViewFailure(key) {
+  if (!key) return;
+  var cache = await getCoupangCache();
+  if (cache.viewFailures && cache.viewFailures[key]) {
+    delete cache.viewFailures[key];
+    await saveCoupangCache(cache);
+  }
+}
+
+async function getCachedCoupangViewFailure(key) {
+  if (!key) return null;
+  var cache = await getCoupangCache();
+  var entry = cache.viewFailures[key];
+  if (!isFreshCache(entry, COUPANG_VIEW_FAILURE_TTL)) return null;
+  return entry.failures >= 2 ? entry : null;
 }
 
 function readStockFromCache(pid) {
@@ -956,46 +1070,80 @@ async function runFetch(competitors) {
     try {
       var cr;
       if (market === 'coupang') {
-        await setStatus({
-          running: true,
-          current: i + 1,
-          total: competitors.length,
-          name: comp.name,
-          msg: '\uCFE0\uD321 \uC6D4\uD310\uB9E4\uC218\uB7C9 \uBC31\uADF8\uB77C\uC6B4\uB4DC \uD655\uC778 \uC911...',
-          results
-        });
+        var cacheKey = coupangCacheKey(parsed);
+        var pbCache = await getCachedCoupangPb(cacheKey);
+        var isPbProduct = !!pbCache || isLikelyCoupangPb(comp);
+        if (isPbProduct && !pbCache) {
+          await markCoupangPb(cacheKey, 'PB 브랜드 감지: 쿠팡 지표 조회 제외');
+        }
 
-        var monthly = await collectCoupangMonthlySmart(comp, parsed);
+        var monthly = null;
+        if (isPbProduct) {
+          monthly = { ok: false, skipped: true, error: 'PB 상품은 월판매수량을 제공하지 않는 경우가 많아 건너뜀' };
+        } else {
+          monthly = await getCachedCoupangMetric('monthly', cacheKey, COUPANG_MONTHLY_TTL);
+          if (!monthly) {
+            await setStatus({
+              running: true,
+              current: i + 1,
+              total: competitors.length,
+              name: comp.name,
+              msg: '\uCFE0\uD321 \uC6D4\uD310\uB9E4\uC218\uB7C9 \uBC31\uADF8\uB77C\uC6B4\uB4DC \uD655\uC778 \uC911...',
+              results
+            });
+            monthly = await collectCoupangMonthlySmart(comp, parsed);
+            if (monthly && monthly.ok) await setCachedCoupangMetric('monthly', cacheKey, monthly);
+          }
+        }
         if (monthly && monthly.stopped) {
           cr = monthly;
         }
         if (shouldStop()) { stopped = true; break; }
 
-        if (coupangWingTabId === null) {
-          coupangWingTabId = await openTab('https://wing.coupang.com/tenants/seller-web/vendor-inventory/formV2', false);
-          await new Promise(r => setTimeout(r, 1200));
+        var wing = null;
+        if (isPbProduct) {
+          wing = { ok: false, skipped: true, error: 'PB 상품은 Wing 조회수 조회를 건너뜀' };
+        } else {
+          wing = await getCachedCoupangMetric('views', cacheKey, COUPANG_VIEWS_TTL);
+          var viewFailure = wing ? null : await getCachedCoupangViewFailure(cacheKey);
+          if (!wing && viewFailure) {
+            wing = { ok: false, skipped: true, error: viewFailure.reason || '이전 Wing 매칭 실패로 조회수 재시도 생략' };
+          }
+          if (!wing) {
+            if (coupangWingTabId === null) {
+              coupangWingTabId = await openTab('https://wing.coupang.com/tenants/seller-web/vendor-inventory/formV2', false);
+              await new Promise(r => setTimeout(r, 1200));
+            }
+            currentFetchTabId = coupangWingTabId;
+            if (shouldStop()) { stopped = true; break; }
+
+            await setStatus({
+              running: true,
+              current: i + 1,
+              total: competitors.length,
+              name: comp.name,
+              msg: '\uCFE0\uD321 \uC870\uD68C\uC218 \uD655\uC778 \uC911...',
+              results
+            });
+
+            wing = await waitForCoupangWingViews(coupangWingTabId, parsed, comp);
+            if (wing && wing.ok) {
+              await setCachedCoupangMetric('views', cacheKey, wing);
+              await clearCoupangViewFailure(cacheKey);
+            } else if (wing && !wing.stopped) {
+              await recordCoupangViewFailure(cacheKey, wing.error || 'Wing 조회수 매칭 실패');
+            }
+          }
         }
-        currentFetchTabId = coupangWingTabId;
-        if (shouldStop()) { stopped = true; break; }
-
-        await setStatus({
-          running: true,
-          current: i + 1,
-          total: competitors.length,
-          name: comp.name,
-          msg: '\uCFE0\uD321 \uC870\uD68C\uC218 \uD655\uC778 \uC911...',
-          results
-        });
-
-        var wing = await waitForCoupangWingViews(coupangWingTabId, parsed, comp);
         if (wing && wing.stopped) {
           cr = wing;
-        } else if ((wing && wing.ok) || (monthly && monthly.ok)) {
+        } else if ((wing && wing.ok) || (monthly && monthly.ok) || isPbProduct) {
           var views = wing && wing.ok ? Number(wing.views28) || 0 : null;
           var monthlySales = monthly && monthly.ok ? Number(monthly.total) || 0 : null;
           var conversionRate = views && monthlySales !== null ? (monthlySales / views) * 100 : null;
           var options = [];
           if (views !== null) options.push({ name: '\uC870\uD68C\uC218', qty: views });
+          else if (wing && wing.error) options.push({ name: '\uC870\uD68C\uC218 \uC624\uB958', qty: null, text: wing.error });
           if (monthlySales !== null) options.push({ name: '\uC6D4\uD310\uB9E4\uC218\uB7C9', qty: monthlySales });
           else if (monthly && !monthly.ok) options.push({ name: '\uC6D4\uD310\uB9E4\uC218\uB7C9 \uC624\uB958', qty: null, text: monthly.error || 'Monthly sales unavailable' });
           if (conversionRate !== null) options.push({ name: '\uC804\uD658\uC728', qty: Number(conversionRate.toFixed(2)) });
