@@ -797,6 +797,12 @@ async function fetchCoupangMonthlyFromServer(comp) {
 }
 
 async function fetchCoupangMonthlyDirect(comp, parsed) {
+  function apiError(data) {
+    if (!data || Array.isArray(data) || typeof data !== 'object') return '';
+    if (!data.rCode && !data.rMessage) return '';
+    return [data.rCode, data.rMessage].filter(Boolean).join(': ');
+  }
+
   function findSocial(data) {
     var seen = new Set();
     function visit(node, depth) {
@@ -886,6 +892,10 @@ async function fetchCoupangMonthlyDirect(comp, parsed) {
     });
     if (!res.ok) return { ok: false, error: 'Coupang monthly HTTP ' + res.status };
     var data = await res.json();
+    var errorMessage = apiError(data);
+    if (errorMessage) {
+      return { ok: false, skipServer: true, error: 'Coupang monthly API ' + errorMessage };
+    }
     var social = findSocial(data);
     if (!social) return { ok: false, error: 'Coupang monthly sales not found' };
     var count = social.socialProofNumUsers;
@@ -930,14 +940,17 @@ async function collectCoupangMonthlySmart(comp, parsed) {
     return direct;
   }
 
-  var server = await withTimeout(
-    fetchCoupangMonthlyFromServer(comp),
-    8000,
-    'Coupang server monthly lookup timed out'
-  );
-  if (server && server.ok) {
-    server.source = 'server';
-    return server;
+  var server = null;
+  if (!(direct && direct.skipServer)) {
+    server = await withTimeout(
+      fetchCoupangMonthlyFromServer(comp),
+      8000,
+      'Coupang server monthly lookup timed out'
+    );
+    if (server && server.ok) {
+      server.source = 'server';
+      return server;
+    }
   }
 
   var page = await collectCoupangMonthlyFromPage(comp, parsed);
