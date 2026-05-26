@@ -684,14 +684,30 @@ async function fetchCoupangMonthlyFromServer(comp) {
 
 async function fetchCoupangMonthlyDirect(comp, parsed) {
   function findSocial(data) {
-    var root = Array.isArray(data) ? data[0] : data;
-    var modules = root && root.moduleData;
-    if (!Array.isArray(modules)) return null;
-    return modules.find(function(item) {
-      return item &&
-        item.viewType === 'PRODUCT_DETAIL_SOCIAL_PROOF_NUDGE' &&
-        item.type === 'purchase';
-    }) || null;
+    var seen = new Set();
+    function visit(node, depth) {
+      if (!node || typeof node !== 'object' || depth > 14 || seen.has(node)) return null;
+      seen.add(node);
+      if (
+        node.viewType === 'PRODUCT_DETAIL_SOCIAL_PROOF_NUDGE' &&
+        node.type === 'purchase' &&
+        node.socialProofNumUsers != null
+      ) return node;
+      if (Array.isArray(node)) {
+        for (var i = 0; i < node.length; i++) {
+          var arrFound = visit(node[i], depth + 1);
+          if (arrFound) return arrFound;
+        }
+        return null;
+      }
+      var keys = Object.keys(node);
+      for (var j = 0; j < keys.length; j++) {
+        var found = visit(node[keys[j]], depth + 1);
+        if (found) return found;
+      }
+      return null;
+    }
+    return visit(data, 0);
   }
 
   function firstMatch(text, patterns) {
@@ -773,6 +789,49 @@ async function fetchCoupangMonthlyDirect(comp, parsed) {
   } catch(e) {
     return { ok: false, error: String(e) };
   }
+}
+
+async function withTimeout(promise, ms, message) {
+  var timer = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise(resolve => {
+        timer = setTimeout(() => resolve({ ok: false, error: message }), ms);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function collectCoupangMonthlySmart(comp, parsed) {
+  var direct = await withTimeout(
+    fetchCoupangMonthlyDirect(comp, parsed),
+    9000,
+    'Coupang background monthly lookup timed out'
+  );
+  if (direct && direct.ok) {
+    direct.source = 'direct';
+    return direct;
+  }
+
+  var server = await withTimeout(
+    fetchCoupangMonthlyFromServer(comp),
+    8000,
+    'Coupang server monthly lookup timed out'
+  );
+  if (server && server.ok) {
+    server.source = 'server';
+    return server;
+  }
+
+  var page = await collectCoupangMonthlyFromPage(comp, parsed);
+  if (page && page.ok) page.source = 'page';
+  if (page && !page.ok) {
+    page.error = page.error || (direct && direct.error) || (server && server.error) || 'Coupang monthly sales not found';
+  }
+  return page;
 }
 
 async function waitForCoupangWingViews(tabId, parsed, comp) {
@@ -902,11 +961,11 @@ async function runFetch(competitors) {
           current: i + 1,
           total: competitors.length,
           name: comp.name,
-          msg: '\uCFE0\uD321 \uC6D4\uD310\uB9E4\uC218\uB7C9 \uD655\uC778 \uC911...',
+          msg: '\uCFE0\uD321 \uC6D4\uD310\uB9E4\uC218\uB7C9 \uBC31\uADF8\uB77C\uC6B4\uB4DC \uD655\uC778 \uC911...',
           results
         });
 
-        var monthly = await collectCoupangMonthlyFromPage(comp, parsed);
+        var monthly = await collectCoupangMonthlySmart(comp, parsed);
         if (monthly && monthly.stopped) {
           cr = monthly;
         }
