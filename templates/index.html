@@ -1603,6 +1603,9 @@ function getCoupangOptionValue(day, aliases) {
 
 function coupangMetricValue(day, metric) {
   if (!day || day.error) return null;
+  if (metric === 'stock') {
+    return getCoupangOptionValue(day, ['재고 추정', '주문 가능 수량']);
+  }
   if (metric === 'views') {
     return getCoupangOptionValue(day, ['조회수', '조회수(최근 28일)']);
   }
@@ -1624,7 +1627,9 @@ function coupangMetricValue(day, metric) {
 
 function coupangMetricError(day, metric) {
   if (!day || !Array.isArray(day.options)) return '';
-  const names = metric === 'monthly'
+  const names = metric === 'stock'
+    ? ['재고 추정 오류']
+    : metric === 'monthly'
     ? ['월판매수량 오류']
     : metric === 'conversion'
       ? ['전환율 오류']
@@ -1641,6 +1646,7 @@ function formatCoupangMetric(value, metric) {
 
 function renderCoupangMetricsDetailGrid(comp, sortedDates, colTpl) {
   const rows = [
+    { key: 'stock', label: '재고 추정' },
     { key: 'views', label: '조회수' },
     { key: 'monthly', label: '월판매수량' },
     { key: 'conversion', label: '전환율' },
@@ -1650,7 +1656,7 @@ function renderCoupangMetricsDetailGrid(comp, sortedDates, colTpl) {
   sortedDates.forEach(d => {
     const day = comp.days[d];
     rows.forEach(row => {
-      if (coupangMetricValue(day, row.key) !== null) hasData = true;
+      if (coupangMetricValue(day, row.key) !== null || coupangMetricError(day, row.key)) hasData = true;
     });
   });
   if (!hasData) {
@@ -1715,7 +1721,7 @@ function syncMarketUI() {
   document.getElementById('nav-market-ohouse')?.classList.toggle('active', market === 'ohouse');
   document.getElementById('nav-market-coupang')?.classList.toggle('active', market === 'coupang');
   const title = document.querySelector('#view-dashboard .topbar-title');
-  if (title) title.textContent = market === 'coupang' ? '쿠팡 월판매량 현황' : `${marketLabel()} 재고 현황`;
+  if (title) title.textContent = market === 'coupang' ? '쿠팡 재고/판매 현황' : `${marketLabel()} 재고 현황`;
   const urlInput = document.getElementById('new-comp-url');
   if (urlInput) {
     urlInput.placeholder = market === 'ohouse'

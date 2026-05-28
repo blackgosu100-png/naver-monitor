@@ -4,6 +4,7 @@ const DEFAULT_SERVER = 'https://naver-monitor-production.up.railway.app';
 const COUPANG_CACHE_KEY = 'coupangMetricCacheV1';
 const COUPANG_MONTHLY_TTL = 12 * 60 * 60 * 1000;
 const COUPANG_VIEWS_TTL = 24 * 60 * 60 * 1000;
+const COUPANG_STOCK_TTL = 3 * 60 * 60 * 1000;
 const COUPANG_PB_TTL = 30 * 24 * 60 * 60 * 1000;
 const COUPANG_VIEW_FAILURE_TTL = 7 * 24 * 60 * 60 * 1000;
 const COUPANG_PB_BRANDS = ['코멧', '곰곰', '탐사', '비타할로', '홈플래닛', '캐럿', '베이스알파', '줌베이직', '줌 베이직'];
@@ -115,6 +116,11 @@ function coupangCacheKey(parsed) {
   return parsed && parsed.pid ? String(parsed.pid) : '';
 }
 
+function coupangStockCacheKey(parsed) {
+  if (!parsed || !parsed.pid) return '';
+  return [parsed.pid, parsed.vendorItemId || parsed.itemId || ''].join(':');
+}
+
 function isFreshCache(entry, ttl) {
   return !!entry && !!entry.ts && Date.now() - entry.ts < ttl;
 }
@@ -127,7 +133,7 @@ function isLikelyCoupangPb(comp) {
 }
 
 function emptyCoupangCache() {
-  return { monthly: {}, views: {}, pb: {}, viewFailures: {} };
+  return { monthly: {}, views: {}, stock: {}, pb: {}, viewFailures: {} };
 }
 
 async function getCoupangCache() {
@@ -146,6 +152,7 @@ function pruneCoupangCacheBucket(bucket, limit) {
 async function saveCoupangCache(cache) {
   cache.monthly = pruneCoupangCacheBucket(cache.monthly, 400);
   cache.views = pruneCoupangCacheBucket(cache.views, 400);
+  cache.stock = pruneCoupangCacheBucket(cache.stock, 400);
   cache.pb = pruneCoupangCacheBucket(cache.pb, 400);
   cache.viewFailures = pruneCoupangCacheBucket(cache.viewFailures, 400);
   await chrome.storage.local.set({ [COUPANG_CACHE_KEY]: cache });
@@ -170,6 +177,7 @@ async function setCachedCoupangMetric(kind, key, data) {
       total: data.total,
       options: data.options || [],
       views28: data.views28,
+      stock: data.stock,
       image_url: data.image_url || ''
     }
   };
@@ -915,6 +923,267 @@ async function fetchCoupangMonthlyDirect(comp, parsed) {
   }
 }
 
+async function readCoupangStockEstimate(productUrl, productId, itemId, vendorItemId) {
+  function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  function apiError(data) {
+    if (!data || Array.isArray(data) || typeof data !== 'object') return '';
+    if (!data.rCode && !data.rMessage) return '';
+    return [data.rCode, data.rMessage].filter(Boolean).join(': ');
+  }
+
+  function firstMatch(text, patterns) {
+    for (var i = 0; i < patterns.length; i++) {
+      var m = text.match(patterns[i]);
+      if (m && m[1]) return m[1];
+    }
+    return '';
+  }
+
+  function escapeRegExp(value) {
+    return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  function findPairedVendorItemId(text, currentItemId) {
+    if (!currentItemId || !text) return '';
+    var item = escapeRegExp(currentItemId);
+    return firstMatch(text, [
+      new RegExp('itemId=' + item + '[^\\s"\'<>]{0,300}vendorItemId=(\\d+)'),
+      new RegExp('vendorItemId=(\\d+)[^\\s"\'<>]{0,300}itemId=' + item),
+      new RegExp('"itemId"\\s*:\\s*"?' + item + '"?[\\s\\S]{0,500}?"vendorItemId"\\s*:\\s*"?(\\d+)"?'),
+      new RegExp('\\\\"itemId\\\\"\\s*:\\s*\\\\"?' + item + '[\\s\\S]{0,500}?\\\\"vendorItemId\\\\"\\s*:\\s*\\\\"?(\\d+)')
+    ]);
+  }
+
+  function resolveIdsFromPage() {
+    var hrefs = [location.href || '', productUrl || ''];
+    var html = document.documentElement ? document.documentElement.outerHTML || '' : '';
+    var decoded = html;
+    try { decoded = decodeURIComponent(html); } catch(e) {}
+    var joined = hrefs.join('\n') + '\n' + html + '\n' + decoded;
+    productId = productId || firstMatch(joined, [
+      /coupang\.com\/(?:vp\/)?products\/(\d+)/,
+      /"productId"\s*:\s*"?(\d+)"?/,
+      /\\"productId\\"\s*:\s*\\"?(\d+)/,
+      /productId["'=:\s]+(\d+)/
+    ]);
+    itemId = itemId || firstMatch(joined, [
+      /[?&]itemId=(\d+)/,
+      /"itemId"\s*:\s*"?(\d+)"?/,
+      /\\"itemId\\"\s*:\s*\\"?(\d+)/,
+      /itemId["'=:\s]+(\d+)/
+    ]);
+    vendorItemId = vendorItemId
+      || findPairedVendorItemId(joined, itemId)
+      || firstMatch(joined, [
+        /[?&]vendorItemId=(\d+)/,
+        /"vendorItemId"\s*:\s*"?(\d+)"?/,
+        /\\"vendorItemId\\"\s*:\s*\\"?(\d+)/,
+        /vendorItemId["'=:\s]+(\d+)/
+      ]);
+  }
+
+  function getImageUrl() {
+    var meta = document.querySelector('meta[property="og:image"], meta[name="og:image"]');
+    if (meta && meta.content) return meta.content;
+    var img = document.querySelector('img[src*="coupangcdn.com"]');
+    return img && img.src ? img.src : '';
+  }
+
+  function stable(value) {
+    if (value == null) return value;
+    if (Array.isArray(value)) return value.map(stable);
+    if (typeof value === 'object') {
+      var out = {};
+      Object.keys(value).sort().forEach(function(key) {
+        out[key] = stable(value[key]);
+      });
+      return out;
+    }
+    return value;
+  }
+
+  function scoreDelivery(node) {
+    if (!node || typeof node !== 'object') return 0;
+    var score = 0;
+    if ('descriptions' in node) score += 3;
+    if ('type' in node) score += 2;
+    if ('speedType' in node) score += 2;
+    if ('logistics' in node) score += 1;
+    if (node.extraDataMap && 'decodeDescriptions' in node.extraDataMap) score += 4;
+    return score;
+  }
+
+  function findDelivery(data) {
+    var seen = new Set();
+    var best = null;
+    var bestScore = 0;
+    function visit(node, depth) {
+      if (!node || typeof node !== 'object' || depth > 12 || seen.has(node)) return;
+      seen.add(node);
+      if (node.delivery && typeof node.delivery === 'object') {
+        var deliveryScore = scoreDelivery(node.delivery);
+        if (deliveryScore > bestScore) {
+          best = node.delivery;
+          bestScore = deliveryScore;
+        }
+      }
+      var selfScore = scoreDelivery(node);
+      if (selfScore > bestScore) {
+        best = node;
+        bestScore = selfScore;
+      }
+      Object.keys(node).forEach(function(key) {
+        visit(node[key], depth + 1);
+      });
+    }
+    visit(data, 0);
+    return bestScore >= 3 ? best : null;
+  }
+
+  function extractDeliveryState(data) {
+    var delivery = findDelivery(data);
+    if (!delivery) return null;
+    return {
+      decodeDescriptions: stable(delivery.extraDataMap && delivery.extraDataMap.decodeDescriptions),
+      descriptions: stable(delivery.descriptions),
+      type: delivery.type || '',
+      speedType: delivery.speedType || '',
+      logistics: delivery.logistics == null ? null : !!delivery.logistics
+    };
+  }
+
+  function sameDeliveryState(a, b) {
+    return !!a && !!b && JSON.stringify(a) === JSON.stringify(b);
+  }
+
+  async function fetchQuantityInfo(quantity) {
+    var params = new URLSearchParams({
+      productId: productId,
+      vendorItemId: vendorItemId,
+      quantity: String(quantity),
+      deliveryToggle: 'true',
+      landingProductId: productId,
+      landingVendorItemId: vendorItemId
+    });
+    if (itemId) {
+      params.set('itemId', itemId);
+      params.set('landingItemId', itemId);
+    }
+    var res = await fetch('https://www.coupang.com/next-api/products/quantity-info?' + params.toString(), {
+      credentials: 'include',
+      cache: 'no-store',
+      headers: {
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7'
+      }
+    });
+    if (!res.ok) throw new Error('quantity-info HTTP ' + res.status);
+    var data = await res.json();
+    var errorMessage = apiError(data);
+    if (errorMessage) throw new Error('quantity-info API ' + errorMessage);
+    return data;
+  }
+
+  try {
+    resolveIdsFromPage();
+    if (!productId || !vendorItemId) {
+      return { ok: false, error: 'Coupang product identifiers not found' };
+    }
+
+    var first = await fetchQuantityInfo(1);
+    var baseline = extractDeliveryState(first);
+    if (!baseline) return { ok: false, error: 'Coupang delivery state not found' };
+
+    var low = 1;
+    var high = null;
+    var probes = [100, 1000, 5000];
+    for (var i = 0; i < probes.length; i++) {
+      await delay(350 + Math.floor(Math.random() * 250));
+      var probe = probes[i];
+      var probeState = extractDeliveryState(await fetchQuantityInfo(probe));
+      if (sameDeliveryState(baseline, probeState)) {
+        low = probe;
+      } else {
+        high = probe;
+        break;
+      }
+    }
+
+    if (high == null) {
+      return {
+        ok: true,
+        stock: null,
+        overLimit: true,
+        reason: '5000개 이상 또는 배송 경계 미발견',
+        image_url: getImageUrl(),
+        productId: productId,
+        itemId: itemId,
+        vendorItemId: vendorItemId
+      };
+    }
+
+    while (high - low > 1) {
+      await delay(350 + Math.floor(Math.random() * 250));
+      var mid = Math.floor((low + high) / 2);
+      var midState = extractDeliveryState(await fetchQuantityInfo(mid));
+      if (sameDeliveryState(baseline, midState)) {
+        low = mid;
+      } else {
+        high = mid;
+      }
+    }
+
+    return {
+      ok: true,
+      stock: low,
+      options: [{ name: '\uC7AC\uACE0 \uCD94\uC815', qty: low }],
+      image_url: getImageUrl(),
+      productId: productId,
+      itemId: itemId,
+      vendorItemId: vendorItemId
+    };
+  } catch(e) {
+    return { ok: false, error: e && e.message ? e.message : String(e), image_url: getImageUrl() };
+  }
+}
+
+async function waitForCoupangStock(tabId, comp, parsed) {
+  try {
+    var res = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: readCoupangStockEstimate,
+      args: [
+        (comp && comp.url) || '',
+        (parsed && parsed.pid) || '',
+        (parsed && parsed.itemId) || '',
+        (parsed && parsed.vendorItemId) || ''
+      ]
+    });
+    var cr = res && res[0] && res[0].result;
+    return cr || { ok: false, error: 'Coupang stock result not found' };
+  } catch(e) {
+    return { ok: false, error: 'Coupang stock script failed' };
+  }
+}
+
+async function collectCoupangStockFromPage(comp, parsed) {
+  var tabId = null;
+  try {
+    tabId = await openTab(comp.url, true);
+    currentFetchTabId = tabId;
+    return await waitForCoupangStock(tabId, comp, parsed);
+  } catch(e) {
+    return { ok: false, error: String(e) };
+  } finally {
+    if (tabId !== null) chrome.tabs.remove(tabId, () => {});
+    if (currentFetchTabId === tabId) currentFetchTabId = null;
+  }
+}
+
 async function withTimeout(promise, ms, message) {
   var timer = null;
   try {
@@ -1113,6 +1382,30 @@ async function runFetch(competitors) {
         }
         if (shouldStop()) { stopped = true; break; }
 
+        var stockKey = coupangStockCacheKey(parsed);
+        var stock = await getCachedCoupangMetric('stock', stockKey, COUPANG_STOCK_TTL);
+        if (!stock) {
+          await setStatus({
+            running: true,
+            current: i + 1,
+            total: competitors.length,
+            name: comp.name,
+            msg: '\uCFE0\uD321 \uC8FC\uBB38 \uAC00\uB2A5 \uC7AC\uACE0 \uCD94\uC815 \uC911...',
+            results
+          });
+          stock = await collectCoupangStockFromPage(comp, parsed);
+          if (stock && stock.ok && stock.stock != null) await setCachedCoupangMetric('stock', stockKey, {
+            ok: true,
+            stock: Number(stock.stock),
+            options: [{ name: '\uC7AC\uACE0 \uCD94\uC815', qty: Number(stock.stock) }],
+            image_url: stock.image_url || ''
+          });
+        }
+        if (stock && stock.stopped) {
+          cr = stock;
+        }
+        if (shouldStop()) { stopped = true; break; }
+
         var wing = null;
         if (isPbProduct) {
           wing = { ok: false, skipped: true, error: 'PB 상품은 Wing 조회수 조회를 건너뜀' };
@@ -1150,11 +1443,15 @@ async function runFetch(competitors) {
         }
         if (wing && wing.stopped) {
           cr = wing;
-        } else if ((wing && wing.ok) || (monthly && monthly.ok) || isPbProduct) {
+        } else if ((wing && wing.ok) || (monthly && monthly.ok) || (stock && stock.ok) || isPbProduct) {
           var views = wing && wing.ok ? Number(wing.views28) || 0 : null;
           var monthlySales = monthly && monthly.ok ? Number(monthly.total) || 0 : null;
+          var estimatedStock = stock && stock.ok && stock.stock != null ? Number(stock.stock) : null;
           var conversionRate = views && monthlySales !== null ? (monthlySales / views) * 100 : null;
           var options = [];
+          if (estimatedStock !== null && Number.isFinite(estimatedStock)) options.push({ name: '\uC7AC\uACE0 \uCD94\uC815', qty: estimatedStock });
+          else if (stock && stock.overLimit) options.push({ name: '\uC7AC\uACE0 \uCD94\uC815 \uC624\uB958', qty: null, text: stock.reason || '5000\uAC1C \uC774\uC0C1 \uB610\uB294 \uBC30\uC1A1 \uACBD\uACC4 \uBBF8\uBC1C\uACAC' });
+          else if (stock && stock.error) options.push({ name: '\uC7AC\uACE0 \uCD94\uC815 \uC624\uB958', qty: null, text: stock.error });
           if (views !== null) options.push({ name: '\uC870\uD68C\uC218', qty: views });
           else if (wing && wing.error) options.push({ name: '\uC870\uD68C\uC218 \uC624\uB958', qty: null, text: wing.error });
           if (monthlySales !== null) options.push({ name: '\uC6D4\uD310\uB9E4\uC218\uB7C9', qty: monthlySales });
@@ -1165,10 +1462,10 @@ async function runFetch(competitors) {
             ok: true,
             total: monthlySales,
             options: options,
-            image_url: (monthly && monthly.image_url) || (wing && wing.image_url) || ''
+            image_url: (stock && stock.image_url) || (monthly && monthly.image_url) || (wing && wing.image_url) || ''
           };
         } else {
-          cr = { ok: false, error: (monthly && monthly.error) || (wing && wing.error) || 'Coupang data not found' };
+          cr = { ok: false, error: (stock && stock.error) || (monthly && monthly.error) || (wing && wing.error) || 'Coupang data not found' };
         }
       } else if (market === 'ohouse') {
         cr = await readOhouseStock(parsed.pid);
