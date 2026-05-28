@@ -620,6 +620,27 @@ def db_get_ext_queue_ids(user_id: str) -> list:
         return []
     return [str(cid) for cid in ids if cid]
 
+def normalize_ext_fetch_mode(value) -> str:
+    value = str(value or '').strip().lower()
+    if value in ('coupang_stock', 'stock'):
+        return 'coupang_stock'
+    if value in ('coupang_sales', 'sales'):
+        return 'coupang_sales'
+    return ''
+
+def db_get_ext_queue_fetch_mode(user_id: str) -> str:
+    rows = sb_select('app_settings', f'?user_id=eq.{user_id}&key=eq.ext_queue_fetch_mode&limit=1')
+    if not rows:
+        return ''
+    return normalize_ext_fetch_mode(rows[0].get('value') or '')
+
+def db_save_ext_queue_fetch_mode(user_id: str, fetch_mode: str):
+    sb_upsert(
+        'app_settings',
+        {'user_id': user_id, 'key': 'ext_queue_fetch_mode', 'value': normalize_ext_fetch_mode(fetch_mode)},
+        on_conflict='user_id,key',
+    )
+
 def db_save_ext_queue_ids(user_id: str, ids: list):
     sb_upsert(
         'app_settings',
@@ -635,7 +656,7 @@ def db_get_ext_queue(user_id: str) -> list:
     by_id = {comp['id']: comp for comp in competitors}
     return [by_id[cid] for cid in queued_ids if cid in by_id]
 
-def db_queue_competitors(user_id: str, cid: str | None = None, user: dict | None = None) -> list:
+def db_queue_competitors(user_id: str, cid: str | None = None, user: dict | None = None, fetch_mode: str = '') -> list:
     competitors = db_get_competitors(user_id)
     valid_ids = [comp['id'] for comp in competitors]
     active_ids = valid_ids if user is None else [comp['id'] for comp in active_competitors_for_user(user, competitors)]
@@ -653,15 +674,20 @@ def db_queue_competitors(user_id: str, cid: str | None = None, user: dict | None
         if target_id not in queued_ids:
             queued_ids.append(target_id)
     db_save_ext_queue_ids(user_id, queued_ids)
+    if normalize_ext_fetch_mode(fetch_mode):
+        db_save_ext_queue_fetch_mode(user_id, fetch_mode)
     return [comp for comp in competitors if comp['id'] in target_ids]
 
 def db_remove_ext_queue_ids(user_id: str, ids: list | None = None):
     if ids is None:
         db_save_ext_queue_ids(user_id, [])
+        db_save_ext_queue_fetch_mode(user_id, '')
         return
     remove_ids = {str(cid) for cid in ids}
     queued_ids = [cid for cid in db_get_ext_queue_ids(user_id) if cid not in remove_ids]
     db_save_ext_queue_ids(user_id, queued_ids)
+    if not queued_ids:
+        db_save_ext_queue_fetch_mode(user_id, '')
 
 # ─── 스케줄러 ─────────────────────────────────────────────────
 scheduler = BackgroundScheduler(timezone='Asia/Seoul')
@@ -1199,7 +1225,7 @@ def api_cookie():
 def api_ext_queue():
     body = request.get_json() or {}
     try:
-        queued = db_queue_competitors(g.user_id, body.get('id'), g.user)
+        queued = db_queue_competitors(g.user_id, body.get('id'), g.user, body.get('fetchMode') or body.get('fetch_mode') or '')
     except ValueError as e:
         status = 403 if '현재 플랜' in str(e) else 404
         return jsonify({'error': str(e)}), status
@@ -1241,7 +1267,10 @@ def api_public_competitors():
 def api_public_queue_get():
     queue = db_get_ext_queue(g.user_id)
     active_ids = active_competitor_ids_for_user(g.user)
-    return jsonify({'queue': [comp for comp in queue if comp.get('id') in active_ids]})
+    return jsonify({
+        'queue': [comp for comp in queue if comp.get('id') in active_ids],
+        'fetchMode': db_get_ext_queue_fetch_mode(g.user_id),
+    })
 
 @app.route('/api/public/queue', methods=['DELETE'])
 @login_required

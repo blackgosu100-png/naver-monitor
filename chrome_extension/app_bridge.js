@@ -14,7 +14,9 @@ window.addEventListener('message', function(event) {
       chrome.runtime.sendMessage({
         type: 'START_FETCH',
         competitors: msg.competitors || [],
-        fetchMode: msg.fetchMode || ''
+        fetchMode: msg.fetchMode || '',
+        market: msg.market || '',
+        coupangMode: msg.coupangMode || ''
       }, function(response) {
         var error = chrome.runtime.lastError ? chrome.runtime.lastError.message : '';
         window.postMessage({

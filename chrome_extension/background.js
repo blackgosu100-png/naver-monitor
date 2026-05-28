@@ -1619,9 +1619,10 @@ async function runFetch(competitors, fetchMode) {
   var coupangWingTabId = null;
   var results = [];
   var stopped = false;
-  var coupangFetchMode = fetchMode === 'coupang_stock'
+  var normalizedFetchMode = String(fetchMode || '').toLowerCase();
+  var coupangFetchMode = normalizedFetchMode === 'coupang_stock' || normalizedFetchMode === 'stock'
     ? 'stock'
-    : fetchMode === 'coupang_sales'
+    : normalizedFetchMode === 'coupang_sales' || normalizedFetchMode === 'sales'
       ? 'sales'
       : 'all';
 
@@ -1779,7 +1780,7 @@ async function runFetch(competitors, fetchMode) {
           }
           cr = {
             ok: true,
-            total: wantsCoupangSales ? monthlySales : null,
+            total: wantsCoupangStock && !wantsCoupangSales ? estimatedStock : (wantsCoupangSales ? monthlySales : null),
             options: options,
             image_url: (stock && stock.image_url) || (monthly && monthly.image_url) || (wing && wing.image_url) || ''
           };
@@ -1874,7 +1875,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return;
       }
       setStatus({ running: true, current: 0, total: competitors.length, msg: '시작 중...', results: [] });
-      runFetch(competitors, msg.fetchMode || '');
+      runFetch(competitors, msg.fetchMode || msg.coupangMode || msg.mode || '');
       sendResponse({ ok: true });
     })();
     return true;

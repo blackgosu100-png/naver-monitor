@@ -202,8 +202,9 @@ async function checkAndProcessQueue() {
     qFill.style.width = '0%';
     showMsg('queue-msg', '대기 중인 조회 ' + queue.length + '개를 백그라운드에서 시작합니다.', 'info');
 
+    var fetchMode = data.fetchMode || data.fetch_mode || '';
     await new Promise(function(resolve, reject) {
-      chrome.runtime.sendMessage({ type: 'START_FETCH', competitors: queue }, function(response) {
+      chrome.runtime.sendMessage({ type: 'START_FETCH', competitors: queue, fetchMode: fetchMode }, function(response) {
         var error = chrome.runtime.lastError ? chrome.runtime.lastError.message : '';
         if (error || !(response && response.ok)) {
           reject(new Error(error || (response && response.error) || '대기 조회 시작 실패'));
