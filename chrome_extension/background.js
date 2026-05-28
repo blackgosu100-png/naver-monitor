@@ -1613,6 +1613,302 @@ async function collectCoupangStockFromPage(comp, parsed) {
   }
 }
 
+function collectCoupangWingMetricItems(node, out, depth) {
+  out = out || [];
+  depth = depth || 0;
+  if (!node || depth > 12) return out;
+  if (Array.isArray(node)) {
+    node.forEach(function(item) {
+      collectCoupangWingMetricItems(item, out, depth + 1);
+    });
+    return out;
+  }
+  if (typeof node !== 'object') return out;
+
+  var hasMetric =
+    node.pvLast28Day != null ||
+    node.salesLast28d != null ||
+    node.salePrice != null ||
+    node.ratingCount != null ||
+    node.vendorItemId != null ||
+    node.productName != null;
+  if (hasMetric) out.push(node);
+
+  Object.keys(node).forEach(function(key) {
+    collectCoupangWingMetricItems(node[key], out, depth + 1);
+  });
+  return out;
+}
+
+function numOrNull(value) {
+  if (value == null || value === '') return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  var cleaned = String(value).replace(/[^0-9.-]/g, '');
+  if (!cleaned) return null;
+  var n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
+}
+
+function pickCoupangWingMetricItem(data, parsed, comp) {
+  var items = collectCoupangWingMetricItems(data, [], 0);
+  if (!items.length) return null;
+  var pid = parsed && parsed.pid ? String(parsed.pid) : '';
+  var vendorItemId = parsed && parsed.vendorItemId ? String(parsed.vendorItemId) : '';
+  var expectedName = String((comp && comp.name) || '').replace(/\s+/g, '');
+
+  function score(item) {
+    var text = JSON.stringify(item);
+    var value = 0;
+    if (pid && String(item.productId || item.productID || item.coupangProductId || '').indexOf(pid) >= 0) value += 200;
+    if (pid && text.indexOf(pid) >= 0) value += 120;
+    if (vendorItemId && String(item.vendorItemId || '').indexOf(vendorItemId) >= 0) value += 220;
+    if (vendorItemId && text.indexOf(vendorItemId) >= 0) value += 120;
+    var name = String(item.productName || item.itemName || item.name || '').replace(/\s+/g, '');
+    if (expectedName && name && name.indexOf(expectedName.slice(0, Math.min(8, expectedName.length))) >= 0) value += 20;
+    if (item.pvLast28Day != null) value += 10;
+    if (item.salesLast28d != null) value += 10;
+    return value;
+  }
+
+  items.sort(function(a, b) { return score(b) - score(a); });
+  return items[0] || null;
+}
+
+function coupangWingMetricKeywords(comp, parsed) {
+  return [
+    (parsed && parsed.pid) || '',
+    (parsed && parsed.vendorItemId) || '',
+    (comp && comp.url) || ''
+  ].filter(Boolean).filter(function(value, index, list) {
+    return list.indexOf(value) === index;
+  });
+}
+
+function readCoupangWingPostMatchingInPage(keyword) {
+  return fetch('/tenants/seller-web/post-matching/search', {
+    method: 'POST',
+    credentials: 'include',
+    cache: 'no-store',
+    headers: {
+      'Accept': 'application/json, text/plain, */*',
+      'Content-Type': 'application/json;charset=UTF-8',
+      'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7'
+    },
+    body: JSON.stringify({
+      keyword: keyword,
+      excludedProductIds: [],
+      searchPage: 0,
+      searchOrder: 'DEFAULT'
+    })
+  }).then(async function(res) {
+    var contentType = res.headers.get('content-type') || '';
+    var text = await res.text();
+    if (contentType.indexOf('json') < 0) {
+      return { ok: false, status: res.status, authRequired: text.indexOf('Sign in to seller') >= 0, error: 'Wing API returned non-JSON response' };
+    }
+    try {
+      return { ok: res.ok, status: res.status, data: JSON.parse(text) };
+    } catch(e) {
+      return { ok: false, status: res.status, error: 'Wing API JSON parse failed' };
+    }
+  }).catch(function(e) {
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  });
+}
+
+async function fetchCoupangWingPostMatchingMetricsViaExistingTab(comp, parsed) {
+  var tabs = [];
+  try {
+    tabs = await chrome.tabs.query({ url: 'https://wing.coupang.com/*' });
+  } catch(e) {
+    return { ok: false, error: 'Wing tab lookup failed' };
+  }
+  var tab = (tabs || []).find(function(item) { return item && item.id != null; });
+  if (!tab) return { ok: false, authRequired: true, error: 'Wing login tab not found' };
+
+  var keywords = coupangWingMetricKeywords(comp, parsed);
+  var lastError = 'Wing post-matching data not found';
+  for (var i = 0; i < keywords.length; i++) {
+    if (shouldStop()) return { ok: false, stopped: true, error: 'stopped by user' };
+    try {
+      var injected = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        world: 'MAIN',
+        func: readCoupangWingPostMatchingInPage,
+        args: [keywords[i]]
+      });
+      var payload = injected && injected[0] && injected[0].result;
+      if (!payload || !payload.ok) {
+        lastError = (payload && payload.error) || lastError;
+        continue;
+      }
+      var item = pickCoupangWingMetricItem(payload.data, parsed, comp);
+      if (!item) {
+        lastError = 'Wing post-matching item not found';
+        continue;
+      }
+      var views = numOrNull(item.pvLast28Day);
+      var sales = numOrNull(item.salesLast28d);
+      if (views == null && sales == null) {
+        lastError = 'Wing post-matching metrics missing';
+        continue;
+      }
+      return {
+        ok: true,
+        views28: views,
+        monthlySales: sales,
+        salePrice: numOrNull(item.salePrice),
+        ratingCount: numOrNull(item.ratingCount),
+        rating: numOrNull(item.rating),
+        vendorItemId: item.vendorItemId || '',
+        productName: item.productName || '',
+        image_url: item.imageUrl || item.productImageUrl || item.thumbnailUrl || ''
+      };
+    } catch(e) {
+      lastError = e && e.message ? e.message : String(e);
+    }
+  }
+  return { ok: false, error: lastError };
+}
+
+async function fetchCoupangWingPostMatchingMetrics(comp, parsed) {
+  var keywords = coupangWingMetricKeywords(comp, parsed);
+  var lastError = 'Wing post-matching data not found';
+  var authRequired = false;
+
+  for (var i = 0; i < keywords.length; i++) {
+    if (shouldStop()) return { ok: false, stopped: true, error: 'stopped by user' };
+    var keyword = keywords[i];
+    try {
+      var res = await fetch('https://wing.coupang.com/tenants/seller-web/post-matching/search', {
+        method: 'POST',
+        credentials: 'include',
+        cache: 'no-store',
+        headers: {
+          'Accept': 'application/json, text/plain, */*',
+          'Content-Type': 'application/json;charset=UTF-8',
+          'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+          'Origin': 'https://wing.coupang.com',
+          'Referer': 'https://wing.coupang.com/tenants/seller-web/vendor-inventory/formV2'
+        },
+        body: JSON.stringify({
+          keyword: keyword,
+          excludedProductIds: [],
+          searchPage: 0,
+          searchOrder: 'DEFAULT'
+        })
+      });
+      if (!res.ok) {
+        lastError = 'Wing post-matching HTTP ' + res.status;
+        if (res.status === 401 || res.status === 403) break;
+        continue;
+      }
+      var contentType = res.headers.get('content-type') || '';
+      var text = await res.text();
+      if (contentType.indexOf('json') < 0) {
+        authRequired = authRequired || text.indexOf('Sign in to seller') >= 0;
+        lastError = authRequired ? 'Wing login session required' : 'Wing post-matching non-JSON response';
+        if (authRequired) break;
+        continue;
+      }
+      var data = JSON.parse(text);
+      var item = pickCoupangWingMetricItem(data, parsed, comp);
+      if (!item) {
+        lastError = 'Wing post-matching item not found';
+        continue;
+      }
+      var views = numOrNull(item.pvLast28Day);
+      var sales = numOrNull(item.salesLast28d);
+      if (views == null && sales == null) {
+        lastError = 'Wing post-matching metrics missing';
+        continue;
+      }
+      return {
+        ok: true,
+        views28: views,
+        monthlySales: sales,
+        salePrice: numOrNull(item.salePrice),
+        ratingCount: numOrNull(item.ratingCount),
+        rating: numOrNull(item.rating),
+        vendorItemId: item.vendorItemId || '',
+        productName: item.productName || '',
+        image_url: item.imageUrl || item.productImageUrl || item.thumbnailUrl || ''
+      };
+    } catch(e) {
+      lastError = e && e.message ? e.message : String(e);
+    }
+  }
+  if (authRequired) {
+    var tabResult = await fetchCoupangWingPostMatchingMetricsViaExistingTab(comp, parsed);
+    if (tabResult && (tabResult.ok || tabResult.stopped)) return tabResult;
+    lastError = tabResult && tabResult.error ? tabResult.error : lastError;
+  }
+  return { ok: false, error: lastError };
+}
+
+async function collectCoupangSalesMetricsFromWingApi(comp, parsed, index, total, results) {
+  var salesCacheKey = coupangStockCacheKey(parsed) || coupangCacheKey(parsed);
+  var monthly = await getCachedCoupangMetric('monthly', salesCacheKey, COUPANG_MONTHLY_TTL);
+  var viewsMetric = await getCachedCoupangMetric('views', salesCacheKey, COUPANG_VIEWS_TTL);
+  var apiMetrics = null;
+
+  if (!monthly || !viewsMetric) {
+    await setStatus({
+      running: true,
+      current: index + 1,
+      total: total,
+      name: comp.name,
+      msg: '\uCFE0\uD321 \uD310\uB9E4 \uC9C0\uD45C API \uD655\uC778 \uC911...',
+      results
+    });
+
+    apiMetrics = await fetchCoupangWingPostMatchingMetrics(comp, parsed);
+    if (apiMetrics && apiMetrics.stopped) return apiMetrics;
+    if (apiMetrics && apiMetrics.ok) {
+      if (apiMetrics.monthlySales !== null && apiMetrics.monthlySales !== undefined) {
+        monthly = {
+          ok: true,
+          total: Number(apiMetrics.monthlySales),
+          options: [{ name: '\uC6D4\uD310\uB9E4\uC218\uB7C9', qty: Number(apiMetrics.monthlySales) }],
+          image_url: apiMetrics.image_url || ''
+        };
+        await setCachedCoupangMetric('monthly', salesCacheKey, monthly);
+      }
+      if (apiMetrics.views28 !== null && apiMetrics.views28 !== undefined) {
+        viewsMetric = {
+          ok: true,
+          views28: Number(apiMetrics.views28),
+          name: apiMetrics.productName || '',
+          image_url: apiMetrics.image_url || ''
+        };
+        await setCachedCoupangMetric('views', salesCacheKey, viewsMetric);
+      }
+    }
+  }
+
+  if (!monthly && !viewsMetric) {
+    return { ok: false, error: (apiMetrics && apiMetrics.error) || 'Coupang sales metrics not found' };
+  }
+
+  var views = viewsMetric && viewsMetric.ok ? Number(viewsMetric.views28) || 0 : null;
+  var monthlySales = monthly && monthly.ok ? Number(monthly.total) || 0 : null;
+  var conversionRate = views && monthlySales !== null ? (monthlySales / views) * 100 : null;
+  var options = [];
+
+  if (views !== null) options.push({ name: '\uC870\uD68C\uC218', qty: views });
+  else if (apiMetrics && apiMetrics.error) options.push({ name: '\uC870\uD68C\uC218 \uC624\uB958', qty: null, text: apiMetrics.error });
+  if (monthlySales !== null) options.push({ name: '\uC6D4\uD310\uB9E4\uC218\uB7C9', qty: monthlySales });
+  else if (apiMetrics && apiMetrics.error) options.push({ name: '\uC6D4\uD310\uB9E4\uC218\uB7C9 \uC624\uB958', qty: null, text: apiMetrics.error });
+  if (conversionRate !== null) options.push({ name: '\uC804\uD658\uC728', qty: Number(conversionRate.toFixed(2)) });
+
+  return {
+    ok: true,
+    total: monthlySales,
+    options: options,
+    image_url: (monthly && monthly.image_url) || (viewsMetric && viewsMetric.image_url) || (apiMetrics && apiMetrics.image_url) || ''
+  };
+}
+
 async function withTimeout(promise, ms, message) {
   var timer = null;
   try {
@@ -1706,20 +2002,6 @@ async function waitForCoupangWingViews(tabId, parsed, comp) {
   return { ok: false, error: lastError };
 }
 
-async function collectCoupangWingViews(parsed, comp) {
-  var tabId = null;
-  try {
-    tabId = await openTab('https://wing.coupang.com/tenants/seller-web/vendor-inventory/formV2', false);
-    currentFetchTabId = tabId;
-    return await waitForCoupangWingViews(tabId, parsed, comp);
-  } catch(e) {
-    return { ok: false, error: String(e) };
-  } finally {
-    if (tabId !== null) chrome.tabs.remove(tabId, () => {});
-    if (currentFetchTabId === tabId) currentFetchTabId = null;
-  }
-}
-
 async function waitForOhouseStock(tabId, pid) {
   var elapsed = 0;
   var maxWait = 45000;
@@ -1749,7 +2031,6 @@ async function runFetch(competitors, fetchMode) {
   fetchRunning = true;
   stopRequested = false;
   currentFetchTabId = null;
-  var coupangWingTabId = null;
   var results = [];
   var stopped = false;
   var normalizedFetchMode = String(fetchMode || '').toLowerCase();
@@ -1788,6 +2069,9 @@ async function runFetch(competitors, fetchMode) {
       var cr;
       if (market === 'coupang') {
         var cacheKey = coupangCacheKey(parsed);
+        if (coupangFetchMode === 'sales') {
+          cr = await collectCoupangSalesMetricsFromWingApi(comp, parsed, i, competitors.length, results);
+        } else {
         var wantsCoupangStock = coupangFetchMode !== 'sales';
         var wantsCoupangSales = coupangFetchMode !== 'stock';
         var pbCache = await getCachedCoupangPb(cacheKey);
@@ -1903,11 +2187,7 @@ async function runFetch(competitors, fetchMode) {
             wing = { ok: false, skipped: true, error: viewFailure.reason || '이전 Wing 매칭 실패로 조회수 재시도 생략' };
           }
           if (!wing) {
-            if (coupangWingTabId === null) {
-              coupangWingTabId = await openTab('https://wing.coupang.com/tenants/seller-web/vendor-inventory/formV2', false);
-              await new Promise(r => setTimeout(r, 1200));
-            }
-            currentFetchTabId = coupangWingTabId;
+            currentFetchTabId = null;
             if (shouldStop()) { stopped = true; break; }
 
             await setStatus({
@@ -1919,8 +2199,17 @@ async function runFetch(competitors, fetchMode) {
               results
             });
 
-            wing = await waitForCoupangWingViews(coupangWingTabId, parsed, comp);
+            wing = await fetchCoupangWingPostMatchingMetrics(comp, parsed);
             if (wing && wing.ok) {
+              if (!monthly && wing.monthlySales !== null && wing.monthlySales !== undefined) {
+                monthly = {
+                  ok: true,
+                  total: Number(wing.monthlySales),
+                  options: [{ name: '\uC6D4\uD310\uB9E4\uC218\uB7C9', qty: Number(wing.monthlySales) }],
+                  image_url: wing.image_url || ''
+                };
+                await setCachedCoupangMetric('monthly', cacheKey, monthly);
+              }
               await setCachedCoupangMetric('views', cacheKey, wing);
               await clearCoupangViewFailure(cacheKey);
             } else if (wing && !wing.stopped) {
@@ -1962,6 +2251,7 @@ async function runFetch(competitors, fetchMode) {
           cr = { ok: false, error: (stock && stock.error) || (monthly && monthly.error) || (wing && wing.error) || 'Coupang data not found' };
         }
         }
+        }
       } else if (market === 'ohouse') {
         cr = await readOhouseStock(parsed.pid);
       } else {
@@ -1996,11 +2286,6 @@ async function runFetch(competitors, fetchMode) {
   }
 
   // 결과 서버에 저장
-  if (coupangWingTabId !== null) {
-    try { await chrome.tabs.remove(coupangWingTabId); } catch(e) {}
-    if (currentFetchTabId === coupangWingTabId) currentFetchTabId = null;
-  }
-
   if (results.length) {
     try {
       await apiFetch('/api/stock-data', {
