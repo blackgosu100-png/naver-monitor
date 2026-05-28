@@ -1698,9 +1698,7 @@ function getCoupangOptionValue(day, aliases) {
 function coupangMetricValue(day, metric) {
   if (!day || day.error) return null;
   if (metric === 'stock') {
-    const optionValue = getCoupangOptionValue(day, ['재고 추정', '주문 가능 수량']);
-    if (optionValue !== null) return optionValue;
-    return day.total !== null && day.total !== undefined ? Number(day.total) : null;
+    return getCoupangOptionValue(day, ['재고 추정', '주문 가능 수량']);
   }
   if (metric === 'views') {
     return getCoupangOptionValue(day, ['조회수', '조회수(최근 28일)']);
