@@ -121,25 +121,6 @@ function coupangStockCacheKey(parsed) {
   return [parsed.pid, parsed.vendorItemId || parsed.itemId || ''].join(':');
 }
 
-function coupangMobileProductUrl(url, parsed) {
-  if (!parsed || !parsed.pid) return url;
-  try {
-    var source = new URL(url);
-    var target = new URL('https://m.coupang.com/vm/products/' + parsed.pid);
-    source.searchParams.forEach(function(value, key) {
-      target.searchParams.set(key, value);
-    });
-    if (parsed.itemId && !target.searchParams.get('itemId')) target.searchParams.set('itemId', parsed.itemId);
-    if (parsed.vendorItemId && !target.searchParams.get('vendorItemId')) target.searchParams.set('vendorItemId', parsed.vendorItemId);
-    return target.toString();
-  } catch(e) {
-    var query = [];
-    if (parsed.itemId) query.push('itemId=' + encodeURIComponent(parsed.itemId));
-    if (parsed.vendorItemId) query.push('vendorItemId=' + encodeURIComponent(parsed.vendorItemId));
-    return 'https://m.coupang.com/vm/products/' + parsed.pid + (query.length ? '?' + query.join('&') : '');
-  }
-}
-
 function isFreshCache(entry, ttl) {
   return !!entry && !!entry.ts && Date.now() - entry.ts < ttl;
 }
@@ -1216,12 +1197,189 @@ async function readCoupangStockEstimate(productUrl, productId, itemId, vendorIte
   }
 }
 
+function readCoupangProductIdentity(productUrl, fallbackProductId, fallbackItemId, fallbackVendorItemId) {
+  function firstMatch(text, patterns) {
+    for (var i = 0; i < patterns.length; i++) {
+      var m = text.match(patterns[i]);
+      if (m && m[1]) return m[1];
+    }
+    return '';
+  }
+
+  function getImageUrl() {
+    var meta = document.querySelector('meta[property="og:image"], meta[name="og:image"]');
+    if (meta && meta.content) return meta.content;
+    var img = document.querySelector('img[src*="coupangcdn.com"]');
+    return img && img.src ? img.src : '';
+  }
+
+  var currentUrl = new URL(location.href);
+  var productId = fallbackProductId || '';
+  var itemId = currentUrl.searchParams.get('itemId') || fallbackItemId || '';
+  var vendorItemId = currentUrl.searchParams.get('vendorItemId') || fallbackVendorItemId || '';
+  if (!productId) {
+    var parts = currentUrl.pathname.split('/').filter(Boolean);
+    var productIndex = parts.indexOf('products');
+    if (productIndex >= 0) productId = parts[productIndex + 1] || '';
+  }
+
+  if (!vendorItemId) {
+    var html = document.documentElement ? document.documentElement.outerHTML || '' : '';
+    var decoded = html;
+    try { decoded = decodeURIComponent(html); } catch(e) {}
+    var entityDecoded = decoded
+      .replace(/&amp;/g, '&')
+      .replace(/&quot;/g, '"')
+      .replace(/&#34;/g, '"')
+      .replace(/&#x27;/g, "'")
+      .replace(/&#39;/g, "'");
+    var joined = [location.href || '', productUrl || '', html, decoded, entityDecoded].join('\n');
+    vendorItemId = firstMatch(joined, [
+      /vendorItemId["'\\]*\s*[:=]\s*["'\\]*(\d{8,})/i,
+      /vendorItemId=(\d{8,})/i,
+      /\\"vendorItemId\\"\s*:\s*\\"?(\d{8,})/i,
+      /vendor[_-]?item[_-]?id["'=:\s-]+(\d{8,})/i
+    ]);
+    itemId = itemId || firstMatch(joined, [
+      /[?&]itemId=(\d{8,})/i,
+      /itemId["'\\]*\s*[:=]\s*["'\\]*(\d{8,})/i
+    ]);
+  }
+
+  return {
+    ok: !!productId && !!vendorItemId,
+    productId: productId,
+    itemId: itemId || '',
+    vendorItemId: vendorItemId || '',
+    image_url: getImageUrl(),
+    url: location.href
+  };
+}
+
+function buildCoupangQuantityInfoUrl(productId, vendorItemId, quantity) {
+  var url = new URL('https://www.coupang.com/next-api/products/quantity-info');
+  url.searchParams.set('productId', productId);
+  url.searchParams.set('vendorItemId', vendorItemId);
+  url.searchParams.set('quantity', String(quantity));
+  return url.toString();
+}
+
+function waitForTabComplete(tabId, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    var done = false;
+    function cleanup() {
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      chrome.tabs.onRemoved.removeListener(onRemoved);
+    }
+
+    var timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      cleanup();
+      reject(new Error('tab load timeout'));
+    }, timeoutMs || 30000);
+
+    function onUpdated(updatedTabId, changeInfo) {
+      if (updatedTabId !== tabId || changeInfo.status !== 'complete') return;
+      if (done) return;
+      done = true;
+      cleanup();
+      resolve();
+    }
+
+    function onRemoved(removedTabId) {
+      if (removedTabId !== tabId || done) return;
+      done = true;
+      cleanup();
+      reject(new Error('tab closed during load'));
+    }
+
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    chrome.tabs.onRemoved.addListener(onRemoved);
+  });
+}
+
+async function navigateTabAndWait(tabId, url, timeoutMs) {
+  var waiting = waitForTabComplete(tabId, timeoutMs || 30000);
+  await chrome.tabs.update(tabId, { url: url });
+  await waiting;
+}
+
+function stripHtml(input) {
+  return String(input || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+}
+
+function normalizeDeliveryText(text) {
+  if (!text) return null;
+  return String(text)
+    .replace(/\s*\([^)]*\uB0B4\s*\uC8FC\uBB38\s*\uC2DC[^)]*\)\s*/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractCoupangDeliveryState(response) {
+  var item = Array.isArray(response) ? response[0] : response;
+  var delivery = item && item.delivery;
+  if (!delivery) return null;
+  return {
+    text: normalizeDeliveryText(
+      (delivery.extraDataMap && typeof delivery.extraDataMap.decodeDescriptions === 'string'
+        ? delivery.extraDataMap.decodeDescriptions.trim()
+        : '') ||
+      stripHtml(delivery.descriptions) ||
+      null
+    ),
+    type: delivery.type == null ? null : delivery.type,
+    speedType: delivery.speedType == null ? null : delivery.speedType,
+    logistics: typeof delivery.logistics === 'boolean' ? delivery.logistics : null
+  };
+}
+
+function sameCoupangDeliveryState(a, b) {
+  return !!a && !!b &&
+    a.text === b.text &&
+    a.type === b.type &&
+    a.speedType === b.speedType &&
+    a.logistics === b.logistics;
+}
+
+async function readJsonFromCurrentTab(tabId) {
+  var res = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: function() {
+      return document.body ? (document.body.innerText || document.body.textContent || '') : '';
+    }
+  });
+  var text = res && res[0] && res[0].result;
+  if (!text) throw new Error('quantity-info response is empty');
+  try {
+    return JSON.parse(text);
+  } catch(e) {
+    throw new Error('quantity-info JSON parse failed: ' + String(text).slice(0, 160));
+  }
+}
+
+async function probeCoupangDeliveryByNavigation(tabId, productId, vendorItemId, quantity) {
+  var apiUrl = buildCoupangQuantityInfoUrl(productId, vendorItemId, quantity);
+  await navigateTabAndWait(tabId, apiUrl, 30000);
+  await new Promise(r => setTimeout(r, 500));
+  var json = await readJsonFromCurrentTab(tabId);
+  var state = extractCoupangDeliveryState(json);
+  if (!state) throw new Error('quantity=' + quantity + ' delivery state not found');
+  return state;
+}
+
 async function waitForCoupangStock(tabId, comp, parsed) {
   try {
+    await navigateTabAndWait(tabId, (comp && comp.url) || '', 30000);
+    await new Promise(r => setTimeout(r, 3000));
+
     var res = await chrome.scripting.executeScript({
       target: { tabId },
       world: 'MAIN',
-      func: readCoupangStockEstimate,
+      func: readCoupangProductIdentity,
       args: [
         (comp && comp.url) || '',
         (parsed && parsed.pid) || '',
@@ -1229,22 +1387,77 @@ async function waitForCoupangStock(tabId, comp, parsed) {
         (parsed && parsed.vendorItemId) || ''
       ]
     });
-    var cr = res && res[0] && res[0].result;
-    return cr || { ok: false, error: 'Coupang stock result not found' };
+    var identity = res && res[0] && res[0].result;
+    if (!identity || !identity.ok) {
+      return { ok: false, error: 'productId or vendorItemId not found' };
+    }
+
+    var baseline = await probeCoupangDeliveryByNavigation(tabId, identity.productId, identity.vendorItemId, 1);
+    var low = 1;
+    var high = null;
+    var probes = [100, 1000, 5000];
+
+    for (var i = 0; i < probes.length; i++) {
+      if (shouldStop()) return { ok: false, stopped: true, error: 'stopped by user' };
+      var q = probes[i];
+      var state = await probeCoupangDeliveryByNavigation(tabId, identity.productId, identity.vendorItemId, q);
+      if (sameCoupangDeliveryState(baseline, state)) {
+        low = q;
+      } else {
+        high = q;
+        break;
+      }
+      await new Promise(r => setTimeout(r, 500));
+    }
+
+    if (high == null) {
+      return {
+        ok: true,
+        stock: null,
+        overLimit: true,
+        reason: '5000+ or delivery boundary not found',
+        image_url: identity.image_url || '',
+        productId: identity.productId,
+        itemId: identity.itemId,
+        vendorItemId: identity.vendorItemId
+      };
+    }
+
+    while (high - low > 1) {
+      if (shouldStop()) return { ok: false, stopped: true, error: 'stopped by user' };
+      var mid = Math.floor((low + high) / 2);
+      var midState = await probeCoupangDeliveryByNavigation(tabId, identity.productId, identity.vendorItemId, mid);
+      if (sameCoupangDeliveryState(baseline, midState)) {
+        low = mid;
+      } else {
+        high = mid;
+      }
+      await new Promise(r => setTimeout(r, 500));
+    }
+
+    return {
+      ok: true,
+      stock: low,
+      options: [{ name: '\uC7AC\uACE0 \uCD94\uC815', qty: low }],
+      image_url: identity.image_url || '',
+      productId: identity.productId,
+      itemId: identity.itemId,
+      vendorItemId: identity.vendorItemId
+    };
   } catch(e) {
-    return { ok: false, error: 'Coupang stock script failed' };
+    return { ok: false, error: e && e.message ? e.message : String(e) };
   }
 }
 
 async function collectCoupangStockFromPage(comp, parsed) {
   var tabId = null;
   try {
-    tabId = await openTab(coupangMobileProductUrl(comp.url, parsed), true);
+    tabId = await openTab(comp.url, true);
     currentFetchTabId = tabId;
     var last = null;
     for (var attempt = 0; attempt < 3; attempt++) {
-      if (shouldStop()) return { ok: false, stopped: true, error: '사용자 중지' };
-      await new Promise(r => setTimeout(r, attempt === 0 ? 1800 : 2500));
+      if (shouldStop()) return { ok: false, stopped: true, error: 'stopped by user' };
+      if (attempt > 0) await new Promise(r => setTimeout(r, 2500));
       last = await waitForCoupangStock(tabId, comp, parsed);
       if (last && (last.ok || last.stopped)) return last;
       var msg = String((last && last.error) || '');
