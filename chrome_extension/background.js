@@ -90,7 +90,7 @@ function parseNaverUrl(url) {
 }
 
 function parseCoupangUrl(url) {
-  var m = (url || '').match(/coupang\.com\/(?:vp\/)?products\/(\d+)/);
+  var m = (url || '').match(/coupang\.com\/(?:v[pm]\/)?products\/(\d+)/);
   if (!m) return null;
   var item = (url || '').match(/[?&]itemId=(\d+)/);
   var vendor = (url || '').match(/[?&]vendorItemId=(\d+)/);
@@ -119,6 +119,25 @@ function coupangCacheKey(parsed) {
 function coupangStockCacheKey(parsed) {
   if (!parsed || !parsed.pid) return '';
   return [parsed.pid, parsed.vendorItemId || parsed.itemId || ''].join(':');
+}
+
+function coupangMobileProductUrl(url, parsed) {
+  if (!parsed || !parsed.pid) return url;
+  try {
+    var source = new URL(url);
+    var target = new URL('https://m.coupang.com/vm/products/' + parsed.pid);
+    source.searchParams.forEach(function(value, key) {
+      target.searchParams.set(key, value);
+    });
+    if (parsed.itemId && !target.searchParams.get('itemId')) target.searchParams.set('itemId', parsed.itemId);
+    if (parsed.vendorItemId && !target.searchParams.get('vendorItemId')) target.searchParams.set('vendorItemId', parsed.vendorItemId);
+    return target.toString();
+  } catch(e) {
+    var query = [];
+    if (parsed.itemId) query.push('itemId=' + encodeURIComponent(parsed.itemId));
+    if (parsed.vendorItemId) query.push('vendorItemId=' + encodeURIComponent(parsed.vendorItemId));
+    return 'https://m.coupang.com/vm/products/' + parsed.pid + (query.length ? '?' + query.join('&') : '');
+  }
 }
 
 function isFreshCache(entry, ttl) {
@@ -970,7 +989,7 @@ async function readCoupangStockEstimate(productUrl, productId, itemId, vendorIte
       .replace(/&#39;/g, "'");
     var joined = hrefs.join('\n') + '\n' + html + '\n' + decoded + '\n' + entityDecoded;
     productId = productId || firstMatch(joined, [
-      /coupang\.com\/(?:vp\/)?products\/(\d+)/,
+      /coupang\.com\/(?:v[pm]\/)?products\/(\d+)/,
       /"productId"\s*:\s*"?(\d+)"?/,
       /\\"productId\\"\s*:\s*\\"?(\d+)/,
       /productId["'=:\s]+(\d+)/
@@ -1100,19 +1119,38 @@ async function readCoupangStockEstimate(productUrl, productId, itemId, vendorIte
       params.set('itemId', itemId);
       params.set('landingItemId', itemId);
     }
-    var res = await fetch('https://www.coupang.com/next-api/products/quantity-info?' + params.toString(), {
-      credentials: 'include',
-      cache: 'no-store',
-      headers: {
-        'Accept': 'application/json, text/plain, */*',
-        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7'
+    var origins = [];
+    if (location.origin && /coupang\.com$/i.test(location.hostname)) origins.push(location.origin);
+    origins.push('https://www.coupang.com');
+    origins = origins.filter(function(origin, index, list) { return origin && list.indexOf(origin) === index; });
+
+    var lastError = '';
+    for (var i = 0; i < origins.length; i++) {
+      try {
+        var res = await fetch(origins[i] + '/next-api/products/quantity-info?' + params.toString(), {
+          credentials: 'include',
+          cache: 'no-store',
+          headers: {
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7'
+          }
+        });
+        if (!res.ok) {
+          lastError = 'quantity-info HTTP ' + res.status + ' (' + origins[i] + ')';
+          continue;
+        }
+        var data = await res.json();
+        var errorMessage = apiError(data);
+        if (errorMessage) {
+          lastError = 'quantity-info API ' + errorMessage;
+          continue;
+        }
+        return data;
+      } catch(e) {
+        lastError = e && e.message ? e.message : String(e);
       }
-    });
-    if (!res.ok) throw new Error('quantity-info HTTP ' + res.status);
-    var data = await res.json();
-    var errorMessage = apiError(data);
-    if (errorMessage) throw new Error('quantity-info API ' + errorMessage);
-    return data;
+    }
+    throw new Error(lastError || 'quantity-info request failed');
   }
 
   try {
@@ -1201,7 +1239,7 @@ async function waitForCoupangStock(tabId, comp, parsed) {
 async function collectCoupangStockFromPage(comp, parsed) {
   var tabId = null;
   try {
-    tabId = await openTab(comp.url, true);
+    tabId = await openTab(coupangMobileProductUrl(comp.url, parsed), true);
     currentFetchTabId = tabId;
     var last = null;
     for (var attempt = 0; attempt < 3; attempt++) {
