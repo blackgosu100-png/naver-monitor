@@ -120,6 +120,10 @@ body { overflow-x: hidden; }
 .topbar-meta { font-size: 11px; color: var(--text3); white-space: nowrap; }
 .content { padding: 24px; flex: 1; min-width: 0; }
 
+.view-toggle.coupang-mode-toggle { display: none; }
+.view-toggle.coupang-mode-toggle.visible { display: inline-flex; }
+.coupang-mode-toggle .view-toggle-btn { min-width: 88px; }
+
 .view-toggle {
   display: inline-flex;
   align-items: center;
@@ -661,6 +665,10 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
   <div id="view-dashboard">
     <div class="topbar">
       <div class="topbar-title">재고 현황</div>
+      <div class="view-toggle coupang-mode-toggle" id="coupang-mode-tabs" role="group" aria-label="쿠팡 조회 지표">
+        <button class="view-toggle-btn active" id="coupang-mode-sales" type="button" onclick="setCoupangMode('sales')">판매 지표</button>
+        <button class="view-toggle-btn" id="coupang-mode-stock" type="button" onclick="setCoupangMode('stock')">재고 추정</button>
+      </div>
       <div class="topbar-meta" id="last-updated">마지막 조회: —</div>
       <div class="view-toggle" role="group" aria-label="재고 보기 방식">
         <button class="view-toggle-btn active" id="history-mode-daily" type="button" onclick="setHistoryMode('daily')">일자별</button>
@@ -678,7 +686,7 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
       </label>
       <button class="btn btn-green" id="fetch-btn" onclick="fetchAll()">
         <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 8A6 6 0 102 8"/><polyline points="14,4 14,8 10,8"/></svg>
-        전체 조회
+        <span id="fetch-btn-label">전체 조회</span>
       </button>
       <button class="btn btn-stop" id="stop-fetch-btn" onclick="stopFetch()" title="진행 중인 확장 프로그램 조회를 중지합니다">STOP</button>
     </div>
@@ -876,6 +884,7 @@ const HISTORY_CACHE_KEY = 'naverMonitorHistoryCache:v1';
 const HISTORY_MODE_KEY = 'naverMonitorHistoryMode:v1';
 const TIME_RANGE_KEY = 'naverMonitorTimeRange:v1';
 const MARKET_KEY = 'naverMonitorMarket:v1';
+const COUPANG_MODE_KEY = 'naverMonitorCoupangMode:v1';
 const TIME_COLUMN_LIMIT = 10;
 const MARKET_LABELS = {naver:'네이버', ohouse:'오늘의집', coupang:'쿠팡'};
 let accessToken = '';
@@ -1017,6 +1026,29 @@ function showAllTimeColumns() {
   return localStorage.getItem(TIME_RANGE_KEY) === 'all';
 }
 
+function currentCoupangMode() {
+  return localStorage.getItem(COUPANG_MODE_KEY) === 'stock' ? 'stock' : 'sales';
+}
+
+function currentFetchMode() {
+  if (currentMarket() !== 'coupang') return '';
+  return currentCoupangMode() === 'stock' ? 'coupang_stock' : 'coupang_sales';
+}
+
+function syncCoupangModeButtons() {
+  const isCoupang = currentMarket() === 'coupang';
+  const mode = currentCoupangMode();
+  document.getElementById('coupang-mode-tabs')?.classList.toggle('visible', isCoupang);
+  document.getElementById('coupang-mode-sales')?.classList.toggle('active', mode === 'sales');
+  document.getElementById('coupang-mode-stock')?.classList.toggle('active', mode === 'stock');
+}
+
+function setCoupangMode(mode) {
+  localStorage.setItem(COUPANG_MODE_KEY, mode === 'stock' ? 'stock' : 'sales');
+  syncMarketUI();
+  renderTable(historyData);
+}
+
 function syncHistoryModeButtons() {
   const mode = currentHistoryMode();
   document.getElementById('history-mode-daily')?.classList.toggle('active', mode === 'daily');
@@ -1050,6 +1082,53 @@ function historyModeLabel() {
   return showAllTimeColumns() ? '시간별 전체 조회값 비교' : `시간별 최근 ${TIME_COLUMN_LIMIT}회 조회값 비교`;
 }
 
+function isCoupangSalesDay(day) {
+  return !!day && (
+    day.error ||
+    coupangMetricValue(day, 'views') !== null ||
+    coupangMetricValue(day, 'monthly') !== null ||
+    coupangMetricValue(day, 'conversion') !== null ||
+    coupangMetricError(day, 'views') ||
+    coupangMetricError(day, 'monthly') ||
+    coupangMetricError(day, 'conversion')
+  );
+}
+
+function isCoupangStockDay(day) {
+  return !!day && (
+    day.error ||
+    coupangMetricValue(day, 'stock') !== null ||
+    coupangMetricError(day, 'stock')
+  );
+}
+
+function isVisibleHistoryDay(comp, day) {
+  if (!day) return false;
+  if (competitorMarket(comp) !== 'coupang') return true;
+  return currentCoupangMode() === 'stock' ? isCoupangStockDay(day) : isCoupangSalesDay(day);
+}
+
+function displayValueForDay(comp, day) {
+  if (!day || day.error) return null;
+  if (competitorMarket(comp) === 'coupang') {
+    return currentCoupangMode() === 'stock'
+      ? coupangMetricValue(day, 'stock')
+      : coupangMetricValue(day, 'monthly');
+  }
+  return day.total !== null && day.total !== undefined ? Number(day.total) : null;
+}
+
+function metricDeltaForSortedDates(comp, sortedDates, index) {
+  if (competitorMarket(comp) !== 'coupang' || currentCoupangMode() !== 'stock') return null;
+  const current = displayValueForDay(comp, comp.days[sortedDates[index]]);
+  if (current === null) return null;
+  for (let i = index + 1; i < sortedDates.length; i++) {
+    const prev = displayValueForDay(comp, comp.days[sortedDates[i]]);
+    if (prev !== null) return current - prev;
+  }
+  return null;
+}
+
 function toDailyHistory(data) {
   if (!data || !Array.isArray(data.dates)) return data;
 
@@ -1065,7 +1144,7 @@ function toDailyHistory(data) {
       let latest = null;
       for (const key of keysForDay) {
         const row = comp.days ? comp.days[key] : null;
-        if (row) latest = row;
+        if (row && isVisibleHistoryDay(comp, row)) latest = row;
       }
 
       if (!latest) {
@@ -1073,10 +1152,11 @@ function toDailyHistory(data) {
         return;
       }
 
-      const total = latest.total;
+      const total = displayValueForDay(comp, latest);
       const isCoupangDaily = competitorMarket(comp) === 'coupang';
+      const isCoupangStock = isCoupangDaily && currentCoupangMode() === 'stock';
       const sales = (total !== null && prevTotal !== null)
-        ? (isCoupangDaily ? total - prevTotal : prevTotal - total)
+        ? (isCoupangDaily && !isCoupangStock ? total - prevTotal : prevTotal - total)
         : null;
       entry.days[dayKey] = {
         ...latest,
@@ -1102,7 +1182,7 @@ function getDisplayHistory(data) {
   let lastFetched = '';
   competitors.forEach(comp => {
     Object.entries(comp.days || {}).forEach(([key, day]) => {
-      if (!day) return;
+      if (!isVisibleHistoryDay(comp, day)) return;
       activeDateSet.add(key);
       if (day.fetched_at && (!lastFetched || day.fetched_at > lastFetched)) {
         lastFetched = day.fetched_at;
@@ -1126,6 +1206,8 @@ function renderKPIs(data) {
 
   const sortedDates = [...dates].sort();
   const latestDate = sortedDates[sortedDates.length - 1];
+  const isCoupang = currentMarket() === 'coupang';
+  const isCoupangStock = isCoupang && currentCoupangMode() === 'stock';
 
   let totalSales = 0, restockCount = 0, errorCount = 0, successCount = 0;
   competitors.forEach(comp => {
@@ -1133,14 +1215,18 @@ function renderKPIs(data) {
     if (!day) return;
     if (day.error) { errorCount++; return; }
     successCount++;
-    if (day.sales !== null) {
-      if (day.sales > 0) totalSales += day.sales;
-      else if (day.sales < 0) restockCount++;
+    let delta = day.sales;
+    if (isCoupangStock) {
+      const latestIndex = sortedDates.indexOf(latestDate);
+      delta = metricDeltaForSortedDates(comp, sortedDates.slice().reverse(), sortedDates.length - 1 - latestIndex);
+    }
+    if (delta !== null) {
+      if (delta > 0) totalSales += delta;
+      else if (delta < 0) restockCount++;
     }
   });
   const successRate = competitors.length > 0 ? Math.round(successCount / competitors.length * 100) : 0;
   const dateLabel = latestDate ? snapshotLabel(latestDate, true) + ' 기준' : '—';
-  const isCoupang = currentMarket() === 'coupang';
 
   el.style.display = 'grid';
   el.innerHTML = `
@@ -1150,14 +1236,14 @@ function renderKPIs(data) {
       <div class="kpi-sub">등록된 상품 수</div>
     </div>
     <div class="kpi-card kpi-accent-blue">
-      <div class="kpi-label">${isCoupang ? '월판매량 변화' : '판매 추정'} (${dateLabel})</div>
+      <div class="kpi-label">${isCoupangStock ? '재고 감소 추정' : isCoupang ? '월판매량 변화' : '판매 추정'} (${dateLabel})</div>
       <div class="kpi-value blue">${totalSales.toLocaleString()}<span style="font-size:14px;font-weight:500;margin-left:3px">개</span></div>
-      <div class="kpi-sub">${isCoupang ? '전회 대비 월판매수량 증가 합산' : '전일 대비 재고 감소 합산'}</div>
+      <div class="kpi-sub">${isCoupangStock ? '전회 대비 재고 추정 감소 합산' : isCoupang ? '전회 대비 월판매수량 증가 합산' : '전일 대비 재고 감소 합산'}</div>
     </div>
     <div class="kpi-card kpi-accent-amber">
-      <div class="kpi-label">${isCoupang ? '월판매량 감소' : '재입고 감지'}</div>
+      <div class="kpi-label">${isCoupangStock ? '재고 증가 감지' : isCoupang ? '월판매량 감소' : '재입고 감지'}</div>
       <div class="kpi-value amber">${restockCount}<span style="font-size:14px;font-weight:500;margin-left:3px">건</span></div>
-      <div class="kpi-sub">${isCoupang ? '전회 대비 월판매수량이 낮아진 상품 수' : '재고 증가 경쟁사 수'}</div>
+      <div class="kpi-sub">${isCoupangStock ? '전회 대비 재고 추정이 증가한 상품 수' : isCoupang ? '전회 대비 월판매수량이 낮아진 상품 수' : '재고 증가 경쟁사 수'}</div>
     </div>
     <div class="kpi-card ${successRate >= 80 ? 'kpi-accent-green' : 'kpi-accent-red'}">
       <div class="kpi-label">조회 성공률</div>
@@ -1187,7 +1273,7 @@ function renderChart(data, sortedDates) {
       label: comp.name,
       data: sortedDates.map(d => {
         const day = comp.days[d];
-        return (day && !day.error && day.total !== null) ? day.total : null;
+        return (day && !day.error) ? displayValueForDay(comp, day) : null;
       }),
       borderColor: color,
       backgroundColor: color + '18',
@@ -1319,7 +1405,8 @@ function beginPendingFetch(competitors) {
   pendingFetch = {
     key: currentMinuteKey(),
     ids: new Set((competitors || []).map(comp => comp.id)),
-    market: currentMarket()
+    market: currentMarket(),
+    fetchMode: currentFetchMode()
   };
   renderTable(historyData);
 }
@@ -1334,6 +1421,7 @@ function isPendingCell(comp, dateKey) {
     pendingFetch &&
     pendingFetch.key === dateKey &&
     pendingFetch.market === currentMarket() &&
+    pendingFetch.fetchMode === currentFetchMode() &&
     pendingFetch.ids &&
     pendingFetch.ids.has(comp.id)
   );
@@ -1424,7 +1512,10 @@ function renderTable(data) {
   }
 
   document.getElementById('monitor-count').textContent = `${label} 경쟁사 ${competitors.length}명`;
-  document.getElementById('monitor-mode-label').textContent = historyModeLabel();
+  document.getElementById('monitor-mode-label').textContent =
+    currentMarket() === 'coupang'
+      ? `${currentCoupangMode() === 'stock' ? '재고 추정' : '판매 지표'} · ${historyModeLabel()}`
+      : historyModeLabel();
   renderKPIs(data);
 
   if (competitors.length === 0) {
@@ -1441,11 +1532,11 @@ function renderTable(data) {
     sortedDates = sortedDates.filter(d =>
       competitors.some(comp => {
         const day = comp.days[d];
-        return day && !day.error && day.total !== null;
+        return day && !day.error && displayValueForDay(comp, day) !== null;
       })
     );
   }
-  if (pendingFetch && pendingFetch.market === currentMarket() && !sortedDates.includes(pendingFetch.key)) {
+  if (pendingFetch && pendingFetch.market === currentMarket() && pendingFetch.fetchMode === currentFetchMode() && !sortedDates.includes(pendingFetch.key)) {
     sortedDates.unshift(pendingFetch.key);
   }
   const totalTimeColumns = sortedDates.length;
@@ -1478,7 +1569,7 @@ function renderTable(data) {
       </button>
       ${productThumb(comp)}<div class="biz-cell-main"><span class="biz-dot"></span>${escHtml(comp.name)}<span class="expand-arr">▾</span></div></div></div>`;
 
-    sortedDates.forEach(d => {
+    sortedDates.forEach((d, dateIndex) => {
       const day = comp.days[d];
       if (!day && isPendingCell(comp, d)) {
         html += `<div class="date-cell"><div class="d-num">${loadingCell()}</div><div></div></div>`;
@@ -1487,16 +1578,18 @@ function renderTable(data) {
       } else if (day.error) {
         html += `<div class="date-cell"><div class="d-num err" title="${escHtml(day.error)}">실패</div><div></div></div>`;
       } else {
-        const total = day.total;
-        const sales = day.sales;
+        const total = displayValueForDay(comp, day);
+        const metricDelta = metricDeltaForSortedDates(comp, sortedDates, dateIndex);
+        const sales = metricDelta !== null ? metricDelta : day.sales;
         const totalStr = total !== null ? total.toLocaleString() : '—';
         let deltaHtml = '';
         const isCoupangRow = competitorMarket(comp) === 'coupang';
-        if (sales !== null && sales > 0 && isCoupangRow) {
+        const isCoupangStock = isCoupangRow && currentCoupangMode() === 'stock';
+        if (sales !== null && sales > 0 && isCoupangRow && !isCoupangStock) {
           deltaHtml = `<div class="d-delta" style="color:#2563EB">[+${sales.toLocaleString()}]</div>`;
         } else if (sales !== null && sales > 0) {
           deltaHtml = `<div class="d-delta">[-${sales.toLocaleString()}]</div>`;
-        } else if (sales !== null && sales < 0 && isCoupangRow) {
+        } else if (sales !== null && sales < 0 && isCoupangRow && !isCoupangStock) {
           deltaHtml = `<div class="d-delta">[${sales.toLocaleString()}]</div>`;
         } else if (sales !== null && sales < 0) {
           deltaHtml = `<div class="d-delta" style="color:#2563EB">[+${Math.abs(sales).toLocaleString()}]</div>`;
@@ -1506,8 +1599,9 @@ function renderTable(data) {
     });
 
     const canFetch = isCompetitorFetchAllowed(comp.id);
+    const singleFetchLabel = competitorMarket(comp) === 'coupang' && currentCoupangMode() === 'stock' ? '재고추정' : '선택상품조회';
     html += `<div class="m-action" onclick="event.stopPropagation()">
-      <button class="btn btn-sm ${canFetch ? '' : 'btn-primary'}" onclick="fetchSingle('${comp.id}','${escHtml(comp.name)}')" title="${canFetch ? '이 상품만 재고 조회' : '현재 플랜 한도 밖 상품입니다'}">${canFetch ? '선택상품조회' : '연장/업그레이드'}</button>
+      <button class="btn btn-sm ${canFetch ? '' : 'btn-primary'}" onclick="fetchSingle('${comp.id}','${escHtml(comp.name)}')" title="${canFetch ? '이 상품만 조회' : '현재 플랜 한도 밖 상품입니다'}">${canFetch ? singleFetchLabel : '연장/업그레이드'}</button>
     </div></div>`;
 
     html += `<div class="m-detail${isExpanded ? ' open' : ''}" id="opt-${comp.id}">${
@@ -1645,12 +1739,13 @@ function formatCoupangMetric(value, metric) {
 }
 
 function renderCoupangMetricsDetailGrid(comp, sortedDates, colTpl) {
-  const rows = [
-    { key: 'stock', label: '재고 추정' },
-    { key: 'views', label: '조회수' },
-    { key: 'monthly', label: '월판매수량' },
-    { key: 'conversion', label: '전환율' },
-  ];
+  const rows = currentCoupangMode() === 'stock'
+    ? [{ key: 'stock', label: '재고 추정' }]
+    : [
+      { key: 'views', label: '조회수' },
+      { key: 'monthly', label: '월판매수량' },
+      { key: 'conversion', label: '전환율' },
+    ];
 
   let hasData = false;
   sortedDates.forEach(d => {
@@ -1660,7 +1755,7 @@ function renderCoupangMetricsDetailGrid(comp, sortedDates, colTpl) {
     });
   });
   if (!hasData) {
-    return '<div style="color:var(--text3);font-size:12px;padding:12px 20px">쿠팡 지표 데이터 없음</div>';
+    return `<div style="color:var(--text3);font-size:12px;padding:12px 20px">${currentCoupangMode() === 'stock' ? '쿠팡 재고 추정 데이터 없음' : '쿠팡 판매 지표 데이터 없음'}</div>`;
   }
 
   let html = '';
@@ -1720,8 +1815,15 @@ function syncMarketUI() {
   document.getElementById('nav-market-naver')?.classList.toggle('active', market === 'naver');
   document.getElementById('nav-market-ohouse')?.classList.toggle('active', market === 'ohouse');
   document.getElementById('nav-market-coupang')?.classList.toggle('active', market === 'coupang');
+  syncCoupangModeButtons();
   const title = document.querySelector('#view-dashboard .topbar-title');
-  if (title) title.textContent = market === 'coupang' ? '쿠팡 재고/판매 현황' : `${marketLabel()} 재고 현황`;
+  if (title) title.textContent = market === 'coupang'
+    ? (currentCoupangMode() === 'stock' ? '쿠팡 재고 추정 현황' : '쿠팡 판매 지표 현황')
+    : `${marketLabel()} 재고 현황`;
+  const fetchBtnLabel = document.getElementById('fetch-btn-label');
+  if (fetchBtnLabel) {
+    fetchBtnLabel.textContent = market === 'coupang' && currentCoupangMode() === 'stock' ? '재고 추정' : '전체 조회';
+  }
   const urlInput = document.getElementById('new-comp-url');
   if (urlInput) {
     urlInput.placeholder = market === 'ohouse'
@@ -1785,7 +1887,7 @@ function getFetchableDashboardCompetitors() {
   return getDashboardCompetitors().filter(comp => activeIds.size === 0 || activeIds.has(comp.id));
 }
 
-function requestExtensionFetch(competitors) {
+function requestExtensionFetch(competitors, fetchMode = currentFetchMode()) {
   return new Promise((resolve, reject) => {
     const requestId = `fetch-${Date.now()}-${++extensionRequestSeq}`;
     const auth = {
@@ -1815,7 +1917,8 @@ function requestExtensionFetch(competitors) {
       type: 'START_FETCH',
       requestId,
       auth,
-      competitors
+      competitors,
+      fetchMode
     }, '*');
   });
 }
@@ -1899,7 +2002,8 @@ async function stopFetch() {
 }
 
 async function fetchAll() {
-  showLoading('크롬 확장 프로그램에 전체 조회 요청 중...');
+  const fetchLabel = currentMarket() === 'coupang' && currentCoupangMode() === 'stock' ? '재고 추정' : '전체 조회';
+  showLoading(`크롬 확장 프로그램에 ${fetchLabel} 요청 중...`);
   const btn = document.getElementById('fetch-btn');
   btn.disabled = true;
   try {
@@ -1912,7 +2016,7 @@ async function fetchAll() {
       beginPendingFetch(competitors);
       await requestExtensionFetch(competitors);
       startHistoryAutoRefresh(competitors.length);
-      showToast(`확장 프로그램에서 ${competitors.length}개 상품 조회를 시작했습니다`);
+      showToast(`확장 프로그램에서 ${competitors.length}개 상품 ${fetchLabel}를 시작했습니다`);
     } catch (e) {
       clearPendingFetch();
       const data = await queueFetchForExtension();
@@ -1927,7 +2031,8 @@ async function fetchAll() {
 }
 
 async function fetchSingle(cid, name) {
-  showLoading(`${name} 재고 조회 요청 중...`);
+  const fetchLabel = currentMarket() === 'coupang' && currentCoupangMode() === 'stock' ? '재고 추정' : '재고 조회';
+  showLoading(`${name} ${fetchLabel} 요청 중...`);
   try {
     const comp = getDashboardCompetitors().find(item => item.id === cid);
     if (!comp) {
@@ -1942,7 +2047,7 @@ async function fetchSingle(cid, name) {
       beginPendingFetch([comp]);
       await requestExtensionFetch([comp]);
       startHistoryAutoRefresh(1);
-      showToast(`${name} 재고 조회를 시작했습니다`);
+      showToast(`${name} ${fetchLabel}를 시작했습니다`);
     } catch (e) {
       clearPendingFetch();
       await queueFetchForExtension(cid);

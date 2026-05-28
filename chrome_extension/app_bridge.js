@@ -13,7 +13,8 @@ window.addEventListener('message', function(event) {
     }, function() {
       chrome.runtime.sendMessage({
         type: 'START_FETCH',
-        competitors: msg.competitors || []
+        competitors: msg.competitors || [],
+        fetchMode: msg.fetchMode || ''
       }, function(response) {
         var error = chrome.runtime.lastError ? chrome.runtime.lastError.message : '';
         window.postMessage({

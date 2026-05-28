@@ -1315,7 +1315,7 @@ async function waitForOhouseStock(tabId, pid) {
   return { ok: false, error: '오늘의집 재고 데이터 대기 시간 초과' };
 }
 
-async function runFetch(competitors) {
+async function runFetch(competitors, fetchMode) {
   if (fetchRunning) return;
   fetchRunning = true;
   stopRequested = false;
@@ -1323,6 +1323,11 @@ async function runFetch(competitors) {
   var coupangWingTabId = null;
   var results = [];
   var stopped = false;
+  var coupangFetchMode = fetchMode === 'coupang_stock'
+    ? 'stock'
+    : fetchMode === 'coupang_sales'
+      ? 'sales'
+      : 'all';
 
   for (var i = 0; i < competitors.length; i++) {
     if (shouldStop()) { stopped = true; break; }
@@ -1353,6 +1358,8 @@ async function runFetch(competitors) {
       var cr;
       if (market === 'coupang') {
         var cacheKey = coupangCacheKey(parsed);
+        var wantsCoupangStock = coupangFetchMode !== 'sales';
+        var wantsCoupangSales = coupangFetchMode !== 'stock';
         var pbCache = await getCachedCoupangPb(cacheKey);
         var isPbProduct = !!pbCache || isLikelyCoupangPb(comp);
         if (isPbProduct && !pbCache) {
@@ -1360,7 +1367,9 @@ async function runFetch(competitors) {
         }
 
         var monthly = null;
-        if (isPbProduct) {
+        if (!wantsCoupangSales) {
+          monthly = { ok: false, skipped: true, error: '' };
+        } else if (isPbProduct) {
           monthly = { ok: false, skipped: true, error: 'PB 상품은 월판매수량을 제공하지 않는 경우가 많아 건너뜀' };
         } else {
           monthly = await getCachedCoupangMetric('monthly', cacheKey, COUPANG_MONTHLY_TTL);
@@ -1382,24 +1391,29 @@ async function runFetch(competitors) {
         }
         if (shouldStop()) { stopped = true; break; }
 
-        var stockKey = coupangStockCacheKey(parsed);
-        var stock = await getCachedCoupangMetric('stock', stockKey, COUPANG_STOCK_TTL);
-        if (!stock) {
-          await setStatus({
-            running: true,
-            current: i + 1,
-            total: competitors.length,
-            name: comp.name,
-            msg: '\uCFE0\uD321 \uC8FC\uBB38 \uAC00\uB2A5 \uC7AC\uACE0 \uCD94\uC815 \uC911...',
-            results
-          });
-          stock = await collectCoupangStockFromPage(comp, parsed);
-          if (stock && stock.ok && stock.stock != null) await setCachedCoupangMetric('stock', stockKey, {
-            ok: true,
-            stock: Number(stock.stock),
-            options: [{ name: '\uC7AC\uACE0 \uCD94\uC815', qty: Number(stock.stock) }],
-            image_url: stock.image_url || ''
-          });
+        var stock = null;
+        if (wantsCoupangStock) {
+          var stockKey = coupangStockCacheKey(parsed);
+          stock = await getCachedCoupangMetric('stock', stockKey, COUPANG_STOCK_TTL);
+          if (!stock) {
+            await setStatus({
+              running: true,
+              current: i + 1,
+              total: competitors.length,
+              name: comp.name,
+              msg: '\uCFE0\uD321 \uC8FC\uBB38 \uAC00\uB2A5 \uC7AC\uACE0 \uCD94\uC815 \uC911...',
+              results
+            });
+            stock = await collectCoupangStockFromPage(comp, parsed);
+            if (stock && stock.ok && stock.stock != null) await setCachedCoupangMetric('stock', stockKey, {
+              ok: true,
+              stock: Number(stock.stock),
+              options: [{ name: '\uC7AC\uACE0 \uCD94\uC815', qty: Number(stock.stock) }],
+              image_url: stock.image_url || ''
+            });
+          }
+        } else {
+          stock = { ok: false, skipped: true, error: '' };
         }
         if (stock && stock.stopped) {
           cr = stock;
@@ -1407,7 +1421,9 @@ async function runFetch(competitors) {
         if (shouldStop()) { stopped = true; break; }
 
         var wing = null;
-        if (isPbProduct) {
+        if (!wantsCoupangSales) {
+          wing = { ok: false, skipped: true, error: '' };
+        } else if (isPbProduct) {
           wing = { ok: false, skipped: true, error: 'PB 상품은 Wing 조회수 조회를 건너뜀' };
         } else {
           wing = await getCachedCoupangMetric('views', cacheKey, COUPANG_VIEWS_TTL);
@@ -1443,24 +1459,31 @@ async function runFetch(competitors) {
         }
         if (wing && wing.stopped) {
           cr = wing;
-        } else if ((wing && wing.ok) || (monthly && monthly.ok) || (stock && stock.ok) || isPbProduct) {
+        } else if (
+          (wantsCoupangSales && ((wing && wing.ok) || (monthly && monthly.ok) || isPbProduct)) ||
+          (wantsCoupangStock && stock && stock.ok)
+        ) {
           var views = wing && wing.ok ? Number(wing.views28) || 0 : null;
           var monthlySales = monthly && monthly.ok ? Number(monthly.total) || 0 : null;
           var estimatedStock = stock && stock.ok && stock.stock != null ? Number(stock.stock) : null;
           var conversionRate = views && monthlySales !== null ? (monthlySales / views) * 100 : null;
           var options = [];
-          if (estimatedStock !== null && Number.isFinite(estimatedStock)) options.push({ name: '\uC7AC\uACE0 \uCD94\uC815', qty: estimatedStock });
-          else if (stock && stock.overLimit) options.push({ name: '\uC7AC\uACE0 \uCD94\uC815 \uC624\uB958', qty: null, text: stock.reason || '5000\uAC1C \uC774\uC0C1 \uB610\uB294 \uBC30\uC1A1 \uACBD\uACC4 \uBBF8\uBC1C\uACAC' });
-          else if (stock && stock.error) options.push({ name: '\uC7AC\uACE0 \uCD94\uC815 \uC624\uB958', qty: null, text: stock.error });
-          if (views !== null) options.push({ name: '\uC870\uD68C\uC218', qty: views });
-          else if (wing && wing.error) options.push({ name: '\uC870\uD68C\uC218 \uC624\uB958', qty: null, text: wing.error });
-          if (monthlySales !== null) options.push({ name: '\uC6D4\uD310\uB9E4\uC218\uB7C9', qty: monthlySales });
-          else if (monthly && !monthly.ok) options.push({ name: '\uC6D4\uD310\uB9E4\uC218\uB7C9 \uC624\uB958', qty: null, text: monthly.error || 'Monthly sales unavailable' });
-          if (conversionRate !== null) options.push({ name: '\uC804\uD658\uC728', qty: Number(conversionRate.toFixed(2)) });
-          else if (views !== null && monthly && !monthly.ok) options.push({ name: '\uC804\uD658\uC728 \uC624\uB958', qty: null, text: '\uC6D4\uD310\uB9E4\uC218\uB7C9\uC774 \uC5C6\uC5B4 \uACC4\uC0B0\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4' });
+          if (wantsCoupangStock) {
+            if (estimatedStock !== null && Number.isFinite(estimatedStock)) options.push({ name: '\uC7AC\uACE0 \uCD94\uC815', qty: estimatedStock });
+            else if (stock && stock.overLimit) options.push({ name: '\uC7AC\uACE0 \uCD94\uC815 \uC624\uB958', qty: null, text: stock.reason || '5000\uAC1C \uC774\uC0C1 \uB610\uB294 \uBC30\uC1A1 \uACBD\uACC4 \uBBF8\uBC1C\uACAC' });
+            else if (stock && stock.error) options.push({ name: '\uC7AC\uACE0 \uCD94\uC815 \uC624\uB958', qty: null, text: stock.error });
+          }
+          if (wantsCoupangSales) {
+            if (views !== null) options.push({ name: '\uC870\uD68C\uC218', qty: views });
+            else if (wing && wing.error) options.push({ name: '\uC870\uD68C\uC218 \uC624\uB958', qty: null, text: wing.error });
+            if (monthlySales !== null) options.push({ name: '\uC6D4\uD310\uB9E4\uC218\uB7C9', qty: monthlySales });
+            else if (monthly && !monthly.ok) options.push({ name: '\uC6D4\uD310\uB9E4\uC218\uB7C9 \uC624\uB958', qty: null, text: monthly.error || 'Monthly sales unavailable' });
+            if (conversionRate !== null) options.push({ name: '\uC804\uD658\uC728', qty: Number(conversionRate.toFixed(2)) });
+            else if (views !== null && monthly && !monthly.ok) options.push({ name: '\uC804\uD658\uC728 \uC624\uB958', qty: null, text: '\uC6D4\uD310\uB9E4\uC218\uB7C9\uC774 \uC5C6\uC5B4 \uACC4\uC0B0\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4' });
+          }
           cr = {
             ok: true,
-            total: monthlySales,
+            total: wantsCoupangSales ? monthlySales : null,
             options: options,
             image_url: (stock && stock.image_url) || (monthly && monthly.image_url) || (wing && wing.image_url) || ''
           };
@@ -1555,7 +1578,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return;
       }
       setStatus({ running: true, current: 0, total: competitors.length, msg: '시작 중...', results: [] });
-      runFetch(competitors);
+      runFetch(competitors, msg.fetchMode || '');
       sendResponse({ ok: true });
     })();
     return true;
