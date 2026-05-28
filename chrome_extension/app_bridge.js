@@ -1,7 +1,19 @@
+var EXTENSION_VERSION = chrome.runtime.getManifest().version;
+
 window.addEventListener('message', function(event) {
   if (event.source !== window) return;
   var msg = event.data || {};
   if (msg.source !== 'naver-monitor-dashboard') return;
+
+  if (msg.type === 'GET_EXTENSION_INFO') {
+    window.postMessage({
+      source: 'naver-monitor-extension',
+      type: 'EXTENSION_INFO',
+      requestId: msg.requestId,
+      version: EXTENSION_VERSION
+    }, '*');
+    return;
+  }
 
   if (msg.type === 'START_FETCH') {
     var auth = msg.auth || {};
@@ -24,7 +36,8 @@ window.addEventListener('message', function(event) {
           type: 'START_FETCH_RESULT',
           requestId: msg.requestId,
           ok: !error && !!(response && response.ok),
-          error: error || (response && response.error ? response.error : '')
+          error: error || (response && response.error ? response.error : ''),
+          version: EXTENSION_VERSION
         }, '*');
       });
     });
@@ -52,6 +65,7 @@ function postFetchStatus(status) {
   window.postMessage({
     source: 'naver-monitor-extension',
     type: 'FETCH_STATUS',
+    version: EXTENSION_VERSION,
     status: status || null
   }, '*');
 }

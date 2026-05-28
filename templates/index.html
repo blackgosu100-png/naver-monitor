@@ -886,6 +886,7 @@ const HISTORY_MODE_KEY = 'naverMonitorHistoryMode:v1';
 const TIME_RANGE_KEY = 'naverMonitorTimeRange:v1';
 const MARKET_KEY = 'naverMonitorMarket:v1';
 const TIME_COLUMN_LIMIT = 10;
+const REQUIRED_COUPANG_EXTENSION_VERSION = '5.26';
 const MARKETS = ['naver', 'ohouse', 'coupang', 'coupang_stock'];
 const MARKET_LABELS = {
   naver: '네이버',
@@ -1941,6 +1942,12 @@ function requestExtensionFetch(competitors, fetchMode = currentFetchMode(), mark
       if (msg.source !== 'naver-monitor-extension' || msg.type !== 'START_FETCH_RESULT' || msg.requestId !== requestId) return;
       clearTimeout(timer);
       window.removeEventListener('message', onMessage);
+      if (isCoupangFetchMode(fetchMode) && !isExtensionVersionAtLeast(msg.version, REQUIRED_COUPANG_EXTENSION_VERSION)) {
+        const err = new Error(`확장 프로그램 v${REQUIRED_COUPANG_EXTENSION_VERSION} 업데이트가 필요합니다. 현재 설치된 확장 프로그램이 구버전이라 쿠팡 조회를 중단했습니다.`);
+        err.noQueue = true;
+        reject(err);
+        return;
+      }
       if (msg.ok) resolve(msg);
       else reject(new Error(msg.error || '확장 프로그램에서 조회를 시작하지 못했습니다.'));
     }
@@ -1957,6 +1964,64 @@ function requestExtensionFetch(competitors, fetchMode = currentFetchMode(), mark
       coupangMode: fetchMode === 'coupang_stock' ? 'stock' : (fetchMode === 'coupang_sales' ? 'sales' : currentCoupangMode())
     }, '*');
   });
+}
+
+function isCoupangFetchMode(fetchMode) {
+  return ['coupang_stock', 'coupang_sales', 'stock', 'sales'].includes(String(fetchMode || '').toLowerCase());
+}
+
+function parseVersionParts(version) {
+  return String(version || '').split('.').map(part => parseInt(part, 10) || 0);
+}
+
+function isExtensionVersionAtLeast(version, required) {
+  const current = parseVersionParts(version);
+  const target = parseVersionParts(required);
+  const length = Math.max(current.length, target.length);
+  for (let i = 0; i < length; i++) {
+    const a = current[i] || 0;
+    const b = target[i] || 0;
+    if (a > b) return true;
+    if (a < b) return false;
+  }
+  return true;
+}
+
+function getExtensionInfo(timeoutMs = 1200) {
+  return new Promise((resolve) => {
+    const requestId = `info-${Date.now()}-${++extensionRequestSeq}`;
+    const timer = setTimeout(() => {
+      window.removeEventListener('message', onMessage);
+      resolve(null);
+    }, timeoutMs);
+
+    function onMessage(event) {
+      if (event.source !== window) return;
+      const msg = event.data || {};
+      if (msg.source !== 'naver-monitor-extension' || msg.type !== 'EXTENSION_INFO' || msg.requestId !== requestId) return;
+      clearTimeout(timer);
+      window.removeEventListener('message', onMessage);
+      resolve(msg);
+    }
+
+    window.addEventListener('message', onMessage);
+    window.postMessage({
+      source: 'naver-monitor-dashboard',
+      type: 'GET_EXTENSION_INFO',
+      requestId
+    }, '*');
+  });
+}
+
+async function ensureCoupangExtensionVersion(fetchMode) {
+  if (!isCoupangFetchMode(fetchMode)) return;
+  const info = await getExtensionInfo();
+  if (!info || !isExtensionVersionAtLeast(info.version, REQUIRED_COUPANG_EXTENSION_VERSION)) {
+    const installed = info && info.version ? `현재 v${info.version}` : '현재 버전 확인 불가';
+    const err = new Error(`쿠팡 조회는 확장 프로그램 v${REQUIRED_COUPANG_EXTENSION_VERSION} 이상이 필요합니다. ${installed}라서 조회를 시작하지 않았습니다.`);
+    err.noQueue = true;
+    throw err;
+  }
 }
 
 function formatPlanDate(value) {
@@ -2055,6 +2120,7 @@ async function fetchAll() {
       showToast('조회할 경쟁사가 없습니다');
       return;
     }
+    await ensureCoupangExtensionVersion(fetchMode);
     try {
       beginPendingFetch(competitors, fetchMode, fetchMarket);
       await requestExtensionFetch(competitors, fetchMode, fetchMarket);
@@ -2062,6 +2128,10 @@ async function fetchAll() {
       showToast(`확장 프로그램에서 ${competitors.length}개 상품 ${fetchLabel}를 시작했습니다`);
     } catch (e) {
       clearPendingFetch();
+      if (e.noQueue) {
+        showToast(e.message);
+        return;
+      }
       const data = await queueFetchForExtension(null, fetchMode, fetchMarket);
       showToast(`확장 프로그램 업데이트/로그인 확인 필요 — ${data.count || 0}개 대기 등록됨`);
     }
@@ -2088,6 +2158,7 @@ async function fetchSingle(cid, name, forcedFetchMode = currentFetchMode(), forc
       openUpgradeModal('이 상품은 현재 플랜 한도 밖에 있습니다. 등록된 상품은 보존되지만, 무료 또는 만료 상태에서는 등록순 상위 상품만 조회할 수 있습니다.');
       return;
     }
+    await ensureCoupangExtensionVersion(fetchMode);
     try {
       beginPendingFetch([comp], fetchMode, fetchMarket);
       await requestExtensionFetch([comp], fetchMode, fetchMarket);
@@ -2095,6 +2166,10 @@ async function fetchSingle(cid, name, forcedFetchMode = currentFetchMode(), forc
       showToast(`${name} ${fetchLabel}를 시작했습니다`);
     } catch (e) {
       clearPendingFetch();
+      if (e.noQueue) {
+        showToast(e.message);
+        return;
+      }
       await queueFetchForExtension(cid, fetchMode, fetchMarket);
       showToast(`${name} 대기 등록됨 — 확장 프로그램 업데이트/로그인 확인 필요`);
     }
