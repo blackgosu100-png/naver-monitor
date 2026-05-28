@@ -1757,7 +1757,7 @@ async function runFetch(competitors, fetchMode) {
     ? 'stock'
     : normalizedFetchMode === 'coupang_sales' || normalizedFetchMode === 'sales'
       ? 'sales'
-      : 'all';
+      : 'stock';
 
   for (var i = 0; i < competitors.length; i++) {
     if (shouldStop()) { stopped = true; break; }
