@@ -1224,8 +1224,26 @@ def api_cookie():
 @login_required
 def api_ext_queue():
     body = request.get_json() or {}
+    ids = body.get('ids')
+    fetch_mode = body.get('fetchMode') or body.get('fetch_mode') or ''
+    if isinstance(ids, list):
+        competitors = db_get_competitors(g.user_id)
+        valid_ids = {comp['id'] for comp in competitors}
+        active_ids = active_competitor_ids_for_user(g.user, competitors)
+        target_ids = [
+            str(cid) for cid in ids
+            if str(cid) in valid_ids and str(cid) in active_ids
+        ]
+        queued_ids = db_get_ext_queue_ids(g.user_id)
+        for target_id in target_ids:
+            if target_id not in queued_ids:
+                queued_ids.append(target_id)
+        db_save_ext_queue_ids(g.user_id, queued_ids)
+        if normalize_ext_fetch_mode(fetch_mode):
+            db_save_ext_queue_fetch_mode(g.user_id, fetch_mode)
+        return jsonify({'ok': True, 'count': len(target_ids)})
     try:
-        queued = db_queue_competitors(g.user_id, body.get('id'), g.user, body.get('fetchMode') or body.get('fetch_mode') or '')
+        queued = db_queue_competitors(g.user_id, body.get('id'), g.user, fetch_mode)
     except ValueError as e:
         status = 403 if '현재 플랜' in str(e) else 404
         return jsonify({'error': str(e)}), status

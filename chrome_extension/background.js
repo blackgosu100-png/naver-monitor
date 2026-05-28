@@ -1498,6 +1498,17 @@ async function probeCoupangDeliveryByNavigation(tabId, identity, quantity) {
       lastError = e && e.message ? e.message : String(e);
     }
   }
+  if (
+    quantity > 1 &&
+    /(RET9999|HTTP 403|quantity-info API|system error|시스템 오류)/i.test(lastError)
+  ) {
+    return {
+      text: '__COUPANG_QUANTITY_LIMIT__',
+      type: 'QUANTITY_LIMIT',
+      speedType: 'BLOCKED',
+      logistics: false
+    };
+  }
   throw new Error(
     'quantity=' + quantity +
     ' failed (' + lastError + ', productId=' + identity.productId +
@@ -1591,6 +1602,26 @@ async function collectCoupangStockFromPage(comp, parsed) {
     for (var attempt = 0; attempt < 3; attempt++) {
       if (shouldStop()) return { ok: false, stopped: true, error: 'stopped by user' };
       if (attempt > 0) await new Promise(r => setTimeout(r, 2500));
+
+      try {
+        var direct = await chrome.scripting.executeScript({
+          target: { tabId },
+          world: 'MAIN',
+          func: readCoupangStockEstimate,
+          args: [
+            comp.url,
+            (parsed && parsed.pid) || '',
+            (parsed && parsed.itemId) || '',
+            (parsed && parsed.vendorItemId) || ''
+          ]
+        });
+        var directResult = direct && direct[0] && direct[0].result;
+        if (directResult && (directResult.ok || directResult.stopped)) return directResult;
+        if (directResult && directResult.error) last = directResult;
+      } catch(e) {
+        last = { ok: false, error: e && e.message ? e.message : String(e) };
+      }
+
       last = await waitForCoupangStock(tabId, comp, parsed);
       if (last && (last.ok || last.stopped)) return last;
       var msg = String((last && last.error) || '');
@@ -2317,6 +2348,190 @@ async function runFetch(competitors, fetchMode) {
   });
 }
 
+function normalizeSeparatedFetchMode(fetchMode, requestedMarket) {
+  var mode = String(fetchMode || '').toLowerCase();
+  var market = String(requestedMarket || '').toLowerCase();
+  if (mode === 'coupang_stock' || mode === 'stock' || market === 'coupang_stock') return 'coupang_stock';
+  if (mode === 'coupang_sales' || mode === 'sales' || market === 'coupang') return 'coupang_sales';
+  return '';
+}
+
+async function collectCoupangStockMetricOnly(comp, parsed, index, total, results) {
+  await setStatus({
+    running: true,
+    current: index + 1,
+    total: total,
+    name: comp.name,
+    msg: '\uCFE0\uD321 \uC7AC\uACE0\uC870\uD68C\uB9CC \uC2E4\uD589 \uC911...',
+    results
+  });
+
+  var stock = await collectCoupangStockFromPage(comp, parsed);
+  if (stock && stock.stopped) return stock;
+  if (!stock || !stock.ok) {
+    return { ok: false, error: (stock && stock.error) || 'Coupang stock data not found' };
+  }
+
+  var value = stock.stock != null ? Number(stock.stock) : null;
+  var options = [];
+  if (value !== null && Number.isFinite(value)) {
+    options.push({ name: '\uC7AC\uACE0 \uCD94\uC815', qty: value });
+    await setCachedCoupangMetric('stock', coupangStockCacheKey(parsed), {
+      ok: true,
+      stock: value,
+      options: options,
+      image_url: stock.image_url || ''
+    });
+  } else if (stock.overLimit) {
+    options.push({
+      name: '\uC7AC\uACE0 \uCD94\uC815 \uC624\uB958',
+      qty: null,
+      text: stock.reason || '5000\uAC1C \uC774\uC0C1 \uB610\uB294 \uBC30\uC1A1 \uACBD\uACC4 \uBBF8\uBC1C\uACAC'
+    });
+  }
+
+  return {
+    ok: true,
+    total: value,
+    options: options,
+    image_url: stock.image_url || ''
+  };
+}
+
+async function runFetchSeparated(competitors, fetchMode, requestedMarket) {
+  if (fetchRunning) return;
+  fetchRunning = true;
+  stopRequested = false;
+  currentFetchTabId = null;
+
+  var results = [];
+  var stopped = false;
+  var route = normalizeSeparatedFetchMode(fetchMode, requestedMarket);
+
+  try {
+    for (var i = 0; i < competitors.length; i++) {
+      if (shouldStop()) { stopped = true; break; }
+
+      var comp = competitors[i];
+      var market = detectMarket(comp.url);
+
+      if (route && market !== 'coupang') {
+        results.push({
+          id: comp.id,
+          name: comp.name,
+          error: '\uD604\uC7AC \uCFE0\uD321 \uD0ED \uC870\uD68C\uC5D0\uC11C \uC81C\uC678\uB41C \uC0C1\uD488\uC785\uB2C8\uB2E4'
+        });
+        continue;
+      }
+
+      var parsed = market === 'coupang'
+        ? parseCoupangUrl(comp.url)
+        : market === 'ohouse'
+          ? parseOhouseUrl(comp.url)
+          : parseNaverUrl(comp.url);
+
+      await setStatus({
+        running: true,
+        current: i + 1,
+        total: competitors.length,
+        name: comp.name,
+        msg: route === 'coupang_stock'
+          ? '\uCFE0\uD321 \uC7AC\uACE0\uC870\uD68C \uC911...'
+          : route === 'coupang_sales'
+            ? '\uCFE0\uD321 \uD310\uB9E4\uC9C0\uD45C \uC870\uD68C \uC911...'
+            : '\uC870\uD68C \uC911...',
+        results
+      });
+
+      if (!parsed) {
+        results.push({ id: comp.id, name: comp.name, error: 'URL \uD615\uC2DD \uC624\uB958' });
+        continue;
+      }
+
+      var tabId = null;
+      try {
+        var cr = null;
+        if (market === 'coupang') {
+          if (route === 'coupang_stock') {
+            cr = await collectCoupangStockMetricOnly(comp, parsed, i, competitors.length, results);
+          } else if (route === 'coupang_sales') {
+            cr = await collectCoupangSalesMetricsFromWingApi(comp, parsed, i, competitors.length, results);
+          } else {
+            cr = { ok: false, error: 'Coupang fetch mode missing' };
+          }
+        } else if (market === 'ohouse') {
+          cr = await readOhouseStock(parsed.pid);
+        } else {
+          tabId = await openTab(comp.url);
+          currentFetchTabId = tabId;
+          cr = await waitForCache(tabId, parsed.pid, async (msg) => {
+            await setStatus({ running: true, current: i + 1, total: competitors.length, name: comp.name, msg, results });
+          });
+        }
+
+        if (cr && cr.stopped) {
+          stopped = true;
+          break;
+        } else if (cr && cr.ok) {
+          results.push({
+            id: comp.id,
+            name: comp.name,
+            total: cr.total,
+            options: cr.options || [],
+            image_url: cr.image_url || '',
+            error: null,
+            fetched_at: new Date().toISOString()
+          });
+        } else {
+          results.push({ id: comp.id, name: comp.name, error: (cr && cr.error) || '\uB370\uC774\uD130 \uC5C6\uC74C' });
+        }
+      } catch(e) {
+        results.push({ id: comp.id, name: comp.name, error: e && e.message ? e.message : String(e) });
+      } finally {
+        if (tabId !== null) chrome.tabs.remove(tabId, () => {});
+        if (currentFetchTabId === tabId) currentFetchTabId = null;
+      }
+
+      if (shouldStop()) { stopped = true; break; }
+      if (i < competitors.length - 1) {
+        await new Promise(r => setTimeout(r, market === 'naver' ? 3000 : 900));
+      }
+    }
+
+    if (results.length) {
+      try {
+        await apiFetch('/api/stock-data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ results: results, fetchMode: route })
+        });
+      } catch(e) {}
+    }
+
+    var okCount = results.filter(r => !r.error).length;
+    var errItems = results.filter(r => r.error);
+    var msg = stopped
+      ? `STOP\uC73C\uB85C \uC911\uB2E8\uB428. \uC800\uC7A5\uB41C \uACB0\uACFC ${okCount}/${results.length} \uC131\uACF5`
+      : `\uC870\uD68C \uC644\uB8CC! ${okCount}/${results.length} \uC131\uACF5`;
+    if (errItems.length) msg += '\n\uC2E4\uD328: ' + errItems.map(r => r.name + '(' + r.error + ')').join(', ');
+
+    await setStatus({ running: false, done: !stopped, stopped, msg, results });
+  } finally {
+    fetchRunning = false;
+    stopRequested = false;
+    currentFetchTabId = null;
+  }
+
+  var state = await getAuthState();
+  chrome.tabs.query({ url: `${state.serverUrl}/*` }, (tabs) => {
+    tabs.forEach((tab) => {
+      chrome.tabs.sendMessage(tab.id, { type: 'HISTORY_UPDATED' }, () => {
+        void chrome.runtime.lastError;
+      });
+    });
+  });
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'START_FETCH') {
     (async () => {
@@ -2335,7 +2550,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return;
       }
       setStatus({ running: true, current: 0, total: competitors.length, msg: '시작 중...', results: [] });
-      runFetch(competitors, msg.fetchMode || msg.coupangMode || msg.mode || '');
+      runFetchSeparated(competitors, msg.fetchMode || msg.coupangMode || msg.mode || '', msg.market || '');
       sendResponse({ ok: true });
     })();
     return true;

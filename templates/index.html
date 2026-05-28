@@ -2015,8 +2015,11 @@ function requestExtensionStop() {
 }
 
 async function queueFetchForExtension(id = null, fetchMode = currentFetchMode()) {
-  const body = id ? {id} : {};
+  const body = id
+    ? {id}
+    : {ids: getFetchableDashboardCompetitors().map(comp => comp.id)};
   if (fetchMode) body.fetchMode = fetchMode;
+  body.market = currentMarket();
   const r = await fetch('/api/ext/queue', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
