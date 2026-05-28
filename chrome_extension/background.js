@@ -1206,6 +1206,21 @@ function readCoupangProductIdentity(productUrl, fallbackProductId, fallbackItemI
     return '';
   }
 
+  function escapeRegExp(value) {
+    return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  function findPairedVendorItemId(text, currentItemId) {
+    if (!currentItemId || !text) return '';
+    var item = escapeRegExp(currentItemId);
+    return firstMatch(text, [
+      new RegExp('itemId=' + item + '[^\\s"\'<>]{0,900}vendorItemId=(\\d{8,})', 'i'),
+      new RegExp('vendorItemId=(\\d{8,})[^\\s"\'<>]{0,900}itemId=' + item, 'i'),
+      new RegExp('"itemId"\\s*:\\s*"?' + item + '"?[\\s\\S]{0,1200}?"vendorItemId"\\s*:\\s*"?(\\d{8,})"?', 'i'),
+      new RegExp('\\\\"itemId\\\\"\\s*:\\s*\\\\"?' + item + '[\\s\\S]{0,1200}?\\\\"vendorItemId\\\\"\\s*:\\s*\\\\"?(\\d{8,})', 'i')
+    ]);
+  }
+
   function getImageUrl() {
     var meta = document.querySelector('meta[property="og:image"], meta[name="og:image"]');
     if (meta && meta.content) return meta.content;
@@ -1234,7 +1249,8 @@ function readCoupangProductIdentity(productUrl, fallbackProductId, fallbackItemI
       .replace(/&#x27;/g, "'")
       .replace(/&#39;/g, "'");
     var joined = [location.href || '', productUrl || '', html, decoded, entityDecoded].join('\n');
-    vendorItemId = firstMatch(joined, [
+    vendorItemId = findPairedVendorItemId(joined, itemId) || firstMatch(joined, [
+      /[?&]vendorItemId=(\d{8,})/i,
       /vendorItemId["'\\]*\s*[:=]\s*["'\\]*(\d{8,})/i,
       /vendorItemId=(\d{8,})/i,
       /\\"vendorItemId\\"\s*:\s*\\"?(\d{8,})/i,
@@ -1252,16 +1268,34 @@ function readCoupangProductIdentity(productUrl, fallbackProductId, fallbackItemI
     itemId: itemId || '',
     vendorItemId: vendorItemId || '',
     image_url: getImageUrl(),
-    url: location.href
+    url: location.href,
+    error: productId
+      ? (vendorItemId ? '' : 'vendorItemId not found in URL or product HTML')
+      : 'productId not found in product URL'
   };
 }
 
-function buildCoupangQuantityInfoUrl(productId, vendorItemId, quantity) {
+function buildCoupangQuantityInfoUrl(productId, vendorItemId, quantity, itemId, extended) {
   var url = new URL('https://www.coupang.com/next-api/products/quantity-info');
   url.searchParams.set('productId', productId);
   url.searchParams.set('vendorItemId', vendorItemId);
   url.searchParams.set('quantity', String(quantity));
+  if (extended) {
+    url.searchParams.set('deliveryToggle', 'true');
+    url.searchParams.set('landingProductId', productId);
+    url.searchParams.set('landingVendorItemId', vendorItemId);
+    if (itemId) {
+      url.searchParams.set('itemId', itemId);
+      url.searchParams.set('landingItemId', itemId);
+    }
+  }
   return url.toString();
+}
+
+function buildCoupangQuantityInfoUrls(productId, vendorItemId, quantity, itemId) {
+  var minimal = buildCoupangQuantityInfoUrl(productId, vendorItemId, quantity, itemId, false);
+  var extended = buildCoupangQuantityInfoUrl(productId, vendorItemId, quantity, itemId, true);
+  return minimal === extended ? [minimal] : [minimal, extended];
 }
 
 function waitForTabComplete(tabId, timeoutMs) {
@@ -1306,8 +1340,52 @@ async function navigateTabAndWait(tabId, url, timeoutMs) {
   await waiting;
 }
 
+async function ensureProductTabReady(tabId, productUrl, parsed) {
+  try {
+    var tab = await chrome.tabs.get(tabId);
+    var current = tab && tab.url ? tab.url : '';
+    var currentParsed = parseCoupangUrl(current);
+    if (!currentParsed || !parsed || currentParsed.pid !== parsed.pid) {
+      await navigateTabAndWait(tabId, productUrl, 30000);
+    }
+  } catch(e) {
+    await navigateTabAndWait(tabId, productUrl, 30000);
+  }
+  await new Promise(r => setTimeout(r, 3000));
+}
+
 function stripHtml(input) {
   return String(input || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+}
+
+function stableDeliveryValue(value) {
+  if (value == null) return value;
+  if (Array.isArray(value)) return value.map(stableDeliveryValue);
+  if (typeof value === 'object') {
+    var out = {};
+    Object.keys(value).sort().forEach(function(key) {
+      out[key] = stableDeliveryValue(value[key]);
+    });
+    return out;
+  }
+  return value;
+}
+
+function flattenDeliveryText(value) {
+  if (value == null) return '';
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return stripHtml(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map(flattenDeliveryText).filter(Boolean).join(' | ');
+  }
+  if (typeof value === 'object') {
+    return Object.keys(value).sort().map(function(key) {
+      var text = flattenDeliveryText(value[key]);
+      return text ? key + ':' + text : '';
+    }).filter(Boolean).join(' | ');
+  }
+  return '';
 }
 
 function normalizeDeliveryText(text) {
@@ -1318,21 +1396,58 @@ function normalizeDeliveryText(text) {
     .trim();
 }
 
+function scoreCoupangDeliveryNode(node) {
+  if (!node || typeof node !== 'object') return 0;
+  var score = 0;
+  if ('descriptions' in node) score += 3;
+  if ('type' in node) score += 2;
+  if ('speedType' in node) score += 2;
+  if ('logistics' in node) score += 1;
+  if (node.extraDataMap && 'decodeDescriptions' in node.extraDataMap) score += 4;
+  return score;
+}
+
+function findCoupangDeliveryNode(data) {
+  var seen = new Set();
+  var best = null;
+  var bestScore = 0;
+  function visit(node, depth) {
+    if (!node || typeof node !== 'object' || depth > 12 || seen.has(node)) return;
+    seen.add(node);
+    if (node.delivery && typeof node.delivery === 'object') {
+      var deliveryScore = scoreCoupangDeliveryNode(node.delivery);
+      if (deliveryScore > bestScore) {
+        best = node.delivery;
+        bestScore = deliveryScore;
+      }
+    }
+    var selfScore = scoreCoupangDeliveryNode(node);
+    if (selfScore > bestScore) {
+      best = node;
+      bestScore = selfScore;
+    }
+    Object.keys(node).forEach(function(key) {
+      visit(node[key], depth + 1);
+    });
+  }
+  visit(data, 0);
+  return bestScore >= 3 ? best : null;
+}
+
 function extractCoupangDeliveryState(response) {
-  var item = Array.isArray(response) ? response[0] : response;
-  var delivery = item && item.delivery;
+  var delivery = findCoupangDeliveryNode(response);
   if (!delivery) return null;
   return {
     text: normalizeDeliveryText(
       (delivery.extraDataMap && typeof delivery.extraDataMap.decodeDescriptions === 'string'
         ? delivery.extraDataMap.decodeDescriptions.trim()
         : '') ||
-      stripHtml(delivery.descriptions) ||
+      flattenDeliveryText(delivery.descriptions) ||
       null
     ),
     type: delivery.type == null ? null : delivery.type,
     speedType: delivery.speedType == null ? null : delivery.speedType,
-    logistics: typeof delivery.logistics === 'boolean' ? delivery.logistics : null
+    logistics: delivery.logistics == null ? null : stableDeliveryValue(delivery.logistics)
   };
 }
 
@@ -1341,7 +1456,7 @@ function sameCoupangDeliveryState(a, b) {
     a.text === b.text &&
     a.type === b.type &&
     a.speedType === b.speedType &&
-    a.logistics === b.logistics;
+    JSON.stringify(a.logistics) === JSON.stringify(b.logistics);
 }
 
 async function readJsonFromCurrentTab(tabId) {
@@ -1349,32 +1464,50 @@ async function readJsonFromCurrentTab(tabId) {
     target: { tabId },
     world: 'MAIN',
     func: function() {
+      var pre = document.querySelector('pre');
+      if (pre && pre.textContent) return pre.textContent;
       return document.body ? (document.body.innerText || document.body.textContent || '') : '';
     }
   });
   var text = res && res[0] && res[0].result;
   if (!text) throw new Error('quantity-info response is empty');
   try {
-    return JSON.parse(text);
+    var json = JSON.parse(text);
+    if (json && !Array.isArray(json) && typeof json === 'object' && (json.rCode || json.rMessage)) {
+      throw new Error('quantity-info API ' + [json.rCode, json.rMessage].filter(Boolean).join(': '));
+    }
+    return json;
   } catch(e) {
+    if (e && /^quantity-info API /.test(e.message || '')) throw e;
     throw new Error('quantity-info JSON parse failed: ' + String(text).slice(0, 160));
   }
 }
 
-async function probeCoupangDeliveryByNavigation(tabId, productId, vendorItemId, quantity) {
-  var apiUrl = buildCoupangQuantityInfoUrl(productId, vendorItemId, quantity);
-  await navigateTabAndWait(tabId, apiUrl, 30000);
-  await new Promise(r => setTimeout(r, 500));
-  var json = await readJsonFromCurrentTab(tabId);
-  var state = extractCoupangDeliveryState(json);
-  if (!state) throw new Error('quantity=' + quantity + ' delivery state not found');
-  return state;
+async function probeCoupangDeliveryByNavigation(tabId, identity, quantity) {
+  var urls = buildCoupangQuantityInfoUrls(identity.productId, identity.vendorItemId, quantity, identity.itemId);
+  var lastError = '';
+  for (var i = 0; i < urls.length; i++) {
+    try {
+      await navigateTabAndWait(tabId, urls[i], 30000);
+      await new Promise(r => setTimeout(r, 500));
+      var json = await readJsonFromCurrentTab(tabId);
+      var state = extractCoupangDeliveryState(json);
+      if (state) return state;
+      lastError = 'delivery state not found';
+    } catch(e) {
+      lastError = e && e.message ? e.message : String(e);
+    }
+  }
+  throw new Error(
+    'quantity=' + quantity +
+    ' failed (' + lastError + ', productId=' + identity.productId +
+    ', vendorItemId=' + identity.vendorItemId + ')'
+  );
 }
 
 async function waitForCoupangStock(tabId, comp, parsed) {
   try {
-    await navigateTabAndWait(tabId, (comp && comp.url) || '', 30000);
-    await new Promise(r => setTimeout(r, 3000));
+    await ensureProductTabReady(tabId, (comp && comp.url) || '', parsed);
 
     var res = await chrome.scripting.executeScript({
       target: { tabId },
@@ -1389,10 +1522,10 @@ async function waitForCoupangStock(tabId, comp, parsed) {
     });
     var identity = res && res[0] && res[0].result;
     if (!identity || !identity.ok) {
-      return { ok: false, error: 'productId or vendorItemId not found' };
+      return { ok: false, error: (identity && identity.error) || 'productId or vendorItemId not found' };
     }
 
-    var baseline = await probeCoupangDeliveryByNavigation(tabId, identity.productId, identity.vendorItemId, 1);
+    var baseline = await probeCoupangDeliveryByNavigation(tabId, identity, 1);
     var low = 1;
     var high = null;
     var probes = [100, 1000, 5000];
@@ -1400,7 +1533,7 @@ async function waitForCoupangStock(tabId, comp, parsed) {
     for (var i = 0; i < probes.length; i++) {
       if (shouldStop()) return { ok: false, stopped: true, error: 'stopped by user' };
       var q = probes[i];
-      var state = await probeCoupangDeliveryByNavigation(tabId, identity.productId, identity.vendorItemId, q);
+      var state = await probeCoupangDeliveryByNavigation(tabId, identity, q);
       if (sameCoupangDeliveryState(baseline, state)) {
         low = q;
       } else {
@@ -1426,7 +1559,7 @@ async function waitForCoupangStock(tabId, comp, parsed) {
     while (high - low > 1) {
       if (shouldStop()) return { ok: false, stopped: true, error: 'stopped by user' };
       var mid = Math.floor((low + high) / 2);
-      var midState = await probeCoupangDeliveryByNavigation(tabId, identity.productId, identity.vendorItemId, mid);
+      var midState = await probeCoupangDeliveryByNavigation(tabId, identity, mid);
       if (sameCoupangDeliveryState(baseline, midState)) {
         low = mid;
       } else {
@@ -1663,6 +1796,47 @@ async function runFetch(competitors, fetchMode) {
           await markCoupangPb(cacheKey, 'PB 브랜드 감지: 쿠팡 지표 조회 제외');
         }
 
+        if (coupangFetchMode === 'stock') {
+          var stockOnlyKey = coupangStockCacheKey(parsed);
+          var stockOnly = await getCachedCoupangMetric('stock', stockOnlyKey, COUPANG_STOCK_TTL);
+          if (!stockOnly) {
+            await setStatus({
+              running: true,
+              current: i + 1,
+              total: competitors.length,
+              name: comp.name,
+              msg: '\uCFE0\uD321 \uC8FC\uBB38 \uAC00\uB2A5 \uC7AC\uACE0 \uCD94\uC815 \uC911...',
+              results
+            });
+            stockOnly = await collectCoupangStockFromPage(comp, parsed);
+            if (stockOnly && stockOnly.ok && stockOnly.stock != null) await setCachedCoupangMetric('stock', stockOnlyKey, {
+              ok: true,
+              stock: Number(stockOnly.stock),
+              options: [{ name: '\uC7AC\uACE0 \uCD94\uC815', qty: Number(stockOnly.stock) }],
+              image_url: stockOnly.image_url || ''
+            });
+          }
+
+          if (stockOnly && stockOnly.stopped) {
+            cr = stockOnly;
+          } else if (stockOnly && stockOnly.ok) {
+            var stockOnlyValue = stockOnly.stock != null ? Number(stockOnly.stock) : null;
+            var stockOnlyOptions = [];
+            if (stockOnlyValue !== null && Number.isFinite(stockOnlyValue)) {
+              stockOnlyOptions.push({ name: '\uC7AC\uACE0 \uCD94\uC815', qty: stockOnlyValue });
+            } else if (stockOnly.overLimit) {
+              stockOnlyOptions.push({ name: '\uC7AC\uACE0 \uCD94\uC815 \uC624\uB958', qty: null, text: stockOnly.reason || '5000+ or delivery boundary not found' });
+            }
+            cr = {
+              ok: true,
+              total: stockOnlyValue,
+              options: stockOnlyOptions,
+              image_url: stockOnly.image_url || ''
+            };
+          } else {
+            cr = { ok: false, error: (stockOnly && stockOnly.error) || 'Coupang stock data not found' };
+          }
+        } else {
         var monthly = null;
         if (!wantsCoupangSales) {
           monthly = { ok: false, skipped: true, error: '' };
@@ -1786,6 +1960,7 @@ async function runFetch(competitors, fetchMode) {
           };
         } else {
           cr = { ok: false, error: (stock && stock.error) || (monthly && monthly.error) || (wing && wing.error) || 'Coupang data not found' };
+        }
         }
       } else if (market === 'ohouse') {
         cr = await readOhouseStock(parsed.pid);
