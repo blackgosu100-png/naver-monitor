@@ -950,10 +950,10 @@ async function readCoupangStockEstimate(productUrl, productId, itemId, vendorIte
     if (!currentItemId || !text) return '';
     var item = escapeRegExp(currentItemId);
     return firstMatch(text, [
-      new RegExp('itemId=' + item + '[^\\s"\'<>]{0,300}vendorItemId=(\\d+)'),
-      new RegExp('vendorItemId=(\\d+)[^\\s"\'<>]{0,300}itemId=' + item),
-      new RegExp('"itemId"\\s*:\\s*"?' + item + '"?[\\s\\S]{0,500}?"vendorItemId"\\s*:\\s*"?(\\d+)"?'),
-      new RegExp('\\\\"itemId\\\\"\\s*:\\s*\\\\"?' + item + '[\\s\\S]{0,500}?\\\\"vendorItemId\\\\"\\s*:\\s*\\\\"?(\\d+)')
+      new RegExp('itemId=' + item + '[^\\s"\'<>]{0,900}vendorItemId=(\\d+)'),
+      new RegExp('vendorItemId=(\\d+)[^\\s"\'<>]{0,900}itemId=' + item),
+      new RegExp('"itemId"\\s*:\\s*"?' + item + '"?[\\s\\S]{0,1200}?"vendorItemId"\\s*:\\s*"?(\\d+)"?'),
+      new RegExp('\\\\"itemId\\\\"\\s*:\\s*\\\\"?' + item + '[\\s\\S]{0,1200}?\\\\"vendorItemId\\\\"\\s*:\\s*\\\\"?(\\d+)')
     ]);
   }
 
@@ -962,7 +962,13 @@ async function readCoupangStockEstimate(productUrl, productId, itemId, vendorIte
     var html = document.documentElement ? document.documentElement.outerHTML || '' : '';
     var decoded = html;
     try { decoded = decodeURIComponent(html); } catch(e) {}
-    var joined = hrefs.join('\n') + '\n' + html + '\n' + decoded;
+    var entityDecoded = decoded
+      .replace(/&amp;/g, '&')
+      .replace(/&quot;/g, '"')
+      .replace(/&#34;/g, '"')
+      .replace(/&#x27;/g, "'")
+      .replace(/&#39;/g, "'");
+    var joined = hrefs.join('\n') + '\n' + html + '\n' + decoded + '\n' + entityDecoded;
     productId = productId || firstMatch(joined, [
       /coupang\.com\/(?:vp\/)?products\/(\d+)/,
       /"productId"\s*:\s*"?(\d+)"?/,
@@ -981,6 +987,8 @@ async function readCoupangStockEstimate(productUrl, productId, itemId, vendorIte
         /[?&]vendorItemId=(\d+)/,
         /"vendorItemId"\s*:\s*"?(\d+)"?/,
         /\\"vendorItemId\\"\s*:\s*\\"?(\d+)/,
+        /vendorItemId\\?["']?\s*[:=]\s*\\?["']?(\d+)/,
+        /vendor[_-]?item[_-]?id["'=:\s-]+(\d+)/i,
         /vendorItemId["'=:\s]+(\d+)/
       ]);
   }
@@ -1005,6 +1013,20 @@ async function readCoupangStockEstimate(productUrl, productId, itemId, vendorIte
     return value;
   }
 
+  function flattenDeliveryText(value) {
+    if (value == null) return '';
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      return String(value).replace(/\s+/g, ' ').trim();
+    }
+    if (Array.isArray(value)) return value.map(flattenDeliveryText).filter(Boolean).join('|');
+    if (typeof value === 'object') {
+      return Object.keys(value).sort().map(function(key) {
+        return key + ':' + flattenDeliveryText(value[key]);
+      }).filter(Boolean).join('|');
+    }
+    return '';
+  }
+
   function scoreDelivery(node) {
     if (!node || typeof node !== 'object') return 0;
     var score = 0;
@@ -1020,10 +1042,12 @@ async function readCoupangStockEstimate(productUrl, productId, itemId, vendorIte
     var seen = new Set();
     var best = null;
     var bestScore = 0;
+    var deliveryCandidates = [];
     function visit(node, depth) {
       if (!node || typeof node !== 'object' || depth > 12 || seen.has(node)) return;
       seen.add(node);
       if (node.delivery && typeof node.delivery === 'object') {
+        deliveryCandidates.push(node.delivery);
         var deliveryScore = scoreDelivery(node.delivery);
         if (deliveryScore > bestScore) {
           best = node.delivery;
@@ -1031,7 +1055,7 @@ async function readCoupangStockEstimate(productUrl, productId, itemId, vendorIte
         }
       }
       var selfScore = scoreDelivery(node);
-      if (selfScore > bestScore) {
+      if (!deliveryCandidates.length && selfScore > bestScore) {
         best = node;
         bestScore = selfScore;
       }
@@ -1040,6 +1064,10 @@ async function readCoupangStockEstimate(productUrl, productId, itemId, vendorIte
       });
     }
     visit(data, 0);
+    if (deliveryCandidates.length) {
+      deliveryCandidates.sort(function(a, b) { return scoreDelivery(b) - scoreDelivery(a); });
+      return deliveryCandidates[0];
+    }
     return bestScore >= 3 ? best : null;
   }
 
@@ -1047,11 +1075,11 @@ async function readCoupangStockEstimate(productUrl, productId, itemId, vendorIte
     var delivery = findDelivery(data);
     if (!delivery) return null;
     return {
-      decodeDescriptions: stable(delivery.extraDataMap && delivery.extraDataMap.decodeDescriptions),
-      descriptions: stable(delivery.descriptions),
+      decodeDescriptions: flattenDeliveryText(delivery.extraDataMap && delivery.extraDataMap.decodeDescriptions),
+      descriptions: flattenDeliveryText(delivery.descriptions),
       type: delivery.type || '',
       speedType: delivery.speedType || '',
-      logistics: delivery.logistics == null ? null : !!delivery.logistics
+      logistics: delivery.logistics == null ? null : stable(delivery.logistics)
     };
   }
 
@@ -1175,7 +1203,24 @@ async function collectCoupangStockFromPage(comp, parsed) {
   try {
     tabId = await openTab(comp.url, true);
     currentFetchTabId = tabId;
-    return await waitForCoupangStock(tabId, comp, parsed);
+    var last = null;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      if (shouldStop()) return { ok: false, stopped: true, error: '사용자 중지' };
+      await new Promise(r => setTimeout(r, attempt === 0 ? 1800 : 2500));
+      last = await waitForCoupangStock(tabId, comp, parsed);
+      if (last && (last.ok || last.stopped)) return last;
+      var msg = String((last && last.error) || '');
+      if (
+        msg.indexOf('identifiers not found') >= 0 ||
+        msg.indexOf('delivery state not found') >= 0 ||
+        msg.indexOf('HTTP 403') >= 0 ||
+        msg.indexOf('RET') >= 0
+      ) {
+        try { await chrome.tabs.reload(tabId); } catch(e) {}
+        await new Promise(r => setTimeout(r, 2500));
+      }
+    }
+    return last || { ok: false, error: 'Coupang stock result not found' };
   } catch(e) {
     return { ok: false, error: String(e) };
   } finally {
