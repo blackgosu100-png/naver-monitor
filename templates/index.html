@@ -639,7 +639,8 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
     <div class="nav-section-label">MARKET</div>
     <div class="nav-item nav-market active" id="nav-market-naver" onclick="setMarket('naver')">네이버</div>
     <div class="nav-item nav-market" id="nav-market-ohouse" onclick="setMarket('ohouse')">오늘의집</div>
-    <div class="nav-item nav-market" id="nav-market-coupang" onclick="setMarket('coupang')">쿠팡</div>
+    <div class="nav-item nav-market" id="nav-market-coupang" onclick="setMarket('coupang')">쿠팡 판매지표</div>
+    <div class="nav-item nav-market" id="nav-market-coupang-stock" onclick="setMarket('coupang_stock')">쿠팡 재고조회</div>
     <div class="nav-item" id="nav-settings" onclick="showView('settings')">
       <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="2.5"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41"/></svg>
       설정
@@ -884,9 +885,15 @@ const HISTORY_CACHE_KEY = 'naverMonitorHistoryCache:v1';
 const HISTORY_MODE_KEY = 'naverMonitorHistoryMode:v1';
 const TIME_RANGE_KEY = 'naverMonitorTimeRange:v1';
 const MARKET_KEY = 'naverMonitorMarket:v1';
-const COUPANG_MODE_KEY = 'naverMonitorCoupangMode:v1';
 const TIME_COLUMN_LIMIT = 10;
-const MARKET_LABELS = {naver:'네이버', ohouse:'오늘의집', coupang:'쿠팡'};
+const MARKETS = ['naver', 'ohouse', 'coupang', 'coupang_stock'];
+const MARKET_LABELS = {
+  naver: '네이버',
+  ohouse: '오늘의집',
+  coupang: '쿠팡 판매지표',
+  coupang_stock: '쿠팡 재고조회'
+};
+const COMPETITOR_MARKET_LABELS = {naver:'네이버', ohouse:'오늘의집', coupang:'쿠팡'};
 let accessToken = '';
 let appConfig = {};
 
@@ -1027,16 +1034,26 @@ function showAllTimeColumns() {
 }
 
 function currentCoupangMode() {
-  return localStorage.getItem(COUPANG_MODE_KEY) === 'stock' ? 'stock' : 'sales';
+  return currentMarket() === 'coupang_stock' ? 'stock' : 'sales';
+}
+
+function isCoupangMarket(market = currentMarket()) {
+  return market === 'coupang' || market === 'coupang_stock';
+}
+
+function isCoupangStockMarket(market = currentMarket()) {
+  return market === 'coupang_stock';
 }
 
 function currentFetchMode() {
-  if (currentMarket() !== 'coupang') return '';
-  return currentCoupangMode() === 'stock' ? 'coupang_stock' : 'coupang_sales';
+  const market = currentMarket();
+  if (market === 'coupang_stock') return 'coupang_stock';
+  if (market === 'coupang') return 'coupang_sales';
+  return '';
 }
 
 function syncCoupangModeButtons() {
-  const isCoupang = currentMarket() === 'coupang';
+  const isCoupang = false;
   const mode = currentCoupangMode();
   document.getElementById('coupang-mode-tabs')?.classList.toggle('visible', isCoupang);
   document.getElementById('coupang-mode-sales')?.classList.toggle('active', mode === 'sales');
@@ -1044,9 +1061,7 @@ function syncCoupangModeButtons() {
 }
 
 function setCoupangMode(mode) {
-  localStorage.setItem(COUPANG_MODE_KEY, mode === 'stock' ? 'stock' : 'sales');
-  syncMarketUI();
-  renderTable(historyData);
+  setMarket(mode === 'stock' ? 'coupang_stock' : 'coupang');
 }
 
 function syncHistoryModeButtons() {
@@ -1083,6 +1098,7 @@ function historyModeLabel() {
 }
 
 function isCoupangSalesDay(day) {
+  if (dayFetchMode(day) === 'coupang_stock') return false;
   return !!day && (
     day.error ||
     coupangMetricValue(day, 'views') !== null ||
@@ -1095,6 +1111,7 @@ function isCoupangSalesDay(day) {
 }
 
 function isCoupangStockDay(day) {
+  if (dayFetchMode(day) === 'coupang_sales') return false;
   return !!day && (
     day.error ||
     coupangMetricValue(day, 'stock') !== null ||
@@ -1105,13 +1122,13 @@ function isCoupangStockDay(day) {
 function isVisibleHistoryDay(comp, day) {
   if (!day) return false;
   if (competitorMarket(comp) !== 'coupang') return true;
-  return currentCoupangMode() === 'stock' ? isCoupangStockDay(day) : isCoupangSalesDay(day);
+  return isCoupangStockMarket() ? isCoupangStockDay(day) : isCoupangSalesDay(day);
 }
 
 function displayValueForDay(comp, day) {
   if (!day || day.error) return null;
   if (competitorMarket(comp) === 'coupang') {
-    return currentCoupangMode() === 'stock'
+    return isCoupangStockMarket()
       ? coupangMetricValue(day, 'stock')
       : coupangMetricValue(day, 'monthly');
   }
@@ -1119,7 +1136,7 @@ function displayValueForDay(comp, day) {
 }
 
 function metricDeltaForSortedDates(comp, sortedDates, index) {
-  if (competitorMarket(comp) !== 'coupang' || currentCoupangMode() !== 'stock') return null;
+  if (competitorMarket(comp) !== 'coupang') return null;
   const current = displayValueForDay(comp, comp.days[sortedDates[index]]);
   if (current === null) return null;
   for (let i = index + 1; i < sortedDates.length; i++) {
@@ -1154,7 +1171,7 @@ function toDailyHistory(data) {
 
       const total = displayValueForDay(comp, latest);
       const isCoupangDaily = competitorMarket(comp) === 'coupang';
-      const isCoupangStock = isCoupangDaily && currentCoupangMode() === 'stock';
+      const isCoupangStock = isCoupangDaily && isCoupangStockMarket();
       const sales = (total !== null && prevTotal !== null)
         ? (isCoupangDaily && !isCoupangStock ? total - prevTotal : prevTotal - total)
         : null;
@@ -1206,8 +1223,8 @@ function renderKPIs(data) {
 
   const sortedDates = [...dates].sort();
   const latestDate = sortedDates[sortedDates.length - 1];
-  const isCoupang = currentMarket() === 'coupang';
-  const isCoupangStock = isCoupang && currentCoupangMode() === 'stock';
+  const isCoupang = isCoupangMarket();
+  const isCoupangStock = isCoupangStockMarket();
 
   let totalSales = 0, restockCount = 0, errorCount = 0, successCount = 0;
   competitors.forEach(comp => {
@@ -1513,8 +1530,8 @@ function renderTable(data) {
 
   document.getElementById('monitor-count').textContent = `${label} 경쟁사 ${competitors.length}명`;
   document.getElementById('monitor-mode-label').textContent =
-    currentMarket() === 'coupang'
-      ? `${currentCoupangMode() === 'stock' ? '재고 추정' : '판매 지표'} · ${historyModeLabel()}`
+    isCoupangMarket()
+      ? `${isCoupangStockMarket() ? '재고 조회' : '판매 지표'} · ${historyModeLabel()}`
       : historyModeLabel();
   renderKPIs(data);
 
@@ -1584,7 +1601,7 @@ function renderTable(data) {
         const totalStr = total !== null ? total.toLocaleString() : '—';
         let deltaHtml = '';
         const isCoupangRow = competitorMarket(comp) === 'coupang';
-        const isCoupangStock = isCoupangRow && currentCoupangMode() === 'stock';
+        const isCoupangStock = isCoupangRow && isCoupangStockMarket();
         if (sales !== null && sales > 0 && isCoupangRow && !isCoupangStock) {
           deltaHtml = `<div class="d-delta" style="color:#2563EB">[+${sales.toLocaleString()}]</div>`;
         } else if (sales !== null && sales > 0) {
@@ -1599,7 +1616,7 @@ function renderTable(data) {
     });
 
     const canFetch = isCompetitorFetchAllowed(comp.id);
-    const singleFetchLabel = competitorMarket(comp) === 'coupang' && currentCoupangMode() === 'stock' ? '재고추정' : '선택상품조회';
+    const singleFetchLabel = competitorMarket(comp) === 'coupang' && isCoupangStockMarket() ? '재고조회' : '선택상품조회';
     html += `<div class="m-action" onclick="event.stopPropagation()">
       <button class="btn btn-sm ${canFetch ? '' : 'btn-primary'}" onclick="fetchSingle('${comp.id}','${escHtml(comp.name)}')" title="${canFetch ? '이 상품만 조회' : '현재 플랜 한도 밖 상품입니다'}">${canFetch ? singleFetchLabel : '연장/업그레이드'}</button>
     </div></div>`;
@@ -1695,6 +1712,12 @@ function getCoupangOptionValue(day, aliases) {
   return Number.isFinite(value) ? value : null;
 }
 
+function dayFetchMode(day) {
+  if (!day || !Array.isArray(day.options)) return '';
+  const opt = day.options.find(o => o.name === '__fetch_mode');
+  return opt && opt.text ? String(opt.text) : '';
+}
+
 function coupangMetricValue(day, metric) {
   if (!day || day.error) return null;
   if (metric === 'stock') {
@@ -1739,7 +1762,7 @@ function formatCoupangMetric(value, metric) {
 }
 
 function renderCoupangMetricsDetailGrid(comp, sortedDates, colTpl) {
-  const rows = currentCoupangMode() === 'stock'
+  const rows = isCoupangStockMarket()
     ? [{ key: 'stock', label: '재고 추정' }]
     : [
       { key: 'views', label: '조회수' },
@@ -1755,7 +1778,7 @@ function renderCoupangMetricsDetailGrid(comp, sortedDates, colTpl) {
     });
   });
   if (!hasData) {
-    return `<div style="color:var(--text3);font-size:12px;padding:12px 20px">${currentCoupangMode() === 'stock' ? '쿠팡 재고 추정 데이터 없음' : '쿠팡 판매 지표 데이터 없음'}</div>`;
+    return `<div style="color:var(--text3);font-size:12px;padding:12px 20px">${isCoupangStockMarket() ? '쿠팡 재고 조회 데이터 없음' : '쿠팡 판매 지표 데이터 없음'}</div>`;
   }
 
   let html = '';
@@ -1805,7 +1828,7 @@ function toggleExpand(cid) {
 // ─── Fetch ───────────────────────────────────────────────────
 function getDashboardCompetitors() {
   return ((historyData && historyData.competitors) || [])
-    .filter(comp => competitorMarket(comp) === currentMarket())
+    .filter(comp => isCompInCurrentMarket(comp))
     .map(comp => ({ id: comp.id, name: comp.name, url: comp.url }))
     .filter(comp => comp.id && comp.url);
 }
@@ -1815,27 +1838,28 @@ function syncMarketUI() {
   document.getElementById('nav-market-naver')?.classList.toggle('active', market === 'naver');
   document.getElementById('nav-market-ohouse')?.classList.toggle('active', market === 'ohouse');
   document.getElementById('nav-market-coupang')?.classList.toggle('active', market === 'coupang');
+  document.getElementById('nav-market-coupang-stock')?.classList.toggle('active', market === 'coupang_stock');
   syncCoupangModeButtons();
   const title = document.querySelector('#view-dashboard .topbar-title');
-  if (title) title.textContent = market === 'coupang'
-    ? (currentCoupangMode() === 'stock' ? '쿠팡 재고 추정 현황' : '쿠팡 판매 지표 현황')
+  if (title) title.textContent = isCoupangMarket(market)
+    ? (isCoupangStockMarket(market) ? '쿠팡 재고조회 현황' : '쿠팡 판매지표 현황')
     : `${marketLabel()} 재고 현황`;
   const fetchBtnLabel = document.getElementById('fetch-btn-label');
   if (fetchBtnLabel) {
-    fetchBtnLabel.textContent = market === 'coupang' && currentCoupangMode() === 'stock' ? '재고 추정' : '전체 조회';
+    fetchBtnLabel.textContent = isCoupangStockMarket(market) ? '재고 조회' : '전체 조회';
   }
   const urlInput = document.getElementById('new-comp-url');
   if (urlInput) {
     urlInput.placeholder = market === 'ohouse'
       ? '오늘의집 상품 URL (https://store.ohou.se/goods/...)'
-      : market === 'coupang'
+      : isCoupangMarket(market)
         ? '쿠팡 상품 URL (https://www.coupang.com/vp/products/...)'
         : '스마트스토어 상품 URL (https://smartstore.naver.com/...)';
   }
 }
 
 function setMarket(market) {
-  localStorage.setItem(MARKET_KEY, ['ohouse', 'coupang'].includes(market) ? market : 'naver');
+  localStorage.setItem(MARKET_KEY, MARKETS.includes(market) ? market : 'naver');
   showView('dashboard');
   syncMarketUI();
   renderCompList(appConfig.competitors || []);
@@ -1854,15 +1878,22 @@ function competitorMarket(comp) {
 
 function currentMarket() {
   const market = localStorage.getItem(MARKET_KEY);
-  return ['naver', 'ohouse', 'coupang'].includes(market) ? market : 'naver';
+  return MARKETS.includes(market) ? market : 'naver';
 }
 
 function marketLabel() {
   return MARKET_LABELS[currentMarket()] || '네이버';
 }
 
+function isCompInCurrentMarket(comp) {
+  const market = currentMarket();
+  const compMarket = competitorMarket(comp);
+  if (isCoupangMarket(market)) return compMarket === 'coupang';
+  return compMarket === market;
+}
+
 function filterByCurrentMarket(competitors) {
-  return (competitors || []).filter(comp => competitorMarket(comp) === currentMarket());
+  return (competitors || []).filter(isCompInCurrentMarket);
 }
 
 function getActiveCompetitorIdSet() {
@@ -2006,7 +2037,7 @@ async function stopFetch() {
 }
 
 async function fetchAll() {
-  const fetchLabel = currentMarket() === 'coupang' && currentCoupangMode() === 'stock' ? '재고 추정' : '전체 조회';
+  const fetchLabel = isCoupangStockMarket() ? '재고 조회' : '전체 조회';
   const fetchMode = currentFetchMode();
   showLoading(`크롬 확장 프로그램에 ${fetchLabel} 요청 중...`);
   const btn = document.getElementById('fetch-btn');
@@ -2036,7 +2067,7 @@ async function fetchAll() {
 }
 
 async function fetchSingle(cid, name) {
-  const fetchLabel = currentMarket() === 'coupang' && currentCoupangMode() === 'stock' ? '재고 추정' : '재고 조회';
+  const fetchLabel = isCoupangStockMarket() ? '재고 조회' : '선택상품조회';
   const fetchMode = currentFetchMode();
   showLoading(`${name} ${fetchLabel} 요청 중...`);
   try {
@@ -2152,7 +2183,7 @@ function renderCompList(competitors) {
   }
   el.innerHTML = competitors.map(c => {
     const canFetch = isCompetitorFetchAllowed(c.id);
-    const marketName = MARKET_LABELS[competitorMarket(c)] || '네이버';
+    const marketName = COMPETITOR_MARKET_LABELS[competitorMarket(c)] || '네이버';
     return `
     <div class="comp-list-item" id="cli-${c.id}">
       ${productThumb(c)}

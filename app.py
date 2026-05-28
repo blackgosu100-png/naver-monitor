@@ -565,7 +565,7 @@ def active_competitor_ids_for_user(user: dict, competitors: list | None = None) 
 
 def _stock_snapshot(now: datetime | None = None) -> tuple[str, str]:
     dt = (now or datetime.now(KST)).astimezone(KST)
-    return dt.date().isoformat(), dt.strftime('%Y-%m-%d %H:%M')
+    return dt.date().isoformat(), dt.strftime('%Y-%m-%d %H:%M:%S')
 
 def db_save_stock(user_id: str, cid: str, fetch_date: str, result: dict, fetch_key: str | None = None):
     image_url = (result.get('image_url') or '').strip()
@@ -1285,7 +1285,9 @@ def api_public_queue_delete():
 def api_stock_data():
     body = request.get_json() or {}
     results = body.get('results', [])
+    fetch_mode = normalize_ext_fetch_mode(body.get('fetchMode') or body.get('fetch_mode') or '')
     active_ids = active_competitor_ids_for_user(g.user)
+    competitors_by_id = {comp.get('id'): comp for comp in db_get_competitors(g.user_id)}
     fetch_date, fetch_key = _stock_snapshot()
     for r in results:
         cid = r.get('id')
@@ -1294,9 +1296,14 @@ def api_stock_data():
         image_url = (r.get('image_url') or '').strip()
         if image_url:
             sb_update('competitors', {'image_url': image_url}, 'id', cid, f'&user_id=eq.{g.user_id}')
+        options = r.get('options') or []
+        comp = competitors_by_id.get(cid) or {}
+        if fetch_mode and competitor_market(comp.get('url') or '') == 'coupang':
+            options = [opt for opt in options if opt.get('name') != '__fetch_mode']
+            options.append({'name': '__fetch_mode', 'text': fetch_mode})
         db_save_stock(g.user_id, cid, fetch_date, {
             'total':      r.get('total'),
-            'options':    r.get('options', []),
+            'options':    options,
             'error':      r.get('error'),
             'fetched_at': r.get('fetched_at', datetime.now().isoformat()),
         }, fetch_key)

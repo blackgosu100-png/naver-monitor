@@ -2291,7 +2291,7 @@ async function runFetch(competitors, fetchMode) {
       await apiFetch('/api/stock-data', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ results })
+        body: JSON.stringify({ results, fetchMode: coupangFetchMode === 'stock' ? 'coupang_stock' : (coupangFetchMode === 'sales' ? 'coupang_sales' : '') })
       });
     } catch(e) {}
   }

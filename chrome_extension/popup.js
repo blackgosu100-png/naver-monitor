@@ -261,7 +261,7 @@ async function checkAndProcessQueue() {
     await apiFetch('/api/stock-data', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ results: results })
+      body: JSON.stringify({ results: results, fetchMode: fetchMode })
     });
 
     await apiFetch('/api/public/queue', {
