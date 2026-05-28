@@ -1418,12 +1418,12 @@ function refreshHistoryFromExtension() {
   }, 250);
 }
 
-function beginPendingFetch(competitors) {
+function beginPendingFetch(competitors, fetchMode = currentFetchMode(), market = currentMarket()) {
   pendingFetch = {
     key: currentMinuteKey(),
     ids: new Set((competitors || []).map(comp => comp.id)),
-    market: currentMarket(),
-    fetchMode: currentFetchMode()
+    market,
+    fetchMode
   };
   renderTable(historyData);
 }
@@ -1616,9 +1616,12 @@ function renderTable(data) {
     });
 
     const canFetch = isCompetitorFetchAllowed(comp.id);
-    const singleFetchLabel = competitorMarket(comp) === 'coupang' && isCoupangStockMarket() ? '재고조회' : '선택상품조회';
+    const isCoupangRow = competitorMarket(comp) === 'coupang';
+    const singleFetchMode = isCoupangRow ? (isCoupangStockMarket() ? 'coupang_stock' : 'coupang_sales') : currentFetchMode();
+    const singleFetchMarket = singleFetchMode === 'coupang_stock' ? 'coupang_stock' : (singleFetchMode === 'coupang_sales' ? 'coupang' : currentMarket());
+    const singleFetchLabel = isCoupangRow && singleFetchMode === 'coupang_stock' ? '재고조회' : '선택상품조회';
     html += `<div class="m-action" onclick="event.stopPropagation()">
-      <button class="btn btn-sm ${canFetch ? '' : 'btn-primary'}" onclick="fetchSingle('${comp.id}','${escHtml(comp.name)}')" title="${canFetch ? '이 상품만 조회' : '현재 플랜 한도 밖 상품입니다'}">${canFetch ? singleFetchLabel : '연장/업그레이드'}</button>
+      <button class="btn btn-sm ${canFetch ? '' : 'btn-primary'}" onclick="fetchSingle('${comp.id}','${escHtml(comp.name)}','${singleFetchMode}','${singleFetchMarket}')" title="${canFetch ? '이 상품만 조회' : '현재 플랜 한도 밖 상품입니다'}">${canFetch ? singleFetchLabel : '연장/업그레이드'}</button>
     </div></div>`;
 
     html += `<div class="m-detail${isExpanded ? ' open' : ''}" id="opt-${comp.id}">${
@@ -1918,7 +1921,7 @@ function getFetchableDashboardCompetitors() {
   return getDashboardCompetitors().filter(comp => activeIds.size === 0 || activeIds.has(comp.id));
 }
 
-function requestExtensionFetch(competitors, fetchMode = currentFetchMode()) {
+function requestExtensionFetch(competitors, fetchMode = currentFetchMode(), market = currentMarket()) {
   return new Promise((resolve, reject) => {
     const requestId = `fetch-${Date.now()}-${++extensionRequestSeq}`;
     const auth = {
@@ -1950,8 +1953,8 @@ function requestExtensionFetch(competitors, fetchMode = currentFetchMode()) {
       auth,
       competitors,
       fetchMode,
-      market: currentMarket(),
-      coupangMode: currentCoupangMode()
+      market,
+      coupangMode: fetchMode === 'coupang_stock' ? 'stock' : (fetchMode === 'coupang_sales' ? 'sales' : currentCoupangMode())
     }, '*');
   });
 }
@@ -2014,12 +2017,12 @@ function requestExtensionStop() {
   });
 }
 
-async function queueFetchForExtension(id = null, fetchMode = currentFetchMode()) {
+async function queueFetchForExtension(id = null, fetchMode = currentFetchMode(), market = currentMarket()) {
   const body = id
     ? {id}
     : {ids: getFetchableDashboardCompetitors().map(comp => comp.id)};
   if (fetchMode) body.fetchMode = fetchMode;
-  body.market = currentMarket();
+  body.market = market;
   const r = await fetch('/api/ext/queue', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -2042,6 +2045,7 @@ async function stopFetch() {
 async function fetchAll() {
   const fetchLabel = isCoupangStockMarket() ? '재고 조회' : '전체 조회';
   const fetchMode = currentFetchMode();
+  const fetchMarket = currentMarket();
   showLoading(`크롬 확장 프로그램에 ${fetchLabel} 요청 중...`);
   const btn = document.getElementById('fetch-btn');
   btn.disabled = true;
@@ -2052,13 +2056,13 @@ async function fetchAll() {
       return;
     }
     try {
-      beginPendingFetch(competitors);
-      await requestExtensionFetch(competitors, fetchMode);
+      beginPendingFetch(competitors, fetchMode, fetchMarket);
+      await requestExtensionFetch(competitors, fetchMode, fetchMarket);
       startHistoryAutoRefresh(competitors.length);
       showToast(`확장 프로그램에서 ${competitors.length}개 상품 ${fetchLabel}를 시작했습니다`);
     } catch (e) {
       clearPendingFetch();
-      const data = await queueFetchForExtension(null, fetchMode);
+      const data = await queueFetchForExtension(null, fetchMode, fetchMarket);
       showToast(`확장 프로그램 업데이트/로그인 확인 필요 — ${data.count || 0}개 대기 등록됨`);
     }
   } catch (e) {
@@ -2069,9 +2073,10 @@ async function fetchAll() {
   }
 }
 
-async function fetchSingle(cid, name) {
-  const fetchLabel = isCoupangStockMarket() ? '재고 조회' : '선택상품조회';
-  const fetchMode = currentFetchMode();
+async function fetchSingle(cid, name, forcedFetchMode = currentFetchMode(), forcedMarket = currentMarket()) {
+  const fetchMode = forcedFetchMode || currentFetchMode();
+  const fetchMarket = forcedMarket || currentMarket();
+  const fetchLabel = fetchMode === 'coupang_stock' ? '재고 조회' : '선택상품조회';
   showLoading(`${name} ${fetchLabel} 요청 중...`);
   try {
     const comp = getDashboardCompetitors().find(item => item.id === cid);
@@ -2084,13 +2089,13 @@ async function fetchSingle(cid, name) {
       return;
     }
     try {
-      beginPendingFetch([comp]);
-      await requestExtensionFetch([comp], fetchMode);
+      beginPendingFetch([comp], fetchMode, fetchMarket);
+      await requestExtensionFetch([comp], fetchMode, fetchMarket);
       startHistoryAutoRefresh(1);
       showToast(`${name} ${fetchLabel}를 시작했습니다`);
     } catch (e) {
       clearPendingFetch();
-      await queueFetchForExtension(cid, fetchMode);
+      await queueFetchForExtension(cid, fetchMode, fetchMarket);
       showToast(`${name} 대기 등록됨 — 확장 프로그램 업데이트/로그인 확인 필요`);
     }
   } catch (e) {
