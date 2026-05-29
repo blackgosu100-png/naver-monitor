@@ -8,6 +8,17 @@ function showMsg(id, text, cls) {
 
 var DEFAULT_SERVER = 'https://naver-monitor-production.up.railway.app';
 
+function syncPopupVersion() {
+  var el = document.getElementById('extension-version');
+  if (!el) return;
+  try {
+    var manifest = chrome.runtime.getManifest();
+    el.textContent = 'v' + (manifest && manifest.version ? manifest.version : '-');
+  } catch (e) {
+    el.textContent = 'v-';
+  }
+}
+
 function normalizeServerUrl(url) {
   var value = (url || DEFAULT_SERVER).replace(/\/$/, '');
   if (value === 'http://localhost:5000' || value === 'http://localhost:5001') {
@@ -359,6 +370,7 @@ async function initializePopup() {
   }
 }
 
+syncPopupVersion();
 initializePopup();
 
 document.getElementById('open-dashboard-btn-main').addEventListener('click', function() {
