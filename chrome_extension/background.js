@@ -1621,6 +1621,137 @@ function sameCoupangDeliveryState(a, b) {
     JSON.stringify(a.logistics) === JSON.stringify(b.logistics);
 }
 
+function buildCoupangQuantityInfoBackgroundUrl(productId, vendorItemId, quantity) {
+  var url = new URL('https://www.coupang.com/next-api/products/quantity-info');
+  url.searchParams.set('productId', String(productId || ''));
+  url.searchParams.set('vendorItemId', String(vendorItemId || ''));
+  url.searchParams.set('quantity', String(quantity || 1));
+  return url.toString();
+}
+
+async function fetchCoupangQuantityInfoBackground(productId, vendorItemId, quantity, productUrl) {
+  var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  var timer = controller ? setTimeout(function() { controller.abort(); }, 2500) : null;
+  try {
+    var res = await fetch(buildCoupangQuantityInfoBackgroundUrl(productId, vendorItemId, quantity), {
+      credentials: 'include',
+      cache: 'no-store',
+      referrer: productUrl || 'https://www.coupang.com/',
+      referrerPolicy: 'strict-origin-when-cross-origin',
+      signal: controller ? controller.signal : undefined,
+      headers: {
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7'
+      }
+    });
+    if (!res.ok) throw new Error('background quantity-info HTTP ' + res.status);
+    return await res.json();
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function estimateCoupangStockInBackground(comp, parsed) {
+  if (!parsed || !parsed.pid || !parsed.vendorItemId) {
+    return { ok: false, error: 'background direct requires vendorItemId' };
+  }
+
+  var productId = parsed.pid;
+  var vendorItemId = parsed.vendorItemId;
+  var productUrl = (comp && comp.url) || '';
+  var probeCache = {};
+
+  async function probeState(quantity, waitBefore) {
+    quantity = Math.max(1, Math.floor(Number(quantity) || 1));
+    var cacheKey = String(quantity);
+    if (Object.prototype.hasOwnProperty.call(probeCache, cacheKey)) return probeCache[cacheKey];
+    if (waitBefore) await delay(120);
+    var data = await fetchCoupangQuantityInfoBackground(productId, vendorItemId, quantity, productUrl);
+    var state = extractCoupangDeliveryState(data);
+    probeCache[cacheKey] = state;
+    return state;
+  }
+
+  try {
+    var baseline = await probeState(1, false);
+    if (!baseline) return { ok: false, error: 'background delivery state not found' };
+
+    var low = 1;
+    var high = null;
+    var maxQuantity = 50000;
+
+    async function applyProbe(quantity) {
+      var state = await probeState(quantity, true);
+      if (sameCoupangDeliveryState(baseline, state)) {
+        low = Math.max(low, quantity);
+        return false;
+      }
+      high = high == null ? quantity : Math.min(high, quantity);
+      return true;
+    }
+
+    var expected = Number(comp && comp.expectedStock);
+    if (Number.isFinite(expected) && expected > 1) {
+      expected = Math.min(maxQuantity, Math.max(2, Math.floor(expected)));
+      var expectedState = await probeState(expected, true);
+      if (sameCoupangDeliveryState(baseline, expectedState)) {
+        low = expected;
+        var next = Math.min(maxQuantity, expected + 1);
+        if (next > low) await applyProbe(next);
+      } else {
+        high = expected;
+        var prev = expected - 1;
+        if (prev > 1) {
+          var prevState = await probeState(prev, true);
+          if (sameCoupangDeliveryState(baseline, prevState)) low = prev;
+          else high = Math.min(high, prev);
+        }
+      }
+    }
+
+    var probes = [100, 1000, 5000];
+    if (high == null) {
+      for (var i = 0; i < probes.length; i++) {
+        var q = probes[i];
+        if (q <= low) continue;
+        if (await applyProbe(q)) break;
+      }
+    }
+
+    if (high == null) {
+      return {
+        ok: true,
+        stock: null,
+        overLimit: true,
+        reason: '5000+ or delivery boundary not found',
+        image_url: '',
+        productId: productId,
+        vendorItemId: vendorItemId,
+        backgroundDirect: true
+      };
+    }
+
+    while (high - low > 1) {
+      var mid = Math.floor((low + high) / 2);
+      var midState = await probeState(mid, true);
+      if (sameCoupangDeliveryState(baseline, midState)) low = mid;
+      else high = mid;
+    }
+
+    return {
+      ok: true,
+      stock: low,
+      options: [{ name: '\uC7AC\uACE0 \uCD94\uC815', qty: low }],
+      image_url: '',
+      productId: productId,
+      vendorItemId: vendorItemId,
+      backgroundDirect: true
+    };
+  } catch(e) {
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+}
+
 async function readJsonFromCurrentTab(tabId) {
   var res = await chrome.scripting.executeScript({
     target: { tabId },
@@ -2554,7 +2685,26 @@ async function collectCoupangStockMetricOnly(comp, parsed, index, total, results
     } catch(e) {}
   }
 
-  var stock = await collectCoupangStockFromPage(comp, parsed, requestContext);
+  await setStatus({
+    running: true,
+    current: index + 1,
+    total: total,
+    name: comp.name,
+    msg: '\uCFE0\uD321 \uC7AC\uACE0\uC870\uD68C \uBE60\uB978 \uACBD\uB85C \uD655\uC778 \uC911...',
+    results
+  });
+  var stock = await estimateCoupangStockInBackground(comp, parsed);
+  if (!stock || !stock.ok) {
+    await setStatus({
+      running: true,
+      current: index + 1,
+      total: total,
+      name: comp.name,
+      msg: '\uCFE0\uD321 \uBE0C\uB77C\uC6B0\uC800 \uC138\uC158\uC73C\uB85C \uC7AC\uACE0\uC870\uD68C \uC911...',
+      results
+    });
+    stock = await collectCoupangStockFromPage(comp, parsed, requestContext);
+  }
   if (stock && stock.stopped) return stock;
   if (!stock || !stock.ok) {
     return { ok: false, error: (stock && stock.error) || 'Coupang stock data not found' };
