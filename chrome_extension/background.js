@@ -658,6 +658,10 @@ function scheduleFocusSourceTab(options, delayMs) {
   }, delayMs || 500);
 }
 
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 async function openTab(url, active, options) {
   if (active === undefined) active = true;
   options = options || {};
@@ -743,6 +747,65 @@ async function openTab(url, active, options) {
       finishWithTab(tab);
     });
   });
+}
+
+async function openPopupTabQuick(url, options) {
+  options = options || {};
+  return new Promise((resolve, reject) => {
+    chrome.windows.create({
+      url,
+      type: 'popup',
+      focused: true,
+      width: options.width || 430,
+      height: options.height || 720,
+      left: options.left == null ? 0 : options.left,
+      top: options.top == null ? 0 : options.top
+    }, (win) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      var tab = win && win.tabs && win.tabs[0];
+      if (!tab || tab.id == null) {
+        reject(new Error('tab create failed'));
+        return;
+      }
+      currentFetchTabId = tab.id;
+      scheduleFocusSourceTab(options, options.focusBackDelayMs || 650);
+      resolve(tab.id);
+    });
+  });
+}
+
+async function waitForTabScriptReady(tabId, timeoutMs) {
+  var start = Date.now();
+  var lastError = '';
+  while (Date.now() - start < (timeoutMs || 7000)) {
+    if (shouldStop()) throw new Error('stopped by user');
+    try {
+      var res = await chrome.scripting.executeScript({
+        target: { tabId },
+        world: 'MAIN',
+        func: function() {
+          return {
+            href: location.href || '',
+            readyState: document.readyState || '',
+            htmlLength: document.documentElement ? (document.documentElement.outerHTML || '').length : 0
+          };
+        }
+      });
+      var info = res && res[0] && res[0].result;
+      var href = info && info.href ? String(info.href) : '';
+      if (/coupang\.com\/.*\/products\//i.test(href) && info && info.readyState !== 'loading') {
+        return info;
+      }
+      lastError = href || 'waiting for coupang page';
+    } catch(e) {
+      lastError = e && e.message ? e.message : String(e);
+    }
+    await delay(250);
+  }
+  throw new Error('Coupang page script readiness timeout: ' + lastError);
 }
 
 async function waitForCache(tabId, pid, onStatus) {
@@ -1642,7 +1705,7 @@ async function waitForCoupangStock(tabId, comp, parsed) {
 async function collectCoupangStockFromPage(comp, parsed, requestContext) {
   var tabId = null;
   try {
-    tabId = await openTab(comp.url, true, {
+    tabId = await openPopupTabQuick(comp.url, {
       popupWindow: true,
       width: 430,
       height: 720,
@@ -1651,11 +1714,12 @@ async function collectCoupangStockFromPage(comp, parsed, requestContext) {
       returnFocusTabId: requestContext && requestContext.dashboardTabId,
       returnFocusWindowId: requestContext && requestContext.dashboardWindowId
     });
+    await waitForTabScriptReady(tabId, 7000);
     currentFetchTabId = tabId;
     var last = null;
     for (var attempt = 0; attempt < 3; attempt++) {
       if (shouldStop()) return { ok: false, stopped: true, error: 'stopped by user' };
-      if (attempt > 0) await new Promise(r => setTimeout(r, 2500));
+      if (attempt > 0) await delay(1200);
 
       try {
         var direct = await chrome.scripting.executeScript({
@@ -1677,6 +1741,11 @@ async function collectCoupangStockFromPage(comp, parsed, requestContext) {
         last = { ok: false, error: e && e.message ? e.message : String(e) };
       }
 
+      if (attempt === 0 && last && /identifiers not found|delivery state not found/i.test(String(last.error || ''))) {
+        await delay(1000);
+        continue;
+      }
+
       last = await waitForCoupangStock(tabId, comp, parsed);
       if (last && (last.ok || last.stopped)) return last;
       var msg = String((last && last.error) || '');
@@ -1687,7 +1756,7 @@ async function collectCoupangStockFromPage(comp, parsed, requestContext) {
         msg.indexOf('RET') >= 0
       ) {
         try { await chrome.tabs.reload(tabId); } catch(e) {}
-        await new Promise(r => setTimeout(r, 2500));
+        await delay(1800);
       }
     }
     return last || { ok: false, error: 'Coupang stock result not found' };
