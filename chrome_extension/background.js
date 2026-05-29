@@ -976,7 +976,7 @@ async function fetchCoupangMonthlyDirect(comp, parsed) {
   }
 }
 
-async function readCoupangStockEstimate(productUrl, productId, itemId, vendorItemId) {
+async function readCoupangStockEstimate(productUrl, productId, itemId, vendorItemId, expectedStock) {
   function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
@@ -1053,106 +1053,53 @@ async function readCoupangStockEstimate(productUrl, productId, itemId, vendorIte
     return img && img.src ? img.src : '';
   }
 
-  function stable(value) {
-    if (value == null) return value;
-    if (Array.isArray(value)) return value.map(stable);
-    if (typeof value === 'object') {
-      var out = {};
-      Object.keys(value).sort().forEach(function(key) {
-        out[key] = stable(value[key]);
-      });
-      return out;
-    }
-    return value;
+  function stripHtml(value) {
+    return String(value || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
   }
 
-  function flattenDeliveryText(value) {
-    if (value == null) return '';
-    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-      return String(value).replace(/\s+/g, ' ').trim();
-    }
-    if (Array.isArray(value)) return value.map(flattenDeliveryText).filter(Boolean).join('|');
-    if (typeof value === 'object') {
-      return Object.keys(value).sort().map(function(key) {
-        return key + ':' + flattenDeliveryText(value[key]);
-      }).filter(Boolean).join('|');
-    }
-    return '';
-  }
-
-  function scoreDelivery(node) {
-    if (!node || typeof node !== 'object') return 0;
-    var score = 0;
-    if ('descriptions' in node) score += 3;
-    if ('type' in node) score += 2;
-    if ('speedType' in node) score += 2;
-    if ('logistics' in node) score += 1;
-    if (node.extraDataMap && 'decodeDescriptions' in node.extraDataMap) score += 4;
-    return score;
+  function normalizeDeliveryText(text) {
+    if (!text) return '';
+    return stripHtml(text)
+      .replace(/\s*\([^)]*내 주문 시[^)]*\)\s*/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
   function findDelivery(data) {
-    var seen = new Set();
-    var best = null;
-    var bestScore = 0;
-    var deliveryCandidates = [];
-    function visit(node, depth) {
-      if (!node || typeof node !== 'object' || depth > 12 || seen.has(node)) return;
-      seen.add(node);
-      if (node.delivery && typeof node.delivery === 'object') {
-        deliveryCandidates.push(node.delivery);
-        var deliveryScore = scoreDelivery(node.delivery);
-        if (deliveryScore > bestScore) {
-          best = node.delivery;
-          bestScore = deliveryScore;
-        }
-      }
-      var selfScore = scoreDelivery(node);
-      if (!deliveryCandidates.length && selfScore > bestScore) {
-        best = node;
-        bestScore = selfScore;
-      }
-      Object.keys(node).forEach(function(key) {
-        visit(node[key], depth + 1);
-      });
-    }
-    visit(data, 0);
-    if (deliveryCandidates.length) {
-      deliveryCandidates.sort(function(a, b) { return scoreDelivery(b) - scoreDelivery(a); });
-      return deliveryCandidates[0];
-    }
-    return bestScore >= 3 ? best : null;
+    var item = Array.isArray(data) ? data[0] : data;
+    if (item && item.delivery && typeof item.delivery === 'object') return item.delivery;
+    if (item && (item.descriptions || item.type || item.speedType || item.extraDataMap)) return item;
+    return null;
   }
 
   function extractDeliveryState(data) {
     var delivery = findDelivery(data);
     if (!delivery) return null;
+    var text = delivery.extraDataMap && delivery.extraDataMap.decodeDescriptions
+      ? delivery.extraDataMap.decodeDescriptions
+      : delivery.descriptions;
     return {
-      decodeDescriptions: flattenDeliveryText(delivery.extraDataMap && delivery.extraDataMap.decodeDescriptions),
-      descriptions: flattenDeliveryText(delivery.descriptions),
-      type: delivery.type || '',
-      speedType: delivery.speedType || '',
-      logistics: delivery.logistics == null ? null : stable(delivery.logistics)
+      text: normalizeDeliveryText(text),
+      type: delivery.type || null,
+      speedType: delivery.speedType || null,
+      logistics: typeof delivery.logistics === 'boolean' ? delivery.logistics : null
     };
   }
 
   function sameDeliveryState(a, b) {
-    return !!a && !!b && JSON.stringify(a) === JSON.stringify(b);
+    return !!a && !!b &&
+      a.text === b.text &&
+      a.type === b.type &&
+      a.speedType === b.speedType &&
+      a.logistics === b.logistics;
   }
 
   async function fetchQuantityInfo(quantity) {
     var params = new URLSearchParams({
       productId: productId,
       vendorItemId: vendorItemId,
-      quantity: String(quantity),
-      deliveryToggle: 'true',
-      landingProductId: productId,
-      landingVendorItemId: vendorItemId
+      quantity: String(quantity)
     });
-    if (itemId) {
-      params.set('itemId', itemId);
-      params.set('landingItemId', itemId);
-    }
     var origins = [];
     if (location.origin && /coupang\.com$/i.test(location.hostname)) origins.push(location.origin);
     origins.push('https://www.coupang.com');
@@ -1173,13 +1120,7 @@ async function readCoupangStockEstimate(productUrl, productId, itemId, vendorIte
           lastError = 'quantity-info HTTP ' + res.status + ' (' + origins[i] + ')';
           continue;
         }
-        var data = await res.json();
-        var errorMessage = apiError(data);
-        if (errorMessage) {
-          lastError = 'quantity-info API ' + errorMessage;
-          continue;
-        }
-        return data;
+        return await res.json();
       } catch(e) {
         lastError = e && e.message ? e.message : String(e);
       }
@@ -1193,22 +1134,75 @@ async function readCoupangStockEstimate(productUrl, productId, itemId, vendorIte
       return { ok: false, error: 'Coupang product identifiers not found' };
     }
 
-    var first = await fetchQuantityInfo(1);
-    var baseline = extractDeliveryState(first);
+    var probeCache = {};
+    async function probeState(quantity, waitBefore) {
+      quantity = Math.max(1, Math.floor(Number(quantity) || 1));
+      var cacheKey = String(quantity);
+      if (Object.prototype.hasOwnProperty.call(probeCache, cacheKey)) return probeCache[cacheKey];
+      if (waitBefore) await delay(450);
+      var state = extractDeliveryState(await fetchQuantityInfo(quantity));
+      probeCache[cacheKey] = state;
+      return state;
+    }
+
+    var baseline = await probeState(1, false);
+    if (!baseline) {
+      await delay(1500);
+      delete probeCache['1'];
+      baseline = await probeState(1, false);
+    }
     if (!baseline) return { ok: false, error: 'Coupang delivery state not found' };
 
     var low = 1;
     var high = null;
-    var probes = [100, 1000, 5000];
-    for (var i = 0; i < probes.length; i++) {
-      await delay(350 + Math.floor(Math.random() * 250));
-      var probe = probes[i];
-      var probeState = extractDeliveryState(await fetchQuantityInfo(probe));
-      if (sameDeliveryState(baseline, probeState)) {
-        low = probe;
+    var maxQuantity = 50000;
+
+    async function applyProbe(quantity) {
+      var state = await probeState(quantity, true);
+      if (sameDeliveryState(baseline, state)) {
+        low = Math.max(low, quantity);
+        return false;
+      }
+      high = high == null ? quantity : Math.min(high, quantity);
+      return true;
+    }
+
+    var expected = Number(expectedStock);
+    if (Number.isFinite(expected) && expected > 1) {
+      expected = Math.min(maxQuantity, Math.max(2, Math.floor(expected)));
+      var expectedState = await probeState(expected, true);
+      var step = Math.max(2, Math.ceil(expected * 0.1));
+      if (sameDeliveryState(baseline, expectedState)) {
+        low = expected;
+        var up = Math.min(maxQuantity, expected + step);
+        while (up > low && high == null) {
+          if (await applyProbe(up)) break;
+          step *= 2;
+          up = Math.min(maxQuantity, low + step);
+          if (up === low) break;
+        }
       } else {
-        high = probe;
-        break;
+        high = expected;
+        var down = Math.max(1, expected - step);
+        while (down > 1) {
+          var downState = await probeState(down, true);
+          if (sameDeliveryState(baseline, downState)) {
+            low = down;
+            break;
+          }
+          high = Math.min(high, down);
+          step *= 2;
+          down = Math.max(1, expected - step);
+        }
+      }
+    }
+
+    var probes = [100, 1000, 5000];
+    if (high == null) {
+      for (var i = 0; i < probes.length; i++) {
+        var probe = probes[i];
+        if (probe <= low) continue;
+        if (await applyProbe(probe)) break;
       }
     }
 
@@ -1226,9 +1220,8 @@ async function readCoupangStockEstimate(productUrl, productId, itemId, vendorIte
     }
 
     while (high - low > 1) {
-      await delay(350 + Math.floor(Math.random() * 250));
       var mid = Math.floor((low + high) / 2);
-      var midState = extractDeliveryState(await fetchQuantityInfo(mid));
+      var midState = await probeState(mid, true);
       if (sameDeliveryState(baseline, midState)) {
         low = mid;
       } else {
@@ -1673,7 +1666,8 @@ async function collectCoupangStockFromPage(comp, parsed, requestContext) {
             comp.url,
             (parsed && parsed.pid) || '',
             (parsed && parsed.itemId) || '',
-            (parsed && parsed.vendorItemId) || ''
+            (parsed && parsed.vendorItemId) || '',
+            comp && comp.expectedStock != null ? comp.expectedStock : null
           ]
         });
         var directResult = direct && direct[0] && direct[0].result;
