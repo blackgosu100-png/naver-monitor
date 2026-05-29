@@ -11,6 +11,7 @@ const COUPANG_PB_BRANDS = ['코멧', '곰곰', '탐사', '비타할로', '홈플
 var stopRequested = false;
 var currentFetchTabId = null;
 var fetchRunning = false;
+const COUPANG_STOCK_BLOCK_RULE_BASE = 720000;
 
 function normalizeServerUrl(url) {
   var value = (url || DEFAULT_SERVER).replace(/\/$/, '');
@@ -662,6 +663,41 @@ function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function coupangStockBlockRuleId(tabId) {
+  return COUPANG_STOCK_BLOCK_RULE_BASE + Number(tabId || 0);
+}
+
+async function updateDnrSessionRules(payload) {
+  if (!chrome.declarativeNetRequest || !chrome.declarativeNetRequest.updateSessionRules) return false;
+  return new Promise(resolve => {
+    chrome.declarativeNetRequest.updateSessionRules(payload, () => {
+      resolve(!chrome.runtime.lastError);
+    });
+  });
+}
+
+async function enableCoupangStockLightMode(tabId) {
+  var ruleId = coupangStockBlockRuleId(tabId);
+  await updateDnrSessionRules({ removeRuleIds: [ruleId] });
+  return updateDnrSessionRules({
+    addRules: [{
+      id: ruleId,
+      priority: 1,
+      action: { type: 'block' },
+      condition: {
+        tabIds: [tabId],
+        urlFilter: 'http',
+        resourceTypes: ['image', 'media', 'font', 'stylesheet']
+      }
+    }]
+  });
+}
+
+async function disableCoupangStockLightMode(tabId) {
+  if (tabId == null) return;
+  await updateDnrSessionRules({ removeRuleIds: [coupangStockBlockRuleId(tabId)] });
+}
+
 async function openTab(url, active, options) {
   if (active === undefined) active = true;
   options = options || {};
@@ -753,14 +789,14 @@ async function openPopupTabQuick(url, options) {
   options = options || {};
   return new Promise((resolve, reject) => {
     chrome.windows.create({
-      url,
+      url: options.lightMode ? 'about:blank' : url,
       type: 'popup',
       focused: true,
       width: options.width || 430,
       height: options.height || 720,
       left: options.left == null ? 0 : options.left,
       top: options.top == null ? 0 : options.top
-    }, (win) => {
+    }, async (win) => {
       if (chrome.runtime.lastError) {
         reject(new Error(chrome.runtime.lastError.message));
         return;
@@ -771,6 +807,12 @@ async function openPopupTabQuick(url, options) {
         return;
       }
       currentFetchTabId = tab.id;
+      try {
+        if (options.lightMode) {
+          await enableCoupangStockLightMode(tab.id);
+          await chrome.tabs.update(tab.id, { url: url });
+        }
+      } catch(e) {}
       scheduleFocusSourceTab(options, options.focusBackDelayMs || 650);
       resolve(tab.id);
     });
@@ -1718,6 +1760,7 @@ async function collectCoupangStockFromPage(comp, parsed, requestContext) {
   try {
     tabId = await openPopupTabQuick(comp.url, {
       popupWindow: true,
+      lightMode: true,
       width: 430,
       height: 720,
       left: 0,
@@ -1774,6 +1817,7 @@ async function collectCoupangStockFromPage(comp, parsed, requestContext) {
   } catch(e) {
     return { ok: false, error: String(e) };
   } finally {
+    await disableCoupangStockLightMode(tabId);
     if (tabId !== null) chrome.tabs.remove(tabId, () => {});
     if (currentFetchTabId === tabId) currentFetchTabId = null;
   }
