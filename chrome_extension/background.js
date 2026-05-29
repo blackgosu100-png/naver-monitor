@@ -796,7 +796,7 @@ async function waitForTabScriptReady(tabId, timeoutMs) {
       });
       var info = res && res[0] && res[0].result;
       var href = info && info.href ? String(info.href) : '';
-      if (/coupang\.com\/.*\/products\//i.test(href) && info && info.readyState !== 'loading') {
+      if (/coupang\.com\/.*\/products\//i.test(href) && info) {
         return info;
       }
       lastError = href || 'waiting for coupang page';
@@ -1202,7 +1202,7 @@ async function readCoupangStockEstimate(productUrl, productId, itemId, vendorIte
       quantity = Math.max(1, Math.floor(Number(quantity) || 1));
       var cacheKey = String(quantity);
       if (Object.prototype.hasOwnProperty.call(probeCache, cacheKey)) return probeCache[cacheKey];
-      if (waitBefore) await delay(450);
+      if (waitBefore) await delay(220);
       var state = extractDeliveryState(await fetchQuantityInfo(quantity));
       probeCache[cacheKey] = state;
       return state;
@@ -1237,7 +1237,9 @@ async function readCoupangStockEstimate(productUrl, productId, itemId, vendorIte
       var step = Math.max(2, Math.ceil(expected * 0.1));
       if (sameDeliveryState(baseline, expectedState)) {
         low = expected;
-        var up = Math.min(maxQuantity, expected + step);
+        var up = Math.min(maxQuantity, expected + 1);
+        if (up > low) await applyProbe(up);
+        up = high == null ? Math.min(maxQuantity, expected + step) : low;
         while (up > low && high == null) {
           if (await applyProbe(up)) break;
           step *= 2;
@@ -1246,8 +1248,17 @@ async function readCoupangStockEstimate(productUrl, productId, itemId, vendorIte
         }
       } else {
         high = expected;
+        var nearDown = expected - 1;
+        if (nearDown > 1) {
+          var nearDownState = await probeState(nearDown, true);
+          if (sameDeliveryState(baseline, nearDownState)) {
+            low = nearDown;
+          } else {
+            high = Math.min(high, nearDown);
+          }
+        }
         var down = Math.max(1, expected - step);
-        while (down > 1) {
+        while (down > 1 && low === 1) {
           var downState = await probeState(down, true);
           if (sameDeliveryState(baseline, downState)) {
             low = down;
@@ -2489,6 +2500,15 @@ async function collectCoupangStockMetricOnly(comp, parsed, index, total, results
     msg: '\uCFE0\uD321 \uC7AC\uACE0\uC870\uD68C\uB9CC \uC2E4\uD589 \uC911...',
     results
   });
+
+  if (comp && comp.expectedStock == null) {
+    try {
+      var cachedHint = await getCachedCoupangMetric('stock', coupangStockCacheKey(parsed), COUPANG_STOCK_TTL);
+      if (cachedHint && cachedHint.stock != null && Number.isFinite(Number(cachedHint.stock))) {
+        comp = Object.assign({}, comp, { expectedStock: Number(cachedHint.stock) });
+      }
+    } catch(e) {}
+  }
 
   var stock = await collectCoupangStockFromPage(comp, parsed, requestContext);
   if (stock && stock.stopped) return stock;
