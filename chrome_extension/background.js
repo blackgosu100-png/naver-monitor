@@ -2749,6 +2749,19 @@ async function collectCoupangStockMetricOnly(comp, parsed, index, total, results
     results
   });
   var stock = await estimateCoupangStockViaLocalHelper(comp, parsed);
+  if (stock && stock.ok && stock.localHelper) {
+    await setStatus({
+      running: true,
+      current: index + 1,
+      total: total,
+      name: comp.name,
+      msg: '\uCFE0\uD321 \uB85C\uCEEC \uD5EC\uD37C \uC131\uACF5'
+        + (stock.elapsedMs ? ' (' + (stock.elapsedMs / 1000).toFixed(1) + '\uCD08' : '')
+        + (stock.apiCalls ? ', API ' + stock.apiCalls + '\uD68C' : '')
+        + (stock.elapsedMs ? ')' : ''),
+      results
+    });
+  }
   if (!stock || !stock.ok) {
     await setStatus({
       running: true,

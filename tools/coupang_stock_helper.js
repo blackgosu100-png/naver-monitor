@@ -15,6 +15,7 @@ const PAGE_WARMUP_MS = Number(process.env.COUPANG_STOCK_PAGE_WARMUP_MS || 900);
 const PROBE_DELAY_MS = Number(process.env.COUPANG_STOCK_PROBE_DELAY_MS || 180);
 const MAX_QUANTITY = Number(process.env.COUPANG_STOCK_MAX_QUANTITY || 50000);
 const DEFAULT_STEPS = [100, 1000, 5000];
+const HELPER_VERSION = '1.2.0';
 
 let chromeProcess = null;
 let warmupPromise = null;
@@ -536,6 +537,18 @@ async function estimateStock(payload) {
           if (prevProbe.sameAsBaseline) low = prev;
           else high = Math.min(high, prev);
         }
+        let step = Math.max(2, Math.ceil(expected * 0.1));
+        let candidate = Math.max(1, expected - step);
+        while (candidate > 1 && low === 1) {
+          const tested = await probe(candidate, baseline);
+          if (tested.sameAsBaseline) {
+            low = candidate;
+            break;
+          }
+          high = Math.min(high, candidate);
+          step *= 2;
+          candidate = Math.max(1, expected - step);
+        }
       }
     }
 
@@ -558,6 +571,7 @@ async function estimateStock(payload) {
         apiCalls,
         elapsedMs: Date.now() - startedAt,
         source: 'local-cdp-helper',
+        helperVersion: HELPER_VERSION,
       };
     }
 
@@ -578,6 +592,7 @@ async function estimateStock(payload) {
       apiCalls,
       elapsedMs: Date.now() - startedAt,
       source: 'local-cdp-helper',
+      helperVersion: HELPER_VERSION,
     };
   } finally {
     cdp.close();
@@ -610,6 +625,7 @@ const server = http.createServer(async (req, res) => {
       jsonResponse(res, 200, {
         ok: true,
         service: 'coupang-stock-helper',
+        version: HELPER_VERSION,
         port: PORT,
         debugPort: DEBUG_PORT,
         warmup: {
