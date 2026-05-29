@@ -638,8 +638,29 @@ async function stopCurrentFetch() {
   });
 }
 
-async function openTab(url, active) {
+async function focusSourceTab(options) {
+  if (!options) return;
+  try {
+    if (options.returnFocusWindowId != null) {
+      await chrome.windows.update(options.returnFocusWindowId, { focused: true });
+    }
+    if (options.returnFocusTabId != null) {
+      await chrome.tabs.update(options.returnFocusTabId, { active: true });
+    }
+  } catch(e) {}
+}
+
+function scheduleFocusSourceTab(options, delayMs) {
+  if (!options || options.returnFocus === false) return;
+  if (options.returnFocusTabId == null && options.returnFocusWindowId == null) return;
+  setTimeout(function() {
+    focusSourceTab(options);
+  }, delayMs || 500);
+}
+
+async function openTab(url, active, options) {
   if (active === undefined) active = true;
+  options = options || {};
   return new Promise((resolve, reject) => {
     var done = false;
     var timer = setTimeout(() => {
@@ -673,8 +694,12 @@ async function openTab(url, active) {
       }
     }
 
-    chrome.tabs.create({ url, active }, (tab) => {
-      if (chrome.runtime.lastError) { clearTimeout(timer); reject(new Error(chrome.runtime.lastError.message)); return; }
+    function finishWithTab(tab) {
+      if (!tab || tab.id == null) {
+        clearTimeout(timer);
+        reject(new Error('tab create failed'));
+        return;
+      }
       tid = tab.id;
       currentFetchTabId = tid;
       if (shouldStop()) {
@@ -688,6 +713,34 @@ async function openTab(url, active) {
       }
       chrome.tabs.onUpdated.addListener(onUpdated);
       chrome.tabs.onRemoved.addListener(onRemoved);
+      scheduleFocusSourceTab(options, options.focusBackDelayMs || 650);
+      if (tab.status === 'complete') {
+        if (done) return;
+        done = true;
+        cleanup();
+        resolve(tid);
+      }
+    }
+
+    if (options.popupWindow) {
+      chrome.windows.create({
+        url,
+        type: 'popup',
+        focused: true,
+        width: options.width || 430,
+        height: options.height || 720,
+        left: options.left == null ? 0 : options.left,
+        top: options.top == null ? 0 : options.top
+      }, (win) => {
+        if (chrome.runtime.lastError) { clearTimeout(timer); reject(new Error(chrome.runtime.lastError.message)); return; }
+        finishWithTab(win && win.tabs && win.tabs[0]);
+      });
+      return;
+    }
+
+    chrome.tabs.create({ url, active }, (tab) => {
+      if (chrome.runtime.lastError) { clearTimeout(timer); reject(new Error(chrome.runtime.lastError.message)); return; }
+      finishWithTab(tab);
     });
   });
 }
@@ -1593,10 +1646,18 @@ async function waitForCoupangStock(tabId, comp, parsed) {
   }
 }
 
-async function collectCoupangStockFromPage(comp, parsed) {
+async function collectCoupangStockFromPage(comp, parsed, requestContext) {
   var tabId = null;
   try {
-    tabId = await openTab(comp.url, true);
+    tabId = await openTab(comp.url, true, {
+      popupWindow: true,
+      width: 430,
+      height: 720,
+      left: 0,
+      top: 0,
+      returnFocusTabId: requestContext && requestContext.dashboardTabId,
+      returnFocusWindowId: requestContext && requestContext.dashboardWindowId
+    });
     currentFetchTabId = tabId;
     var last = null;
     for (var attempt = 0; attempt < 3; attempt++) {
@@ -2356,7 +2417,7 @@ function normalizeSeparatedFetchMode(fetchMode, requestedMarket) {
   return '';
 }
 
-async function collectCoupangStockMetricOnly(comp, parsed, index, total, results) {
+async function collectCoupangStockMetricOnly(comp, parsed, index, total, results, requestContext) {
   await setStatus({
     running: true,
     current: index + 1,
@@ -2366,7 +2427,7 @@ async function collectCoupangStockMetricOnly(comp, parsed, index, total, results
     results
   });
 
-  var stock = await collectCoupangStockFromPage(comp, parsed);
+  var stock = await collectCoupangStockFromPage(comp, parsed, requestContext);
   if (stock && stock.stopped) return stock;
   if (!stock || !stock.ok) {
     return { ok: false, error: (stock && stock.error) || 'Coupang stock data not found' };
@@ -2398,7 +2459,7 @@ async function collectCoupangStockMetricOnly(comp, parsed, index, total, results
   };
 }
 
-async function runFetchSeparated(competitors, fetchMode, requestedMarket) {
+async function runFetchSeparated(competitors, fetchMode, requestedMarket, requestContext) {
   if (fetchRunning) return;
   fetchRunning = true;
   stopRequested = false;
@@ -2453,7 +2514,7 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket) {
         var cr = null;
         if (market === 'coupang') {
           if (route === 'coupang_stock') {
-            cr = await collectCoupangStockMetricOnly(comp, parsed, i, competitors.length, results);
+            cr = await collectCoupangStockMetricOnly(comp, parsed, i, competitors.length, results, requestContext);
           } else if (route === 'coupang_sales') {
             cr = await collectCoupangSalesMetricsFromWingApi(comp, parsed, i, competitors.length, results);
           } else {
@@ -2550,7 +2611,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return;
       }
       setStatus({ running: true, current: 0, total: competitors.length, msg: '시작 중...', results: [] });
-      runFetchSeparated(competitors, msg.fetchMode || msg.coupangMode || msg.mode || '', msg.market || '');
+      runFetchSeparated(competitors, msg.fetchMode || msg.coupangMode || msg.mode || '', msg.market || '', {
+        dashboardTabId: sender && sender.tab ? sender.tab.id : null,
+        dashboardWindowId: sender && sender.tab ? sender.tab.windowId : null
+      });
       sendResponse({ ok: true });
     })();
     return true;
