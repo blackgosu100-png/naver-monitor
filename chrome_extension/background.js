@@ -1752,6 +1752,61 @@ async function estimateCoupangStockInBackground(comp, parsed) {
   }
 }
 
+async function estimateCoupangStockViaLocalHelper(comp, parsed) {
+  var urls = [
+    'http://127.0.0.1:8765/stock',
+    'http://localhost:8765/stock'
+  ];
+  var payload = {
+    productUrl: (comp && comp.url) || '',
+    productId: (parsed && parsed.pid) || '',
+    itemId: (parsed && parsed.itemId) || '',
+    vendorItemId: (parsed && parsed.vendorItemId) || '',
+    expectedStock: comp && comp.expectedStock != null ? comp.expectedStock : null
+  };
+  var lastError = '';
+  for (var i = 0; i < urls.length; i++) {
+    var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    var timer = controller ? setTimeout(function() { controller.abort(); }, 14000) : null;
+    try {
+      var res = await fetch(urls[i], {
+        method: 'POST',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: controller ? controller.signal : undefined
+      });
+      if (!res.ok) {
+        lastError = 'local helper HTTP ' + res.status;
+        continue;
+      }
+      var data = await res.json();
+      if (data && data.ok) {
+        return {
+          ok: true,
+          stock: data.stock,
+          overLimit: data.overLimit,
+          reason: data.reason,
+          options: data.options,
+          image_url: data.image_url || '',
+          productId: data.productId || payload.productId,
+          itemId: data.itemId || payload.itemId,
+          vendorItemId: data.vendorItemId || payload.vendorItemId,
+          localHelper: true,
+          elapsedMs: data.elapsedMs,
+          apiCalls: data.apiCalls
+        };
+      }
+      lastError = (data && data.error) || 'local helper returned no result';
+    } catch(e) {
+      lastError = e && e.message ? e.message : String(e);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+  return { ok: false, error: lastError || 'local helper unavailable' };
+}
+
 async function readJsonFromCurrentTab(tabId) {
   var res = await chrome.scripting.executeScript({
     target: { tabId },
@@ -2690,10 +2745,21 @@ async function collectCoupangStockMetricOnly(comp, parsed, index, total, results
     current: index + 1,
     total: total,
     name: comp.name,
-    msg: '\uCFE0\uD321 \uC7AC\uACE0\uC870\uD68C \uBE60\uB978 \uACBD\uB85C \uD655\uC778 \uC911...',
+    msg: '\uCFE0\uD321 \uB85C\uCEEC \uBE60\uB978 \uD5EC\uD37C \uD655\uC778 \uC911...',
     results
   });
-  var stock = await estimateCoupangStockInBackground(comp, parsed);
+  var stock = await estimateCoupangStockViaLocalHelper(comp, parsed);
+  if (!stock || !stock.ok) {
+    await setStatus({
+      running: true,
+      current: index + 1,
+      total: total,
+      name: comp.name,
+      msg: '\uCFE0\uD321 \uC7AC\uACE0\uC870\uD68C \uBE60\uB978 \uACBD\uB85C \uD655\uC778 \uC911...',
+      results
+    });
+    stock = await estimateCoupangStockInBackground(comp, parsed);
+  }
   if (!stock || !stock.ok) {
     await setStatus({
       running: true,
