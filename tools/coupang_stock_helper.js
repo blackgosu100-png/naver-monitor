@@ -17,6 +17,13 @@ const MAX_QUANTITY = Number(process.env.COUPANG_STOCK_MAX_QUANTITY || 50000);
 const DEFAULT_STEPS = [100, 1000, 5000];
 
 let chromeProcess = null;
+let warmupPromise = null;
+let warmupState = {
+  startedAt: null,
+  finishedAt: null,
+  ok: false,
+  error: '',
+};
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -109,6 +116,28 @@ async function ensureChrome() {
     chromeProcess = null;
   });
   await waitForDebugger();
+}
+
+function warmupChrome() {
+  if (warmupPromise) return warmupPromise;
+  warmupState = {
+    startedAt: Date.now(),
+    finishedAt: null,
+    ok: false,
+    error: '',
+  };
+  warmupPromise = ensureChrome()
+    .then(() => {
+      warmupState.ok = true;
+      warmupState.finishedAt = Date.now();
+    })
+    .catch(error => {
+      warmupState.ok = false;
+      warmupState.error = error && error.message ? error.message : String(error);
+      warmupState.finishedAt = Date.now();
+      warmupPromise = null;
+    });
+  return warmupPromise;
 }
 
 async function createTarget() {
@@ -429,7 +458,7 @@ async function fetchQuantityInfo(cdp, productId, vendorItemId, quantity) {
 
 async function estimateStock(payload) {
   const startedAt = Date.now();
-  await ensureChrome();
+  await warmupChrome();
   const target = await createTarget();
   const cdp = new CdpClient(target.webSocketDebuggerUrl);
   await cdp.connect();
@@ -583,6 +612,12 @@ const server = http.createServer(async (req, res) => {
         service: 'coupang-stock-helper',
         port: PORT,
         debugPort: DEBUG_PORT,
+        warmup: {
+          ...warmupState,
+          elapsedMs: warmupState.startedAt
+            ? ((warmupState.finishedAt || Date.now()) - warmupState.startedAt)
+            : null,
+        },
       });
       return;
     }
@@ -613,6 +648,15 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`[coupang-stock-helper] listening on http://127.0.0.1:${PORT}`);
   console.log(`[coupang-stock-helper] chrome debug port ${DEBUG_PORT}`);
+  console.log('[coupang-stock-helper] warming up Chrome...');
+  warmupChrome()
+    .then(() => {
+      const elapsed = warmupState.finishedAt - warmupState.startedAt;
+      console.log(`[coupang-stock-helper] Chrome ready (${elapsed}ms)`);
+    })
+    .catch(error => {
+      console.error('[coupang-stock-helper] Chrome warmup failed:', error && error.message ? error.message : error);
+    });
 });
 
 process.on('SIGINT', () => {
