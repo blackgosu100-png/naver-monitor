@@ -214,6 +214,11 @@ async function checkAndProcessQueue() {
     showMsg('queue-msg', '대기 중인 조회 ' + queue.length + '개를 백그라운드에서 시작합니다.', 'info');
 
     var fetchMode = data.fetchMode || data.fetch_mode || '';
+    if (fetchMode && queue.some(function(comp) {
+      return !/coupang\.com\/(?:v[pm]\/)?products\//i.test(String((comp && comp.url) || ''));
+    })) {
+      fetchMode = '';
+    }
     await new Promise(function(resolve, reject) {
       chrome.runtime.sendMessage({ type: 'START_FETCH', competitors: queue, fetchMode: fetchMode }, function(response) {
         var error = chrome.runtime.lastError ? chrome.runtime.lastError.message : '';

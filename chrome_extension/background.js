@@ -2824,6 +2824,10 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
   var results = [];
   var stopped = false;
   var route = normalizeSeparatedFetchMode(fetchMode, requestedMarket);
+  var queuedMarkets = competitors.map(function(comp) { return detectMarket(comp && comp.url); });
+  if (route && queuedMarkets.length && queuedMarkets.every(function(market) { return market !== 'coupang'; })) {
+    route = '';
+  }
 
   try {
     for (var i = 0; i < competitors.length; i++) {

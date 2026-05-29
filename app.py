@@ -674,8 +674,7 @@ def db_queue_competitors(user_id: str, cid: str | None = None, user: dict | None
         if target_id not in queued_ids:
             queued_ids.append(target_id)
     db_save_ext_queue_ids(user_id, queued_ids)
-    if normalize_ext_fetch_mode(fetch_mode):
-        db_save_ext_queue_fetch_mode(user_id, fetch_mode)
+    db_save_ext_queue_fetch_mode(user_id, fetch_mode)
     return [comp for comp in competitors if comp['id'] in target_ids]
 
 def db_remove_ext_queue_ids(user_id: str, ids: list | None = None):
@@ -1180,6 +1179,7 @@ def api_fetch():
         if competitor_market(comp.get('url') or '') != 'ohouse':
             return jsonify({'error': '이 조회 버튼은 오늘의집 전용입니다. 네이버와 쿠팡은 각 탭에서 확장프로그램 조회로 실행해주세요.'}), 400
         queued = db_queue_competitors(g.user_id, cid, g.user)
+        db_save_ext_queue_fetch_mode(g.user_id, '')
         return jsonify({'ok': True, 'queued': True, 'count': len(queued)})
     else:
         competitors = active_competitors_for_user(g.user)
@@ -1194,6 +1194,7 @@ def api_fetch():
             if target_id not in queued_ids:
                 queued_ids.append(target_id)
         db_save_ext_queue_ids(g.user_id, queued_ids)
+        db_save_ext_queue_fetch_mode(g.user_id, '')
         return jsonify({'ok': True, 'queued': True, 'count': len(ohouse_ids)})
     return jsonify({'ok': True, 'queued': True})
 
@@ -1239,8 +1240,7 @@ def api_ext_queue():
             if target_id not in queued_ids:
                 queued_ids.append(target_id)
         db_save_ext_queue_ids(g.user_id, queued_ids)
-        if normalize_ext_fetch_mode(fetch_mode):
-            db_save_ext_queue_fetch_mode(g.user_id, fetch_mode)
+        db_save_ext_queue_fetch_mode(g.user_id, fetch_mode)
         return jsonify({'ok': True, 'count': len(target_ids)})
     try:
         queued = db_queue_competitors(g.user_id, body.get('id'), g.user, fetch_mode)
@@ -1285,9 +1285,13 @@ def api_public_competitors():
 def api_public_queue_get():
     queue = db_get_ext_queue(g.user_id)
     active_ids = active_competitor_ids_for_user(g.user)
+    visible_queue = [comp for comp in queue if comp.get('id') in active_ids]
+    fetch_mode = db_get_ext_queue_fetch_mode(g.user_id)
+    if fetch_mode and not all(is_coupang_url(comp.get('url') or '') for comp in visible_queue):
+        fetch_mode = ''
     return jsonify({
-        'queue': [comp for comp in queue if comp.get('id') in active_ids],
-        'fetchMode': db_get_ext_queue_fetch_mode(g.user_id),
+        'queue': visible_queue,
+        'fetchMode': fetch_mode,
     })
 
 @app.route('/api/public/queue', methods=['DELETE'])
