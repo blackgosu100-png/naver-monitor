@@ -372,7 +372,13 @@ body { overflow-x: hidden; }
 }
 .form-input:focus { border-color: #86efac; box-shadow: 0 0 0 3px rgba(3,199,90,.08); }
 .form-input.wide { flex: 1; }
-.comp-list { display: flex; flex-direction: column; gap: 5px; }
+.comp-filter-bar { display:flex; align-items:center; justify-content:space-between; gap:10px; margin:10px 0 12px; flex-wrap:wrap; }
+.comp-filter-tabs { display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.comp-filter-btn { border:1px solid var(--border); background:var(--surface); color:var(--text2); border-radius:999px; padding:6px 10px; font-size:11px; font-weight:700; cursor:pointer; }
+.comp-filter-btn.active { background:#111827; color:#fff; border-color:#111827; }
+.comp-filter-search { width:260px; max-width:100%; }
+.comp-list-summary { font-size:12px; color:var(--text3); margin-bottom:8px; }
+.comp-list { display: flex; flex-direction: column; gap: 5px; max-height: 620px; overflow:auto; padding-right:4px; }
 .comp-list-item {
   display: flex;
   align-items: center;
@@ -750,6 +756,11 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
               <div id="competitor-limit-note" style="margin-top:8px;font-size:12px;color:var(--text3)"></div>
             </div>
             <div class="settings-label" style="margin-top:20px">📌 등록된 경쟁사</div>
+            <div class="comp-filter-bar">
+              <div class="comp-filter-tabs" id="comp-filter-tabs"></div>
+              <input class="form-input comp-filter-search" id="comp-filter-search" placeholder="상품명 또는 URL 검색" oninput="renderCompList(appConfig.competitors || [])">
+            </div>
+            <div class="comp-list-summary" id="comp-list-summary"></div>
             <div class="comp-list" id="comp-list">
               <div style="color:var(--text3);font-size:13px;padding:12px 0">아직 등록된 경쟁사가 없습니다</div>
             </div>
@@ -897,6 +908,7 @@ const HISTORY_CACHE_KEY = 'naverMonitorHistoryCache:v1';
 const HISTORY_MODE_KEY = 'naverMonitorHistoryMode:v1';
 const TIME_RANGE_KEY = 'naverMonitorTimeRange:v1';
 const MARKET_KEY = 'naverMonitorMarket:v1';
+const COMP_FILTER_KEY = 'naverMonitorCompFilter:v1';
 const TIME_COLUMN_LIMIT = 10;
 const REQUIRED_COUPANG_EXTENSION_VERSION = '5.32';
 const MARKETS = ['naver', 'ohouse', 'coupang', 'coupang_stock'];
@@ -2023,6 +2035,22 @@ function filterByCurrentMarket(competitors) {
   return (competitors || []).filter(isCompInCurrentMarket);
 }
 
+function currentCompFilter() {
+  const saved = localStorage.getItem(COMP_FILTER_KEY);
+  if (['all', 'naver', 'ohouse', 'coupang'].includes(saved)) return saved;
+  const market = currentMarket();
+  return isCoupangMarket(market) ? 'coupang' : market;
+}
+
+function setCompFilter(filter) {
+  localStorage.setItem(COMP_FILTER_KEY, filter);
+  renderCompList(appConfig.competitors || []);
+}
+
+function compFilterLabel(filter) {
+  return filter === 'all' ? '전체' : (COMPETITOR_MARKET_LABELS[filter] || filter);
+}
+
 function getActiveCompetitorIdSet() {
   if (Array.isArray(appConfig.active_competitor_ids)) {
     return new Set(appConfig.active_competitor_ids);
@@ -2383,11 +2411,42 @@ async function requestPlan(plan) {
 
 function renderCompList(competitors) {
   const el = document.getElementById('comp-list');
-  if (!competitors.length) {
+  const summary = document.getElementById('comp-list-summary');
+  const tabs = document.getElementById('comp-filter-tabs');
+  const searchEl = document.getElementById('comp-filter-search');
+  const source = competitors || [];
+  const counts = {
+    all: source.length,
+    naver: source.filter(c => competitorMarket(c) === 'naver').length,
+    ohouse: source.filter(c => competitorMarket(c) === 'ohouse').length,
+    coupang: source.filter(c => competitorMarket(c) === 'coupang').length,
+  };
+  const filter = currentCompFilter();
+  const search = String((searchEl && searchEl.value) || '').trim().toLowerCase();
+  if (tabs) {
+    tabs.innerHTML = ['all', 'naver', 'ohouse', 'coupang'].map(key => `
+      <button class="comp-filter-btn ${filter === key ? 'active' : ''}" type="button" onclick="setCompFilter('${key}')">${compFilterLabel(key)} ${counts[key]}</button>
+    `).join('');
+  }
+  const filtered = source.filter(c => {
+    const marketOk = filter === 'all' || competitorMarket(c) === filter;
+    if (!marketOk) return false;
+    if (!search) return true;
+    return String(c.name || '').toLowerCase().includes(search) || String(c.url || '').toLowerCase().includes(search);
+  });
+  if (summary) {
+    const searchText = search ? ` · 검색 "${escHtml(search)}"` : '';
+    summary.innerHTML = `${compFilterLabel(filter)} ${filtered.length}개 표시 / 전체 ${source.length}개${searchText}`;
+  }
+  if (!source.length) {
     el.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:12px 0">아직 등록된 경쟁사가 없습니다</div>';
     return;
   }
-  el.innerHTML = competitors.map(c => {
+  if (!filtered.length) {
+    el.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:16px 0">조건에 맞는 경쟁사가 없습니다</div>';
+    return;
+  }
+  el.innerHTML = filtered.map(c => {
     const canFetch = isCompetitorFetchAllowed(c.id);
     const marketName = COMPETITOR_MARKET_LABELS[competitorMarket(c)] || '네이버';
     return `
