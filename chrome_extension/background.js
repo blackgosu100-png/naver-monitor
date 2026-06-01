@@ -1158,6 +1158,33 @@ async function readCoupangStockEstimate(productUrl, productId, itemId, vendorIte
     return img && img.src ? img.src : '';
   }
 
+  function numOrNull(value) {
+    if (value == null || value === '') return null;
+    var cleaned = String(value).replace(/[^0-9.]/g, '');
+    if (!cleaned) return null;
+    var n = Number(cleaned);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function getProductMetrics() {
+    var html = document.documentElement ? document.documentElement.outerHTML || '' : '';
+    var text = document.body ? document.body.innerText || '' : '';
+    var salePrice = numOrNull(
+      firstMatch(html, [
+        /"salePrice"\s*:\s*"?([0-9,]+)"?/i,
+        /"finalPrice"\s*:\s*"?([0-9,]+)"?/i,
+        /"price"\s*:\s*"?([0-9,]{4,})"?/i
+      ]) || firstMatch(text, [/([0-9,]{4,})\s*원/])
+    );
+    var ratingCount = numOrNull(
+      firstMatch(html, [
+        /"ratingCount"\s*:\s*"?([0-9,]+)"?/i,
+        /"reviewCount"\s*:\s*"?([0-9,]+)"?/i
+      ]) || firstMatch(text, [/상품평\s*([0-9,]+)\s*개/, /리뷰\s*([0-9,]+)\s*개/])
+    );
+    return { salePrice: salePrice, ratingCount: ratingCount };
+  }
+
   function stripHtml(value) {
     return String(value || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
   }
@@ -1323,6 +1350,7 @@ async function readCoupangStockEstimate(productUrl, productId, itemId, vendorIte
     }
 
     if (high == null) {
+      var overLimitMetrics = getProductMetrics();
       return {
         ok: true,
         stock: null,
@@ -1331,7 +1359,9 @@ async function readCoupangStockEstimate(productUrl, productId, itemId, vendorIte
         image_url: getImageUrl(),
         productId: productId,
         itemId: itemId,
-        vendorItemId: vendorItemId
+        vendorItemId: vendorItemId,
+        salePrice: overLimitMetrics.salePrice,
+        ratingCount: overLimitMetrics.ratingCount
       };
     }
 
@@ -1345,6 +1375,7 @@ async function readCoupangStockEstimate(productUrl, productId, itemId, vendorIte
       }
     }
 
+    var metrics = getProductMetrics();
     return {
       ok: true,
       stock: low,
@@ -1352,7 +1383,9 @@ async function readCoupangStockEstimate(productUrl, productId, itemId, vendorIte
       image_url: getImageUrl(),
       productId: productId,
       itemId: itemId,
-      vendorItemId: vendorItemId
+      vendorItemId: vendorItemId,
+      salePrice: metrics.salePrice,
+      ratingCount: metrics.ratingCount
     };
   } catch(e) {
     return { ok: false, error: e && e.message ? e.message : String(e), image_url: getImageUrl() };
@@ -1390,6 +1423,33 @@ function readCoupangProductIdentity(productUrl, fallbackProductId, fallbackItemI
     return img && img.src ? img.src : '';
   }
 
+  function numOrNull(value) {
+    if (value == null || value === '') return null;
+    var cleaned = String(value).replace(/[^0-9.]/g, '');
+    if (!cleaned) return null;
+    var n = Number(cleaned);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function getProductMetrics() {
+    var html = document.documentElement ? document.documentElement.outerHTML || '' : '';
+    var text = document.body ? document.body.innerText || '' : '';
+    var salePrice = numOrNull(
+      firstMatch(html, [
+        /"salePrice"\s*:\s*"?([0-9,]+)"?/i,
+        /"finalPrice"\s*:\s*"?([0-9,]+)"?/i,
+        /"price"\s*:\s*"?([0-9,]{4,})"?/i
+      ]) || firstMatch(text, [/([0-9,]{4,})\s*원/])
+    );
+    var ratingCount = numOrNull(
+      firstMatch(html, [
+        /"ratingCount"\s*:\s*"?([0-9,]+)"?/i,
+        /"reviewCount"\s*:\s*"?([0-9,]+)"?/i
+      ]) || firstMatch(text, [/상품평\s*([0-9,]+)\s*개/, /리뷰\s*([0-9,]+)\s*개/])
+    );
+    return { salePrice: salePrice, ratingCount: ratingCount };
+  }
+
   var currentUrl = new URL(location.href);
   var productId = fallbackProductId || '';
   var itemId = currentUrl.searchParams.get('itemId') || fallbackItemId || '';
@@ -1424,12 +1484,15 @@ function readCoupangProductIdentity(productUrl, fallbackProductId, fallbackItemI
     ]);
   }
 
+  var metrics = getProductMetrics();
   return {
     ok: !!productId && !!vendorItemId,
     productId: productId,
     itemId: itemId || '',
     vendorItemId: vendorItemId || '',
     image_url: getImageUrl(),
+    salePrice: metrics.salePrice,
+    ratingCount: metrics.ratingCount,
     url: location.href,
     error: productId
       ? (vendorItemId ? '' : 'vendorItemId not found in URL or product HTML')
@@ -1792,6 +1855,8 @@ async function estimateCoupangStockViaLocalHelper(comp, parsed) {
           productId: data.productId || payload.productId,
           itemId: data.itemId || payload.itemId,
           vendorItemId: data.vendorItemId || payload.vendorItemId,
+          salePrice: data.salePrice,
+          ratingCount: data.ratingCount,
           localHelper: true,
           elapsedMs: data.elapsedMs,
           apiCalls: data.apiCalls
@@ -1911,7 +1976,9 @@ async function waitForCoupangStock(tabId, comp, parsed) {
         image_url: identity.image_url || '',
         productId: identity.productId,
         itemId: identity.itemId,
-        vendorItemId: identity.vendorItemId
+        vendorItemId: identity.vendorItemId,
+        salePrice: identity.salePrice,
+        ratingCount: identity.ratingCount
       };
     }
 
@@ -1934,7 +2001,9 @@ async function waitForCoupangStock(tabId, comp, parsed) {
       image_url: identity.image_url || '',
       productId: identity.productId,
       itemId: identity.itemId,
-      vendorItemId: identity.vendorItemId
+      vendorItemId: identity.vendorItemId,
+      salePrice: identity.salePrice,
+      ratingCount: identity.ratingCount
     };
   } catch(e) {
     return { ok: false, error: e && e.message ? e.message : String(e) };
@@ -2043,6 +2112,13 @@ function numOrNull(value) {
   if (!cleaned) return null;
   var n = Number(cleaned);
   return Number.isFinite(n) ? n : null;
+}
+
+function addCoupangProductMetricOptions(options, source) {
+  var salePrice = numOrNull(source && source.salePrice);
+  var ratingCount = numOrNull(source && source.ratingCount);
+  if (salePrice !== null) options.push({ name: '\uD310\uB9E4\uAC00', qty: salePrice });
+  if (ratingCount !== null) options.push({ name: '\uB9AC\uBDF0\uC218', qty: ratingCount });
 }
 
 function pickCoupangWingMetricItem(data, parsed, comp) {
@@ -2333,6 +2409,8 @@ async function collectCoupangSalesMetricsFromWingApi(comp, parsed, index, total,
           ok: true,
           views28: Number(apiMetrics.views28),
           name: apiMetrics.productName || '',
+          salePrice: apiMetrics.salePrice,
+          ratingCount: apiMetrics.ratingCount,
           image_url: apiMetrics.image_url || ''
         };
         await setCachedCoupangMetric('views', salesCacheKey, viewsMetric);
@@ -2354,6 +2432,7 @@ async function collectCoupangSalesMetricsFromWingApi(comp, parsed, index, total,
   if (monthlySales !== null) options.push({ name: '\uC6D4\uD310\uB9E4\uC218\uB7C9', qty: monthlySales });
   else if (apiMetrics && apiMetrics.error) options.push({ name: '\uC6D4\uD310\uB9E4\uC218\uB7C9 \uC624\uB958', qty: null, text: apiMetrics.error });
   if (conversionRate !== null) options.push({ name: '\uC804\uD658\uC728', qty: Number(conversionRate.toFixed(2)) });
+  addCoupangProductMetricOptions(options, apiMetrics || viewsMetric);
 
   return {
     ok: true,
@@ -2548,12 +2627,18 @@ async function runFetch(competitors, fetchMode) {
               results
             });
             stockOnly = await collectCoupangStockFromPage(comp, parsed);
-            if (stockOnly && stockOnly.ok && stockOnly.stock != null) await setCachedCoupangMetric('stock', stockOnlyKey, {
-              ok: true,
-              stock: Number(stockOnly.stock),
-              options: [{ name: '\uC7AC\uACE0 \uCD94\uC815', qty: Number(stockOnly.stock) }],
-              image_url: stockOnly.image_url || ''
-            });
+            if (stockOnly && stockOnly.ok && stockOnly.stock != null) {
+              var stockCacheOptions = [{ name: '\uC7AC\uACE0 \uCD94\uC815', qty: Number(stockOnly.stock) }];
+              addCoupangProductMetricOptions(stockCacheOptions, stockOnly);
+              await setCachedCoupangMetric('stock', stockOnlyKey, {
+                ok: true,
+                stock: Number(stockOnly.stock),
+                options: stockCacheOptions,
+                salePrice: stockOnly.salePrice,
+                ratingCount: stockOnly.ratingCount,
+                image_url: stockOnly.image_url || ''
+              });
+            }
           }
 
           if (stockOnly && stockOnly.stopped) {
@@ -2566,6 +2651,7 @@ async function runFetch(competitors, fetchMode) {
             } else if (stockOnly.overLimit) {
               stockOnlyOptions.push({ name: '\uC7AC\uACE0 \uCD94\uC815 \uC624\uB958', qty: null, text: stockOnly.reason || '5000+ or delivery boundary not found' });
             }
+            addCoupangProductMetricOptions(stockOnlyOptions, stockOnly);
             cr = {
               ok: true,
               total: stockOnlyValue,
@@ -2696,6 +2782,7 @@ async function runFetch(competitors, fetchMode) {
             if (conversionRate !== null) options.push({ name: '\uC804\uD658\uC728', qty: Number(conversionRate.toFixed(2)) });
             else if (views !== null && monthly && !monthly.ok) options.push({ name: '\uC804\uD658\uC728 \uC624\uB958', qty: null, text: '\uC6D4\uD310\uB9E4\uC218\uB7C9\uC774 \uC5C6\uC5B4 \uACC4\uC0B0\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4' });
           }
+          addCoupangProductMetricOptions(options, wing);
           cr = {
             ok: true,
             total: wantsCoupangStock && !wantsCoupangSales ? estimatedStock : (wantsCoupangSales ? monthlySales : null),
@@ -2852,10 +2939,13 @@ async function collectCoupangStockMetricOnly(comp, parsed, index, total, results
   var options = [];
   if (value !== null && Number.isFinite(value)) {
     options.push({ name: '\uC7AC\uACE0 \uCD94\uC815', qty: value });
+    addCoupangProductMetricOptions(options, stock);
     await setCachedCoupangMetric('stock', coupangStockCacheKey(parsed), {
       ok: true,
       stock: value,
       options: options,
+      salePrice: stock.salePrice,
+      ratingCount: stock.ratingCount,
       image_url: stock.image_url || ''
     });
   } else if (stock.overLimit) {
@@ -2864,6 +2954,7 @@ async function collectCoupangStockMetricOnly(comp, parsed, index, total, results
       qty: null,
       text: stock.reason || '5000\uAC1C \uC774\uC0C1 \uB610\uB294 \uBC30\uC1A1 \uACBD\uACC4 \uBBF8\uBC1C\uACAC'
     });
+    addCoupangProductMetricOptions(options, stock);
   }
 
   return {

@@ -1237,7 +1237,8 @@ function renderKPIs(data) {
   const isCoupang = isCoupangMarket();
   const isCoupangStock = isCoupangStockMarket();
 
-  let totalSales = 0, restockCount = 0, errorCount = 0, successCount = 0;
+  const displayDates = sortedDates.slice().reverse();
+  let totalSales = 0, restockCount = 0, errorCount = 0, successCount = 0, totalRevenue = 0, reviewIncrease = 0;
   competitors.forEach(comp => {
     const day = comp.days[latestDate];
     if (!day) return;
@@ -1256,6 +1257,12 @@ function renderKPIs(data) {
         if (delta > 0) totalSales += delta;
         else if (delta < 0) restockCount++;
       }
+    }
+    if (isCoupangStock) {
+      const revenue = coupangMetricValueForCell(comp, displayDates, 0, 'revenueEstimate');
+      const reviews = coupangMetricValueForCell(comp, displayDates, 0, 'reviewDelta');
+      if (revenue !== null) totalRevenue += revenue;
+      if (reviews !== null && reviews > 0) reviewIncrease += reviews;
     }
   });
   const successRate = competitors.length > 0 ? Math.round(successCount / competitors.length * 100) : 0;
@@ -1278,6 +1285,17 @@ function renderKPIs(data) {
       <div class="kpi-value amber">${restockCount}<span style="font-size:14px;font-weight:500;margin-left:3px">건</span></div>
       <div class="kpi-sub">${isCoupangStock ? '전회 대비 재고 추정이 증가한 상품 수' : isCoupang ? '전회 대비 월판매수량이 낮아진 상품 수' : '재고 증가 경쟁사 수'}</div>
     </div>
+    ${isCoupangStock ? `
+    <div class="kpi-card kpi-accent-blue">
+      <div class="kpi-label">추정 매출 (${dateLabel})</div>
+      <div class="kpi-value blue">${totalRevenue.toLocaleString()}<span style="font-size:14px;font-weight:500;margin-left:3px">원</span></div>
+      <div class="kpi-sub">재고 감소 추정 수량 × 판매가</div>
+    </div>
+    <div class="kpi-card kpi-accent-green">
+      <div class="kpi-label">리뷰 증가 (${dateLabel})</div>
+      <div class="kpi-value green">${reviewIncrease.toLocaleString()}<span style="font-size:14px;font-weight:500;margin-left:3px">개</span></div>
+      <div class="kpi-sub">전회 대비 리뷰수 증가 합산</div>
+    </div>` : ''}
     <div class="kpi-card ${successRate >= 80 ? 'kpi-accent-green' : 'kpi-accent-red'}">
       <div class="kpi-label">조회 성공률</div>
       <div class="kpi-value ${successRate >= 80 ? 'green' : 'red'}">${successRate}<span style="font-size:14px;font-weight:500;margin-left:2px">%</span></div>
@@ -1764,7 +1782,40 @@ function coupangMetricValue(day, metric) {
     if (!views || monthly === null) return null;
     return Number(((monthly / views) * 100).toFixed(2));
   }
+  if (metric === 'price') {
+    return getCoupangOptionValue(day, ['판매가', '판매가격']);
+  }
+  if (metric === 'reviews') {
+    return getCoupangOptionValue(day, ['리뷰수', '상품평수']);
+  }
   return null;
+}
+
+function previousCoupangMetricValue(comp, sortedDates, index, metric) {
+  for (let i = index + 1; i < sortedDates.length; i++) {
+    const prev = coupangMetricValue(comp.days[sortedDates[i]], metric);
+    if (prev !== null) return prev;
+  }
+  return null;
+}
+
+function coupangMetricValueForCell(comp, sortedDates, index, metric) {
+  const day = comp.days[sortedDates[index]];
+  if (metric === 'reviewDelta') {
+    const current = coupangMetricValue(day, 'reviews');
+    const prev = previousCoupangMetricValue(comp, sortedDates, index, 'reviews');
+    return current !== null && prev !== null ? current - prev : null;
+  }
+  if (metric === 'soldEstimate' || metric === 'revenueEstimate') {
+    const currentStock = coupangMetricValue(day, 'stock');
+    const prevStock = previousCoupangMetricValue(comp, sortedDates, index, 'stock');
+    if (currentStock === null || prevStock === null) return null;
+    const sold = Math.max(prevStock - currentStock, 0);
+    if (metric === 'soldEstimate') return sold;
+    const price = coupangMetricValue(day, 'price');
+    return price !== null ? sold * price : null;
+  }
+  return coupangMetricValue(day, metric);
 }
 
 function coupangMetricError(day, metric) {
@@ -1782,24 +1833,39 @@ function coupangMetricError(day, metric) {
 
 function formatCoupangMetric(value, metric) {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) return '—';
+  if (metric === 'price' || metric === 'revenueEstimate') return `${Number(value).toLocaleString()}원`;
+  if (metric === 'reviewDelta') {
+    if (Number(value) > 0) return `+${Number(value).toLocaleString()}`;
+    return Number(value).toLocaleString();
+  }
   if (metric === 'conversion') return `${Number(value).toFixed(2)}%`;
   return Number(value).toLocaleString();
 }
 
 function renderCoupangMetricsDetailGrid(comp, sortedDates, colTpl) {
   const rows = isCoupangStockMarket()
-    ? [{ key: 'stock', label: '재고 추정' }]
+    ? [
+      { key: 'stock', label: '재고 추정' },
+      { key: 'price', label: '판매가' },
+      { key: 'reviews', label: '리뷰수' },
+      { key: 'reviewDelta', label: '리뷰 증가' },
+      { key: 'soldEstimate', label: '판매 추정' },
+      { key: 'revenueEstimate', label: '추정 매출' },
+    ]
     : [
       { key: 'views', label: '조회수' },
       { key: 'monthly', label: '월판매수량' },
       { key: 'conversion', label: '전환율' },
+      { key: 'price', label: '판매가' },
+      { key: 'reviews', label: '리뷰수' },
     ];
 
   let hasData = false;
   sortedDates.forEach(d => {
     const day = comp.days[d];
     rows.forEach(row => {
-      if (coupangMetricValue(day, row.key) !== null || coupangMetricError(day, row.key)) hasData = true;
+      const index = sortedDates.indexOf(d);
+      if (coupangMetricValueForCell(comp, sortedDates, index, row.key) !== null || coupangMetricError(day, row.key)) hasData = true;
     });
   });
   if (!hasData) {
@@ -1823,7 +1889,7 @@ function renderCoupangMetricsDetailGrid(comp, sortedDates, colTpl) {
         html += `<div class="date-cell"><div class="d-num">${loadingCell('small')}</div><div></div></div>`;
         return;
       }
-      const value = coupangMetricValue(day, row.key);
+      const value = coupangMetricValueForCell(comp, sortedDates, sortedDates.indexOf(d), row.key);
       const err = coupangMetricError(day, row.key);
       if (err) {
         html += `<div class="date-cell"><div class="d-num err" title="${escHtml(err)}">실패</div><div class="d-error" title="${escHtml(err)}">${escHtml(shortErrorMessage(err))}</div></div>`;

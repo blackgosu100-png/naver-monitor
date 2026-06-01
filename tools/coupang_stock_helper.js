@@ -319,6 +319,40 @@ function stripHtml(value) {
   return String(value || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
 }
 
+function numOrNull(value) {
+  if (value == null || value === '') return null;
+  const cleaned = String(value).replace(/[^0-9.]/g, '');
+  if (!cleaned) return null;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
+}
+
+function extractProductMetricsFromHtml(html) {
+  const source = String(html || '');
+  const text = stripHtml(source);
+  function match(patterns) {
+    for (const pattern of patterns) {
+      const found = source.match(pattern) || text.match(pattern);
+      if (found && found[1]) return found[1];
+    }
+    return '';
+  }
+  return {
+    salePrice: numOrNull(match([
+      /"salePrice"\s*:\s*"?([0-9,]+)"?/i,
+      /"finalPrice"\s*:\s*"?([0-9,]+)"?/i,
+      /"price"\s*:\s*"?([0-9,]{4,})"?/i,
+      /([0-9,]{4,})\s*원/
+    ])),
+    ratingCount: numOrNull(match([
+      /"ratingCount"\s*:\s*"?([0-9,]+)"?/i,
+      /"reviewCount"\s*:\s*"?([0-9,]+)"?/i,
+      /상품평\s*([0-9,]+)\s*개/,
+      /리뷰\s*([0-9,]+)\s*개/
+    ])),
+  };
+}
+
 function normalizeDeliveryText(text) {
   if (!text) return '';
   return stripHtml(text)
@@ -475,10 +509,16 @@ async function estimateStock(payload) {
 
     await navigateProductPage(cdp, productUrl);
 
+    let productHtml = '';
     if (!vendorItemId) {
-      const html = await cdp.evaluate('document.documentElement ? document.documentElement.outerHTML : ""', 8000);
+      productHtml = await cdp.evaluate('document.documentElement ? document.documentElement.outerHTML : ""', 8000);
+      const html = productHtml;
       vendorItemId = resolveVendorItemIdFromHtml(String(html || ''), itemId);
     }
+    if (!productHtml) {
+      productHtml = await cdp.evaluate('document.documentElement ? document.documentElement.outerHTML : ""', 8000).catch(() => '');
+    }
+    const productMetrics = extractProductMetricsFromHtml(productHtml);
     if (!productId || !vendorItemId) {
       throw new Error('productId or vendorItemId not found');
     }
@@ -568,6 +608,8 @@ async function estimateStock(payload) {
         productId,
         itemId,
         vendorItemId,
+        salePrice: productMetrics.salePrice,
+        ratingCount: productMetrics.ratingCount,
         apiCalls,
         elapsedMs: Date.now() - startedAt,
         source: 'local-cdp-helper',
@@ -589,6 +631,8 @@ async function estimateStock(payload) {
       productId,
       itemId,
       vendorItemId,
+      salePrice: productMetrics.salePrice,
+      ratingCount: productMetrics.ratingCount,
       apiCalls,
       elapsedMs: Date.now() - startedAt,
       source: 'local-cdp-helper',
