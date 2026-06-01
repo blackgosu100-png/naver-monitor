@@ -2071,11 +2071,15 @@ function pickCoupangWingMetricItem(data, parsed, comp) {
 }
 
 function coupangWingMetricKeywords(comp, parsed) {
+  var name = String((comp && comp.name) || '').trim();
   return [
     (parsed && parsed.pid) || '',
     (parsed && parsed.vendorItemId) || '',
+    name,
     (comp && comp.url) || ''
-  ].filter(Boolean).filter(function(value, index, list) {
+  ].map(function(value) {
+    return String(value || '').trim();
+  }).filter(Boolean).filter(function(value, index, list) {
     return list.indexOf(value) === index;
   });
 }
@@ -2181,7 +2185,7 @@ async function fetchCoupangWingPostMatchingMetricsViaExistingTab(comp, parsed, r
       }
       var item = pickCoupangWingMetricItem(payload.data, parsed, comp);
       if (!item) {
-        lastError = 'Wing post-matching item not found';
+        lastError = '쿠팡 Wing에서 해당 상품을 찾지 못했습니다. Wing 검색에서 상품명 또는 쿠팡 URL이 검색되는지 확인해 주세요.';
         continue;
       }
       var views = numOrNull(item.pvLast28Day);
@@ -2251,7 +2255,7 @@ async function fetchCoupangWingPostMatchingMetrics(comp, parsed, requestContext)
       var data = JSON.parse(text);
       var item = pickCoupangWingMetricItem(data, parsed, comp);
       if (!item) {
-        lastError = 'Wing post-matching item not found';
+        lastError = '쿠팡 Wing에서 해당 상품을 찾지 못했습니다. Wing 검색에서 상품명 또는 쿠팡 URL이 검색되는지 확인해 주세요.';
         continue;
       }
       var views = numOrNull(item.pvLast28Day);
