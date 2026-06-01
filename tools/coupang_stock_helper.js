@@ -339,9 +339,13 @@ function extractProductMetricsFromHtml(html) {
   }
   return {
     salePrice: numOrNull(match([
-      /"salePrice"\s*:\s*"?([0-9,]+)"?/i,
       /"finalPrice"\s*:\s*"?([0-9,]+)"?/i,
+      /"couponPrice"\s*:\s*"?([0-9,]+)"?/i,
+      /"discount(?:ed)?Price"\s*:\s*"?([0-9,]+)"?/i,
+      /"salePrice"\s*:\s*"?([0-9,]+)"?/i,
       /"price"\s*:\s*"?([0-9,]{4,})"?/i,
+      /([0-9,]{4,})\s*원\s*\([^)]*1\s*개당/i,
+      /[0-9]+\s*%\s*[0-9,]{4,}\s*원[\s\S]{0,120}?([0-9,]{4,})\s*원/i,
       /([0-9,]{4,})\s*원/
     ])),
     ratingCount: numOrNull(match([

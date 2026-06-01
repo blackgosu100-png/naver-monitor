@@ -1169,12 +1169,37 @@ async function readCoupangStockEstimate(productUrl, productId, itemId, vendorIte
   function getProductMetrics() {
     var html = document.documentElement ? document.documentElement.outerHTML || '' : '';
     var text = document.body ? document.body.innerText || '' : '';
+    function firstTextFromSelectors(selectors) {
+      for (var i = 0; i < selectors.length; i++) {
+        var el = document.querySelector(selectors[i]);
+        if (el && el.textContent) return el.textContent;
+      }
+      return '';
+    }
+    var visibleFinalPrice = firstTextFromSelectors([
+      '.prod-coupon-price .total-price strong',
+      '.prod-coupon-price .total-price',
+      '.prod-sale-price .total-price strong',
+      '.prod-sale-price .total-price',
+      '.total-price strong',
+      '.total-price',
+      '[class*="coupon"][class*="price"]',
+      '[class*="sale"][class*="price"]'
+    ]);
     var salePrice = numOrNull(
+      visibleFinalPrice ||
       firstMatch(html, [
-        /"salePrice"\s*:\s*"?([0-9,]+)"?/i,
         /"finalPrice"\s*:\s*"?([0-9,]+)"?/i,
+        /"couponPrice"\s*:\s*"?([0-9,]+)"?/i,
+        /"discount(?:ed)?Price"\s*:\s*"?([0-9,]+)"?/i,
+        /"salePrice"\s*:\s*"?([0-9,]+)"?/i,
         /"price"\s*:\s*"?([0-9,]{4,})"?/i
-      ]) || firstMatch(text, [/([0-9,]{4,})\s*원/])
+      ]) ||
+      firstMatch(text, [
+        /([0-9,]{4,})\s*원\s*\([^)]*1\s*개당/i,
+        /[0-9]+\s*%\s*[0-9,]{4,}\s*원[\s\S]{0,120}?([0-9,]{4,})\s*원/i,
+        /([0-9,]{4,})\s*원/
+      ])
     );
     var ratingCount = numOrNull(
       firstMatch(html, [
@@ -1434,12 +1459,37 @@ function readCoupangProductIdentity(productUrl, fallbackProductId, fallbackItemI
   function getProductMetrics() {
     var html = document.documentElement ? document.documentElement.outerHTML || '' : '';
     var text = document.body ? document.body.innerText || '' : '';
+    function firstTextFromSelectors(selectors) {
+      for (var i = 0; i < selectors.length; i++) {
+        var el = document.querySelector(selectors[i]);
+        if (el && el.textContent) return el.textContent;
+      }
+      return '';
+    }
+    var visibleFinalPrice = firstTextFromSelectors([
+      '.prod-coupon-price .total-price strong',
+      '.prod-coupon-price .total-price',
+      '.prod-sale-price .total-price strong',
+      '.prod-sale-price .total-price',
+      '.total-price strong',
+      '.total-price',
+      '[class*="coupon"][class*="price"]',
+      '[class*="sale"][class*="price"]'
+    ]);
     var salePrice = numOrNull(
+      visibleFinalPrice ||
       firstMatch(html, [
-        /"salePrice"\s*:\s*"?([0-9,]+)"?/i,
         /"finalPrice"\s*:\s*"?([0-9,]+)"?/i,
+        /"couponPrice"\s*:\s*"?([0-9,]+)"?/i,
+        /"discount(?:ed)?Price"\s*:\s*"?([0-9,]+)"?/i,
+        /"salePrice"\s*:\s*"?([0-9,]+)"?/i,
         /"price"\s*:\s*"?([0-9,]{4,})"?/i
-      ]) || firstMatch(text, [/([0-9,]{4,})\s*원/])
+      ]) ||
+      firstMatch(text, [
+        /([0-9,]{4,})\s*원\s*\([^)]*1\s*개당/i,
+        /[0-9]+\s*%\s*[0-9,]{4,}\s*원[\s\S]{0,120}?([0-9,]{4,})\s*원/i,
+        /([0-9,]{4,})\s*원/
+      ])
     );
     var ratingCount = numOrNull(
       firstMatch(html, [
