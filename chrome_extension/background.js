@@ -2074,6 +2074,7 @@ function coupangWingMetricKeywords(comp, parsed) {
   var name = String((comp && comp.name) || '').trim();
   return [
     (parsed && parsed.pid) || '',
+    (parsed && parsed.itemId) || '',
     (parsed && parsed.vendorItemId) || '',
     name,
     (comp && comp.url) || ''
