@@ -2112,7 +2112,41 @@ function readCoupangWingPostMatchingInPage(keyword) {
   });
 }
 
-async function fetchCoupangWingPostMatchingMetricsViaExistingTab(comp, parsed) {
+async function openCoupangWingLoginOnce(requestContext) {
+  requestContext = requestContext || {};
+  if (requestContext.wingLoginPrompted) return null;
+  requestContext.wingLoginPrompted = true;
+
+  var tabs = [];
+  try {
+    tabs = await chrome.tabs.query({ url: 'https://wing.coupang.com/*' });
+  } catch(e) {}
+
+  var tab = (tabs || []).find(function(item) { return item && item.id != null; });
+  if (tab) {
+    try {
+      await chrome.tabs.update(tab.id, { active: true });
+      if (tab.windowId != null) await chrome.windows.update(tab.windowId, { focused: true });
+    } catch(e) {}
+    return tab;
+  }
+
+  try {
+    return await chrome.tabs.create({ url: 'https://wing.coupang.com/', active: true });
+  } catch(e) {
+    return null;
+  }
+}
+
+function coupangWingLoginRequiredResult() {
+  return {
+    ok: false,
+    authRequired: true,
+    error: '쿠팡 Wing 로그인이 필요합니다. 열린 Wing 탭에서 로그인한 뒤 대시보드로 돌아와 판매지표 조회를 다시 실행해 주세요.'
+  };
+}
+
+async function fetchCoupangWingPostMatchingMetricsViaExistingTab(comp, parsed, requestContext) {
   var tabs = [];
   try {
     tabs = await chrome.tabs.query({ url: 'https://wing.coupang.com/*' });
@@ -2120,7 +2154,10 @@ async function fetchCoupangWingPostMatchingMetricsViaExistingTab(comp, parsed) {
     return { ok: false, error: 'Wing tab lookup failed' };
   }
   var tab = (tabs || []).find(function(item) { return item && item.id != null; });
-  if (!tab) return { ok: false, authRequired: true, error: 'Wing login tab not found' };
+  if (!tab) {
+    await openCoupangWingLoginOnce(requestContext);
+    return coupangWingLoginRequiredResult();
+  }
 
   var keywords = coupangWingMetricKeywords(comp, parsed);
   var lastError = 'Wing post-matching data not found';
@@ -2134,6 +2171,10 @@ async function fetchCoupangWingPostMatchingMetricsViaExistingTab(comp, parsed) {
         args: [keywords[i]]
       });
       var payload = injected && injected[0] && injected[0].result;
+      if (payload && payload.authRequired) {
+        await openCoupangWingLoginOnce(requestContext);
+        return coupangWingLoginRequiredResult();
+      }
       if (!payload || !payload.ok) {
         lastError = (payload && payload.error) || lastError;
         continue;
@@ -2167,7 +2208,7 @@ async function fetchCoupangWingPostMatchingMetricsViaExistingTab(comp, parsed) {
   return { ok: false, error: lastError };
 }
 
-async function fetchCoupangWingPostMatchingMetrics(comp, parsed) {
+async function fetchCoupangWingPostMatchingMetrics(comp, parsed, requestContext) {
   var keywords = coupangWingMetricKeywords(comp, parsed);
   var lastError = 'Wing post-matching data not found';
   var authRequired = false;
@@ -2235,14 +2276,15 @@ async function fetchCoupangWingPostMatchingMetrics(comp, parsed) {
     }
   }
   if (authRequired) {
-    var tabResult = await fetchCoupangWingPostMatchingMetricsViaExistingTab(comp, parsed);
+    var tabResult = await fetchCoupangWingPostMatchingMetricsViaExistingTab(comp, parsed, requestContext);
     if (tabResult && (tabResult.ok || tabResult.stopped)) return tabResult;
+    if (tabResult && tabResult.authRequired) return tabResult;
     lastError = tabResult && tabResult.error ? tabResult.error : lastError;
   }
   return { ok: false, error: lastError };
 }
 
-async function collectCoupangSalesMetricsFromWingApi(comp, parsed, index, total, results) {
+async function collectCoupangSalesMetricsFromWingApi(comp, parsed, index, total, results, requestContext) {
   var salesCacheKey = coupangStockCacheKey(parsed) || coupangCacheKey(parsed);
   var monthly = await getCachedCoupangMetric('monthly', salesCacheKey, COUPANG_MONTHLY_TTL);
   var viewsMetric = await getCachedCoupangMetric('views', salesCacheKey, COUPANG_VIEWS_TTL);
@@ -2258,8 +2300,19 @@ async function collectCoupangSalesMetricsFromWingApi(comp, parsed, index, total,
       results
     });
 
-    apiMetrics = await fetchCoupangWingPostMatchingMetrics(comp, parsed);
+    apiMetrics = await fetchCoupangWingPostMatchingMetrics(comp, parsed, requestContext);
     if (apiMetrics && apiMetrics.stopped) return apiMetrics;
+    if (apiMetrics && apiMetrics.authRequired) {
+      await setStatus({
+        running: true,
+        current: index + 1,
+        total: total,
+        name: comp.name,
+        msg: apiMetrics.error,
+        results
+      });
+      return apiMetrics;
+    }
     if (apiMetrics && apiMetrics.ok) {
       if (apiMetrics.monthlySales !== null && apiMetrics.monthlySales !== undefined) {
         monthly = {
@@ -2429,6 +2482,7 @@ async function runFetch(competitors, fetchMode) {
   currentFetchTabId = null;
   var results = [];
   var stopped = false;
+  var requestContext = {};
   var normalizedFetchMode = String(fetchMode || '').toLowerCase();
   var coupangFetchMode = normalizedFetchMode === 'coupang_stock' || normalizedFetchMode === 'stock'
     ? 'stock'
@@ -2466,7 +2520,7 @@ async function runFetch(competitors, fetchMode) {
       if (market === 'coupang') {
         var cacheKey = coupangCacheKey(parsed);
         if (coupangFetchMode === 'sales') {
-          cr = await collectCoupangSalesMetricsFromWingApi(comp, parsed, i, competitors.length, results);
+          cr = await collectCoupangSalesMetricsFromWingApi(comp, parsed, i, competitors.length, results, requestContext);
         } else {
         var wantsCoupangStock = coupangFetchMode !== 'sales';
         var wantsCoupangSales = coupangFetchMode !== 'stock';
@@ -2595,7 +2649,7 @@ async function runFetch(competitors, fetchMode) {
               results
             });
 
-            wing = await fetchCoupangWingPostMatchingMetrics(comp, parsed);
+            wing = await fetchCoupangWingPostMatchingMetrics(comp, parsed, requestContext);
             if (wing && wing.ok) {
               if (!monthly && wing.monthlySales !== null && wing.monthlySales !== undefined) {
                 monthly = {
@@ -2823,6 +2877,8 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
 
   var results = [];
   var stopped = false;
+  var authRequired = false;
+  var authMessage = '';
   var route = normalizeSeparatedFetchMode(fetchMode, requestedMarket);
   var queuedMarkets = competitors.map(function(comp) { return detectMarket(comp && comp.url); });
   if (route && queuedMarkets.length && queuedMarkets.every(function(market) { return market !== 'coupang'; })) {
@@ -2876,7 +2932,7 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
           if (route === 'coupang_stock') {
             cr = await collectCoupangStockMetricOnly(comp, parsed, i, competitors.length, results, requestContext);
           } else if (route === 'coupang_sales') {
-            cr = await collectCoupangSalesMetricsFromWingApi(comp, parsed, i, competitors.length, results);
+            cr = await collectCoupangSalesMetricsFromWingApi(comp, parsed, i, competitors.length, results, requestContext);
           } else {
             cr = { ok: false, error: 'Coupang fetch mode missing' };
           }
@@ -2891,6 +2947,11 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
         }
 
         if (cr && cr.stopped) {
+          stopped = true;
+          break;
+        } else if (cr && cr.authRequired) {
+          authRequired = true;
+          authMessage = cr.error || '쿠팡 Wing 로그인이 필요합니다.';
           stopped = true;
           break;
         } else if (cr && cr.ok) {
@@ -2931,7 +2992,9 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
 
     var okCount = results.filter(r => !r.error).length;
     var errItems = results.filter(r => r.error);
-    var msg = stopped
+    var msg = authRequired
+      ? authMessage
+      : stopped
       ? `STOP\uC73C\uB85C \uC911\uB2E8\uB428. \uC800\uC7A5\uB41C \uACB0\uACFC ${okCount}/${results.length} \uC131\uACF5`
       : `\uC870\uD68C \uC644\uB8CC! ${okCount}/${results.length} \uC131\uACF5`;
     if (errItems.length) msg += '\n\uC2E4\uD328: ' + errItems.map(r => r.name + '(' + r.error + ')').join(', ');
