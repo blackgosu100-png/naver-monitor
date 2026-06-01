@@ -2531,6 +2531,7 @@ function openStoreUrl() {
 // ─── Admin ──────────────────────────────────────────────────
 const PLAN_LABELS = {free:'무료', basic:'베이직', pro:'프로 추천', business:'비즈니스'};
 const PLAN_LIMITS = {free:3, basic:10, pro:20, business:50};
+const BUSINESS_LIMITS = [50, 100, 150];
 
 function renderUserPlanBadge(user) {
   if (user.is_admin) return '<span class="badge badge-green">관리자</span>';
@@ -2556,6 +2557,12 @@ function renderPlanActions(user) {
     ${Object.entries(PLAN_LABELS).map(([plan, label]) => `
       <button class="btn btn-sm ${user.plan === plan ? 'btn-primary' : ''}" onclick="setUserPlan('${user.id}', '${plan}')">${label.replace(' 추천', '')}</button>
     `).join('')}
+    <span style="display:inline-flex;align-items:center;gap:4px;margin-left:8px">
+      ${BUSINESS_LIMITS.map(limit => `
+        <button class="btn btn-sm ${user.plan === 'business' && Number(user.competitor_limit) === limit ? 'btn-primary' : ''}" onclick="setUserPlan('${user.id}', 'business', ${limit})">비즈 ${limit}</button>
+      `).join('')}
+      <button class="btn btn-sm" onclick="setCustomBusinessLimit('${user.id}', ${Number(user.competitor_limit) || 50})">직접</button>
+    </span>
   </div>`;
 }
 
@@ -2593,20 +2600,34 @@ async function loadAdminUsers() {
   }
 }
 
-async function setUserPlan(uid, plan) {
+async function setUserPlan(uid, plan, competitorLimit = null) {
   try {
+    const body = {plan};
+    if (competitorLimit !== null && competitorLimit !== undefined) body.competitor_limit = competitorLimit;
     const r = await fetch(`/api/admin/users/${uid}/plan`, {
       method: 'PUT',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({plan})
+      body: JSON.stringify(body)
     });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(data.error || '플랜 변경 실패');
-    showToast(`${PLAN_LABELS[plan] || '선택한'} 플랜으로 변경됨`);
+    const limitText = data.competitor_limit ? ` · ${data.competitor_limit}개` : '';
+    showToast(`${PLAN_LABELS[plan] || '선택한'} 플랜으로 변경됨${limitText}`);
     await loadAdminUsers();
   } catch (e) {
     showToast(e.message || '플랜 상태 변경 실패');
   }
+}
+
+function setCustomBusinessLimit(uid, currentLimit) {
+  const value = prompt('비즈니스 상품 수량을 입력하세요 (1~1000):', currentLimit || 50);
+  if (value === null) return;
+  const limit = parseInt(value, 10);
+  if (!Number.isFinite(limit) || limit < 1 || limit > 1000) {
+    showToast('상품 수량은 1개 이상 1000개 이하 숫자로 입력해주세요');
+    return;
+  }
+  setUserPlan(uid, 'business', limit);
 }
 
 function formatAdminDate(value) {

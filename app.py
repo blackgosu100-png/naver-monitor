@@ -10,7 +10,7 @@ from urllib.parse import parse_qs, urlparse
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'naver-monitor-dev-secret-2024')
-APP_VERSION = '5.41'
+APP_VERSION = '5.43'
 
 @app.after_request
 def add_cors(response):
@@ -560,6 +560,15 @@ def competitor_limit_for_user(user: dict) -> int | None:
         return None
     if plan in PAID_PLAN_IDS and is_plan_expired(user):
         return FREE_COMPETITOR_LIMIT
+    app_meta = user.get('app_metadata') or {}
+    custom_limit = app_meta.get('competitor_limit') or app_meta.get('custom_competitor_limit')
+    if plan == 'business' and custom_limit not in (None, ''):
+        try:
+            limit = int(custom_limit)
+            if limit > 0:
+                return limit
+        except (TypeError, ValueError):
+            pass
     return PLAN_LIMITS.get(plan, FREE_COMPETITOR_LIMIT)
 
 def active_competitors_for_user(user: dict, competitors: list | None = None) -> list:
@@ -1025,6 +1034,20 @@ def api_admin_user_plan(uid):
     app_meta = user.get('app_metadata') or {}
     app_meta['plan'] = plan
     app_meta['approved'] = plan != 'free'
+    if plan == 'business':
+        raw_limit = body.get('competitor_limit')
+        if raw_limit in (None, ''):
+            raw_limit = PLAN_LIMITS['business']
+        try:
+            competitor_limit = int(raw_limit)
+        except (TypeError, ValueError):
+            return jsonify({'error': '비즈니스 상품 수량은 숫자로 입력해 주세요.'}), 400
+        if competitor_limit < 1 or competitor_limit > 1000:
+            return jsonify({'error': '비즈니스 상품 수량은 1개 이상 1000개 이하로 입력해 주세요.'}), 400
+        app_meta['competitor_limit'] = competitor_limit
+    else:
+        app_meta.pop('competitor_limit', None)
+        app_meta.pop('custom_competitor_limit', None)
     if plan in PAID_PLAN_IDS:
         started = _today_kst()
         expires = _add_months(started, int(_plan_meta(plan).get('months') or 0))
@@ -1041,7 +1064,12 @@ def api_admin_user_plan(uid):
     )
     if r.status_code >= 400:
         return jsonify({'error': _auth_error(r, 'Plan update failed')}), 500
-    return jsonify({'ok': True, 'plan': plan, 'plan_label': PLAN_LABELS.get(plan, '무료')})
+    return jsonify({
+        'ok': True,
+        'plan': plan,
+        'plan_label': PLAN_LABELS.get(plan, '무료'),
+        'competitor_limit': competitor_limit_for_user({'app_metadata': app_meta}),
+    })
 
 @app.route('/api/admin/users/<uid>/approval', methods=['PUT'])
 @admin_required
