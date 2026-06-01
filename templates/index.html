@@ -267,6 +267,17 @@ body { overflow-x: hidden; }
   padding-top: 1px;
   white-space: nowrap;
 }
+.date-cell .d-error {
+  max-width: 48px;
+  text-align: left;
+  font-size: 9.5px;
+  font-weight: 500;
+  color: var(--danger);
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* 업체명 셀 */
 .biz-name {
@@ -1598,7 +1609,7 @@ function renderTable(data) {
       } else if (!day) {
         html += `<div class="date-cell"><div class="d-num mute">—</div><div></div></div>`;
       } else if (day.error) {
-        html += `<div class="date-cell"><div class="d-num err" title="${escHtml(day.error)}">실패</div><div></div></div>`;
+        html += `<div class="date-cell"><div class="d-num err" title="${escHtml(day.error)}">실패</div><div class="d-error" title="${escHtml(day.error)}">${escHtml(shortErrorMessage(day.error))}</div></div>`;
       } else {
         const total = displayValueForDay(comp, day);
         const metricDelta = metricDeltaForSortedDates(comp, sortedDates, dateIndex);
@@ -1815,7 +1826,7 @@ function renderCoupangMetricsDetailGrid(comp, sortedDates, colTpl) {
       const value = coupangMetricValue(day, row.key);
       const err = coupangMetricError(day, row.key);
       if (err) {
-        html += `<div class="date-cell"><div class="d-num err" title="${escHtml(err)}">실패</div><div></div></div>`;
+        html += `<div class="date-cell"><div class="d-num err" title="${escHtml(err)}">실패</div><div class="d-error" title="${escHtml(err)}">${escHtml(shortErrorMessage(err))}</div></div>`;
       } else {
         html += `<div class="date-cell"><div class="d-num${value === null ? ' mute' : ''}">${formatCoupangMetric(value, row.key)}</div><div></div></div>`;
       }
@@ -2547,6 +2558,17 @@ function showToast(msg) {
 
 function escHtml(str) {
   return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function shortErrorMessage(error) {
+  const text = String(error || '').trim();
+  if (!text) return '';
+  if (text.includes('Wing') && text.includes('로그인')) return '로그인 필요';
+  if (text.includes('Wing') && text.includes('상품을 찾지 못')) return '상품 미발견';
+  if (text.includes('post-matching item not found')) return '상품 미발견';
+  if (text.includes('post-matching metrics missing')) return '지표 없음';
+  if (text.toLowerCase().includes('login')) return '로그인 필요';
+  return text.length > 12 ? text.slice(0, 12) + '...' : text;
 }
 
 // ─── Start ───────────────────────────────────────────────────
