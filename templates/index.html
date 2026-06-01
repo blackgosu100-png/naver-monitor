@@ -1172,9 +1172,8 @@ function toDailyHistory(data) {
 
       const total = displayValueForDay(comp, latest);
       const isCoupangDaily = competitorMarket(comp) === 'coupang';
-      const isCoupangStock = isCoupangDaily && isCoupangStockMarket();
       const sales = (total !== null && prevTotal !== null)
-        ? (isCoupangDaily && !isCoupangStock ? total - prevTotal : prevTotal - total)
+        ? (isCoupangDaily ? total - prevTotal : prevTotal - total)
         : null;
       entry.days[dayKey] = {
         ...latest,
@@ -1239,8 +1238,13 @@ function renderKPIs(data) {
       delta = metricDeltaForSortedDates(comp, sortedDates.slice().reverse(), sortedDates.length - 1 - latestIndex);
     }
     if (delta !== null) {
-      if (delta > 0) totalSales += delta;
-      else if (delta < 0) restockCount++;
+      if (isCoupangStock) {
+        if (delta < 0) totalSales += Math.abs(delta);
+        else if (delta > 0) restockCount++;
+      } else {
+        if (delta > 0) totalSales += delta;
+        else if (delta < 0) restockCount++;
+      }
     }
   });
   const successRate = competitors.length > 0 ? Math.round(successCount / competitors.length * 100) : 0;
@@ -1603,11 +1607,17 @@ function renderTable(data) {
         let deltaHtml = '';
         const isCoupangRow = competitorMarket(comp) === 'coupang';
         const isCoupangStock = isCoupangRow && isCoupangStockMarket();
-        if (sales !== null && sales > 0 && isCoupangRow && !isCoupangStock) {
+        if (isCoupangStock) {
+          if (sales !== null && sales > 0) {
+            deltaHtml = `<div class="d-delta" style="color:#2563EB">[+${sales.toLocaleString()}]</div>`;
+          } else if (sales !== null && sales < 0) {
+            deltaHtml = `<div class="d-delta">[${sales.toLocaleString()}]</div>`;
+          }
+        } else if (sales !== null && sales > 0 && isCoupangRow) {
           deltaHtml = `<div class="d-delta" style="color:#2563EB">[+${sales.toLocaleString()}]</div>`;
         } else if (sales !== null && sales > 0) {
           deltaHtml = `<div class="d-delta">[-${sales.toLocaleString()}]</div>`;
-        } else if (sales !== null && sales < 0 && isCoupangRow && !isCoupangStock) {
+        } else if (sales !== null && sales < 0 && isCoupangRow) {
           deltaHtml = `<div class="d-delta">[${sales.toLocaleString()}]</div>`;
         } else if (sales !== null && sales < 0) {
           deltaHtml = `<div class="d-delta" style="color:#2563EB">[+${Math.abs(sales).toLocaleString()}]</div>`;
