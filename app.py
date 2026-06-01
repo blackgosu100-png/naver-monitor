@@ -218,6 +218,14 @@ def coupang_product_params(url: str) -> tuple[str | None, str | None, str | None
     vendor_item_id = (query.get('vendorItemId') or query.get('vendoritemid') or [None])[0]
     return product_id, item_id, vendor_item_id
 
+def coupang_url_requires_vendor(url: str) -> str | None:
+    if not is_coupang_url(url):
+        return None
+    _, item_id, vendor_item_id = coupang_product_params(url)
+    if item_id and vendor_item_id:
+        return None
+    return '쿠팡 재고조회는 itemId와 vendorItemId가 포함된 상품 URL을 등록해야 합니다. 쿠팡 상품 페이지에서 옵션을 선택한 뒤 주소창의 전체 URL을 복사해 주세요.'
+
 def competitor_market(url: str) -> str:
     if is_ohouse_url(url):
         return 'ohouse'
@@ -1077,6 +1085,9 @@ def api_add_competitor():
     is_naver_url = re.search(r'(?:smartstore|brand)\.naver\.com/.+/products/\d+', url)
     is_ohouse_url = re.search(r'store\.ohou\.se/goods/\d+', url)
     is_coupang_product_url = is_coupang_url(url)
+    coupang_vendor_error = coupang_url_requires_vendor(url)
+    if coupang_vendor_error:
+        return jsonify({'error': coupang_vendor_error}), 400
     if not (is_naver_url or is_ohouse_url or is_coupang_product_url):
         return jsonify({'error': '네이버 스마트스토어, 오늘의집, 쿠팡 상품 URL이어야 합니다'}), 400
     competitor_limit = competitor_limit_for_user(g.user)
@@ -1098,6 +1109,9 @@ def api_update_competitor(cid):
     body   = request.get_json() or {}
     update = {k: body[k].strip() for k in ('name', 'url') if body.get(k)}
     if 'url' in update:
+        coupang_vendor_error = coupang_url_requires_vendor(update['url'])
+        if coupang_vendor_error:
+            return jsonify({'error': coupang_vendor_error}), 400
         update['image_url'] = ''
     if update:
         sb_update('competitors', update, 'id', cid, f'&user_id=eq.{g.user_id}')

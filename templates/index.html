@@ -1920,6 +1920,18 @@ function competitorMarket(comp) {
   return 'naver';
 }
 
+function coupangUrlVendorWarning(url) {
+  const value = String(url || '').trim();
+  if (!/coupang\.com\/(?:v[pm]\/)?products\/\d+/i.test(value)) return '';
+  try {
+    const parsed = new URL(value);
+    if (parsed.searchParams.get('itemId') && parsed.searchParams.get('vendorItemId')) return '';
+  } catch (e) {
+    return '';
+  }
+  return '쿠팡 재고조회는 itemId와 vendorItemId가 포함된 상품 URL을 등록해야 합니다. 쿠팡 상품 페이지에서 옵션을 선택한 뒤 주소창의 전체 URL을 복사해 주세요.';
+}
+
 function currentMarket() {
   const market = localStorage.getItem(MARKET_KEY);
   return MARKETS.includes(market) ? market : 'naver';
@@ -2324,6 +2336,8 @@ async function addCompetitor() {
   const name = document.getElementById('new-comp-name').value.trim();
   const url = document.getElementById('new-comp-url').value.trim();
   if (!name || !url) { showToast('이름과 URL을 입력해주세요'); return; }
+  const coupangWarning = coupangUrlVendorWarning(url);
+  if (coupangWarning) { showToast(coupangWarning); return; }
   const limit = appConfig.competitor_limit;
   const currentCount = (appConfig.competitors || []).length;
   if (limit !== null && limit !== undefined && currentCount >= limit) {
@@ -2360,6 +2374,8 @@ function editCompetitor(cid, name, url) {
   if (newName === null) return;
   const newUrl = prompt('URL:', url);
   if (newUrl === null) return;
+  const coupangWarning = coupangUrlVendorWarning(newUrl);
+  if (coupangWarning) { showToast(coupangWarning); return; }
   fetch(`/api/competitors/${cid}`, {
     method:'PUT',
     headers:{'Content-Type':'application/json'},
