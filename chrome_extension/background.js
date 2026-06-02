@@ -12,6 +12,9 @@ var stopRequested = false;
 var currentFetchTabId = null;
 var fetchRunning = false;
 const COUPANG_STOCK_BLOCK_RULE_BASE = 720000;
+const AUTO_FETCH_ALARM = 'naverMonitorAutoFetch';
+const AUTO_FETCH_SYNC_ALARM = 'naverMonitorAutoFetchSync';
+const AUTO_FETCH_AUTH_WAIT_MS = 10 * 60 * 1000;
 
 function normalizeServerUrl(url) {
   var value = (url || DEFAULT_SERVER).replace(/\/$/, '');
@@ -111,6 +114,58 @@ function detectMarket(url) {
   if (parseOhouseUrl(url)) return 'ohouse';
   if (parseCoupangUrl(url)) return 'coupang';
   return 'naver';
+}
+
+function naverMobileUrl(url) {
+  try {
+    var u = new URL(url);
+    if (u.hostname === 'smartstore.naver.com') u.hostname = 'm.smartstore.naver.com';
+    if (u.hostname === 'brand.naver.com') u.hostname = 'm.brand.naver.com';
+    return u.toString();
+  } catch(e) {
+    return url;
+  }
+}
+
+function nextDailyScheduleTime(hour, minute) {
+  var now = new Date();
+  var next = new Date(now);
+  next.setHours(Number(hour) || 0, Number(minute) || 0, 0, 0);
+  if (next.getTime() <= now.getTime() + 30000) next.setDate(next.getDate() + 1);
+  return next.getTime();
+}
+
+async function notifyUser(title, message) {
+  try {
+    await chrome.notifications.create('', {
+      type: 'basic',
+      iconUrl: 'icons/icon128.png',
+      title: title,
+      message: message
+    });
+  } catch(e) {}
+}
+
+async function applyAutoFetchSchedule(schedule) {
+  schedule = schedule || {};
+  await chrome.storage.local.set({ autoFetchSchedule: schedule });
+  try { await chrome.alarms.clear(AUTO_FETCH_ALARM); } catch(e) {}
+  if (!schedule.enabled) return;
+  var hour = Math.max(0, Math.min(23, Number(schedule.hour) || 0));
+  var minute = Math.max(0, Math.min(59, Number(schedule.minute) || 0));
+  await chrome.alarms.create(AUTO_FETCH_ALARM, {
+    when: nextDailyScheduleTime(hour, minute),
+    periodInMinutes: 24 * 60
+  });
+}
+
+async function syncAutoFetchScheduleFromServer() {
+  try {
+    var res = await apiFetch('/api/config');
+    if (!res.ok) return;
+    var data = await res.json();
+    await applyAutoFetchSchedule(data.schedule || {});
+  } catch(e) {}
 }
 
 function coupangCacheKey(parsed) {
@@ -639,6 +694,44 @@ async function stopCurrentFetch() {
   });
 }
 
+async function runScheduledAutoFetch() {
+  if (fetchRunning) {
+    await setStatus({
+      running: false,
+      done: false,
+      stopped: false,
+      msg: '자동조회 시간이 되었지만 이전 조회가 아직 진행 중입니다.',
+      results: []
+    });
+    return;
+  }
+  try {
+    var token = await ensureServiceToken(5000);
+    if (!token) {
+      await notifyUser('네이버 모니터링 자동조회', '서비스 로그인이 필요해서 자동조회를 시작하지 못했습니다.');
+      await setStatus({ running: false, done: false, msg: '자동조회 실패: 서비스 로그인이 필요합니다.', results: [] });
+      return;
+    }
+    var res = await apiFetch('/api/public/competitors');
+    if (!res.ok) throw new Error('competitors HTTP ' + res.status);
+    var data = await res.json();
+    var competitors = data.competitors || [];
+    if (!competitors.length) {
+      await setStatus({ running: false, done: true, msg: '자동조회: 조회할 상품이 없습니다.', results: [] });
+      return;
+    }
+    await notifyUser('네이버 모니터링 자동조회', competitors.length + '개 상품 자동조회를 시작합니다.');
+    var regular = competitors.filter(function(comp) { return detectMarket(comp && comp.url) !== 'coupang'; });
+    var coupang = competitors.filter(function(comp) { return detectMarket(comp && comp.url) === 'coupang'; });
+    if (regular.length) await runFetchSeparated(regular, '', '', { scheduled: true });
+    if (coupang.length) await runFetchSeparated(coupang, 'coupang_stock', 'coupang_stock', { scheduled: true });
+  } catch(e) {
+    var message = e && e.message ? e.message : String(e);
+    await notifyUser('네이버 모니터링 자동조회 실패', message.slice(0, 120));
+    await setStatus({ running: false, done: false, msg: '자동조회 실패: ' + message, results: [] });
+  }
+}
+
 async function focusSourceTab(options) {
   if (!options) return;
   try {
@@ -854,6 +947,7 @@ async function waitForCache(tabId, pid, onStatus) {
   var elapsed = 0;
   var verifying = false;
   var maxWait = 120000;
+  var authWaitStartedAt = 0;
 
   while (elapsed < maxWait) {
     if (shouldStop()) return { ok: false, stopped: true, error: '사용자 중지' };
@@ -866,8 +960,12 @@ async function waitForCache(tabId, pid, onStatus) {
     if (!currentUrl.includes('/products/')) {
       if (!verifying) {
         verifying = true;
+        authWaitStartedAt = Date.now();
         chrome.tabs.update(tabId, { active: true });
         if (onStatus) onStatus('⚠️ 인증 필요 — 전화번호 입력 후 자동 재개');
+        await notifyUser('네이버 모니터링 인증 필요', '열린 네이버 탭에서 전화번호 인증을 완료하면 조회가 이어집니다.');
+      } else if (authWaitStartedAt && Date.now() - authWaitStartedAt > AUTO_FETCH_AUTH_WAIT_MS) {
+        return { ok: false, skipSave: true, error: '네이버 인증 필요 - 대기 시간 초과' };
       }
       await new Promise(r => setTimeout(r, 1000));
       continue;
@@ -875,6 +973,7 @@ async function waitForCache(tabId, pid, onStatus) {
 
     if (verifying) {
       verifying = false;
+      authWaitStartedAt = 0;
       if (onStatus) onStatus('인증 완료 — 재고 데이터 로딩 중...');
       await new Promise(r => setTimeout(r, 2000));
       elapsed += 2000;
@@ -2847,7 +2946,7 @@ async function runFetch(competitors, fetchMode) {
       } else if (market === 'ohouse') {
         cr = await readOhouseStock(parsed.pid);
       } else {
-        tabId = await openTab(comp.url);
+        tabId = await openTab(naverMobileUrl(comp.url));
         currentFetchTabId = tabId;
         if (shouldStop()) { stopped = true; break; }
         cr = await waitForCache(tabId, parsed.pid, async (msg) => {
@@ -3085,7 +3184,7 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
         } else if (market === 'ohouse') {
           cr = await readOhouseStock(parsed.pid);
         } else {
-          tabId = await openTab(comp.url);
+          tabId = await openTab(naverMobileUrl(comp.url));
           currentFetchTabId = tabId;
           cr = await waitForCache(tabId, parsed.pid, async (msg) => {
             await setStatus({ running: true, current: i + 1, total: competitors.length, name: comp.name, msg, results });
@@ -3126,12 +3225,13 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
       }
     }
 
-    if (results.length) {
+    var saveResults = results.filter(function(r) { return !r.skipSave; });
+    if (saveResults.length) {
       try {
         await apiFetch('/api/stock-data', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ results: results, fetchMode: route })
+          body: JSON.stringify({ results: saveResults, fetchMode: route })
         });
       } catch(e) {}
     }
@@ -3163,6 +3263,21 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === 'SYNC_SCHEDULE') {
+    (async () => {
+      if (msg.schedule) await applyAutoFetchSchedule(msg.schedule);
+      else await syncAutoFetchScheduleFromServer();
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+  if (msg.type === 'RUN_SCHEDULED_FETCH_NOW') {
+    (async () => {
+      await runScheduledAutoFetch();
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
   if (msg.type === 'START_FETCH') {
     (async () => {
       var competitors = msg.competitors || [];
@@ -3196,4 +3311,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   return false;
+});
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (!alarm || !alarm.name) return;
+  if (alarm.name === AUTO_FETCH_ALARM) {
+    runScheduledAutoFetch();
+  } else if (alarm.name === AUTO_FETCH_SYNC_ALARM) {
+    syncAutoFetchScheduleFromServer();
+  }
+});
+
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.alarms.create(AUTO_FETCH_SYNC_ALARM, { periodInMinutes: 60 });
+  syncAutoFetchScheduleFromServer();
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  chrome.alarms.create(AUTO_FETCH_SYNC_ALARM, { periodInMinutes: 60 });
+  syncAutoFetchScheduleFromServer();
 });

@@ -59,6 +59,23 @@ window.addEventListener('message', function(event) {
     });
     return;
   }
+
+  if (msg.type === 'SYNC_SCHEDULE') {
+    chrome.runtime.sendMessage({
+      type: 'SYNC_SCHEDULE',
+      schedule: msg.schedule || null
+    }, function(response) {
+      var error = chrome.runtime.lastError ? chrome.runtime.lastError.message : '';
+      window.postMessage({
+        source: 'naver-monitor-extension',
+        type: 'SYNC_SCHEDULE_RESULT',
+        requestId: msg.requestId,
+        ok: !error && !!(response && response.ok),
+        error: error || (response && response.error ? response.error : '')
+      }, '*');
+    });
+    return;
+  }
 });
 
 function postFetchStatus(status) {
