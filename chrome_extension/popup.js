@@ -21,9 +21,6 @@ function syncPopupVersion() {
 
 function normalizeServerUrl(url) {
   var value = (url || DEFAULT_SERVER).replace(/\/$/, '');
-  if (value === 'http://localhost:5000' || value === 'http://localhost:5001') {
-    return DEFAULT_SERVER;
-  }
   return value;
 }
 

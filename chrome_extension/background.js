@@ -18,9 +18,6 @@ const AUTO_FETCH_AUTH_WAIT_MS = 10 * 60 * 1000;
 
 function normalizeServerUrl(url) {
   var value = (url || DEFAULT_SERVER).replace(/\/$/, '');
-  if (value === 'http://localhost:5000' || value === 'http://localhost:5001') {
-    return DEFAULT_SERVER;
-  }
   return value;
 }
 
