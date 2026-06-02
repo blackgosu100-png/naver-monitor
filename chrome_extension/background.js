@@ -721,10 +721,21 @@ async function runScheduledAutoFetch() {
       return;
     }
     await notifyUser('네이버 모니터링 자동조회', competitors.length + '개 상품 자동조회를 시작합니다.');
-    var regular = competitors.filter(function(comp) { return detectMarket(comp && comp.url) !== 'coupang'; });
+    var naver = competitors.filter(function(comp) { return detectMarket(comp && comp.url) === 'naver'; });
+    var ohouse = competitors.filter(function(comp) { return detectMarket(comp && comp.url) === 'ohouse'; });
     var coupang = competitors.filter(function(comp) { return detectMarket(comp && comp.url) === 'coupang'; });
-    if (regular.length) await runFetchSeparated(regular, '', '', { scheduled: true });
-    if (coupang.length) await runFetchSeparated(coupang, 'coupang_stock', 'coupang_stock', { scheduled: true });
+    if (naver.length) {
+      await setStatus({ running: true, current: 0, total: naver.length, msg: 'Auto fetch: Naver start', results: [] });
+      await runFetchSeparated(naver, '', 'naver', { scheduled: true, schedulePhase: 'naver' });
+    }
+    if (ohouse.length) {
+      await setStatus({ running: true, current: 0, total: ohouse.length, msg: 'Auto fetch: Ohouse start', results: [] });
+      await runFetchSeparated(ohouse, '', 'ohouse', { scheduled: true, schedulePhase: 'ohouse' });
+    }
+    if (coupang.length) {
+      await setStatus({ running: true, current: 0, total: coupang.length, msg: 'Auto fetch: Coupang stock start', results: [] });
+      await runFetchSeparated(coupang, 'coupang_stock', 'coupang_stock', { scheduled: true, schedulePhase: 'coupang_stock' });
+    }
   } catch(e) {
     var message = e && e.message ? e.message : String(e);
     await notifyUser('네이버 모니터링 자동조회 실패', message.slice(0, 120));
