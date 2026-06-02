@@ -2578,9 +2578,10 @@ async function saveSchedule() {
   const hour = parseInt(document.getElementById('sched-hour').value);
   const minute = parseInt(document.getElementById('sched-min').value);
   const markets = [];
-  if (document.getElementById('sched-market-naver').checked) markets.push('naver');
-  if (document.getElementById('sched-market-ohouse').checked) markets.push('ohouse');
-  if (document.getElementById('sched-market-coupang-stock').checked) markets.push('coupang_stock');
+  const marketLabels = [];
+  if (document.getElementById('sched-market-naver').checked) { markets.push('naver'); marketLabels.push('네이버'); }
+  if (document.getElementById('sched-market-ohouse').checked) { markets.push('ohouse'); marketLabels.push('오늘의집'); }
+  if (document.getElementById('sched-market-coupang-stock').checked) { markets.push('coupang_stock'); marketLabels.push('쿠팡 재고조회'); }
   if (enabled && !markets.length) {
     showToast('자동조회 대상을 하나 이상 선택해주세요');
     return;
@@ -2598,7 +2599,9 @@ async function saveSchedule() {
       showToast('서버에는 저장됨 — 확장 프로그램 새로고침/로그인 후 스케줄이 동기화됩니다');
       return;
     }
-    showToast(enabled ? `⏰ 매일 ${hour}시 ${minute}분 자동 조회 설정됨` : '자동 조회 해제됨');
+    showToast(enabled
+      ? `⏰ 자동조회 저장됨: 매일 ${hour}시 ${minute}분 · ${marketLabels.join(', ')}`
+      : '자동조회 사용 안 함으로 저장됨');
   } catch {
     showToast('저장 실패');
   }
