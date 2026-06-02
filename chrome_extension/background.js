@@ -2986,7 +2986,7 @@ async function runFetch(competitors, fetchMode) {
       } else if (market === 'ohouse') {
         cr = await readOhouseStock(parsed.pid);
       } else {
-        tabId = await openTab(naverMobileUrl(comp.url));
+        tabId = await openTab(comp.url);
         currentFetchTabId = tabId;
         if (shouldStop()) { stopped = true; break; }
         cr = await waitForCache(tabId, parsed.pid, async (msg) => {
@@ -3224,7 +3224,7 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
         } else if (market === 'ohouse') {
           cr = await readOhouseStock(parsed.pid);
         } else {
-          tabId = await openTab(naverMobileUrl(comp.url));
+          tabId = await openTab(comp.url);
           currentFetchTabId = tabId;
           cr = await waitForCache(tabId, parsed.pid, async (msg) => {
             await setStatus({ running: true, current: i + 1, total: competitors.length, name: comp.name, msg, results });

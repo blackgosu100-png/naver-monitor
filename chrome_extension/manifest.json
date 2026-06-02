@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "네이버 경쟁사 모니터링",
-  "version": "5.51",
+  "version": "5.52",
   "description": "네이버, 오늘의집, 쿠팡 경쟁사 데이터를 수집하는 보조 도구입니다.",
   "icons": {
     "16": "icons/icon16.png",
@@ -22,7 +22,7 @@
   ],
   "content_scripts": [
     {
-      "matches": ["*://*.smartstore.naver.com/*", "*://brand.naver.com/*", "*://m.brand.naver.com/*", "*://*.coupang.com/*", "*://*.ohou.se/*"],
+      "matches": ["*://*.smartstore.naver.com/*", "*://brand.naver.com/*", "*://*.coupang.com/*", "*://*.ohou.se/*"],
       "js": ["content.js"],
       "run_at": "document_start",
       "world": "MAIN"
