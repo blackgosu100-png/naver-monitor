@@ -976,6 +976,27 @@ async function waitForCache(tabId, pid, onStatus) {
     }
     var currentUrl = tab.url || '';
 
+    try {
+      var pageState = await chrome.scripting.executeScript({
+        target: { tabId },
+        world: 'MAIN',
+        func: function() {
+          var text = document.body ? (document.body.innerText || '') : '';
+          return {
+            href: location.href || '',
+            serviceUnavailable:
+              text.indexOf('현재 서비스 접속이 불가합니다') >= 0 ||
+              text.indexOf('동시에 접속하는 이용자 수가 많거나') >= 0 ||
+              text.indexOf('잠시 후 다시 접속해') >= 0
+          };
+        }
+      });
+      var state = pageState && pageState[0] && pageState[0].result;
+      if (state && state.serviceUnavailable) {
+        return { ok: false, retryDesktop: true, skipSave: true, error: '네이버 모바일 접속 불가' };
+      }
+    } catch(e) {}
+
     if (!currentUrl.includes('/products/')) {
       if (!verifying) {
         verifying = true;
@@ -3208,6 +3229,15 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
           cr = await waitForCache(tabId, parsed.pid, async (msg) => {
             await setStatus({ running: true, current: i + 1, total: competitors.length, name: comp.name, msg, results });
           });
+          if (cr && cr.retryDesktop) {
+            try { await chrome.tabs.remove(tabId); } catch(e) {}
+            if (currentFetchTabId === tabId) currentFetchTabId = null;
+            tabId = await openTab(comp.url);
+            currentFetchTabId = tabId;
+            cr = await waitForCache(tabId, parsed.pid, async (msg) => {
+              await setStatus({ running: true, current: i + 1, total: competitors.length, name: comp.name, msg: 'PC URL 재시도 - ' + msg, results });
+            });
+          }
         }
 
         if (cr && cr.stopped) {
@@ -3293,8 +3323,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'RUN_SCHEDULED_FETCH_NOW') {
     (async () => {
-      await runScheduledAutoFetch();
-      sendResponse({ ok: true });
+      var state = await getAuthState();
+      var hasAuth = !!(state.accessToken || state.refreshToken);
+      if (hasAuth) runScheduledAutoFetch();
+      sendResponse({ ok: true, hasAuth: hasAuth });
     })();
     return true;
   }

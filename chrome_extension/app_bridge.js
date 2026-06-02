@@ -85,6 +85,31 @@ window.addEventListener('message', function(event) {
     });
     return;
   }
+
+  if (msg.type === 'RUN_SCHEDULED_FETCH_NOW') {
+    var runAuth = msg.auth || {};
+    chrome.storage.local.set({
+      serverUrl: runAuth.serverUrl || '',
+      accessToken: runAuth.accessToken || '',
+      refreshToken: runAuth.refreshToken || '',
+      loginEmail: runAuth.loginEmail || ''
+    }, function() {
+      chrome.runtime.sendMessage({
+        type: 'RUN_SCHEDULED_FETCH_NOW'
+      }, function(response) {
+        var error = chrome.runtime.lastError ? chrome.runtime.lastError.message : '';
+        window.postMessage({
+          source: 'naver-monitor-extension',
+          type: 'RUN_SCHEDULED_FETCH_NOW_RESULT',
+          requestId: msg.requestId,
+          ok: !error && !!(response && response.ok),
+          hasAuth: !!(response && response.hasAuth),
+          error: error || (response && response.error ? response.error : '')
+        }, '*');
+      });
+    });
+    return;
+  }
 });
 
 function postFetchStatus(status) {
