@@ -57,11 +57,11 @@ async function ensureServiceToken(waitMs) {
   var state = await getAuthState();
 
   while (Date.now() <= deadline) {
-    if (state.accessToken) return state.accessToken;
     if (state.refreshToken) {
       var refreshed = await refreshServiceToken(state);
       if (refreshed) return refreshed;
     }
+    if (state.accessToken) return state.accessToken;
     await new Promise(resolve => setTimeout(resolve, 250));
     state = await getAuthState();
   }
@@ -3286,7 +3286,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     (async () => {
       if (msg.schedule) await applyAutoFetchSchedule(msg.schedule);
       else await syncAutoFetchScheduleFromServer();
-      sendResponse({ ok: true });
+      var state = await getAuthState();
+      sendResponse({ ok: true, hasAuth: !!(state.accessToken || state.refreshToken) });
     })();
     return true;
   }

@@ -78,6 +78,7 @@ window.addEventListener('message', function(event) {
           type: 'SYNC_SCHEDULE_RESULT',
           requestId: msg.requestId,
           ok: !error && !!(response && response.ok),
+          hasAuth: !!(response && response.hasAuth),
           error: error || (response && response.error ? response.error : '')
         }, '*');
       });

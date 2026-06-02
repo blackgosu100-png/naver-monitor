@@ -2264,7 +2264,8 @@ function syncExtensionSchedule(schedule) {
       if (msg.source !== 'naver-monitor-extension' || msg.type !== 'SYNC_SCHEDULE_RESULT' || msg.requestId !== requestId) return;
       clearTimeout(timer);
       window.removeEventListener('message', onMessage);
-      if (msg.ok) resolve(msg);
+      if (msg.ok && msg.hasAuth) resolve(msg);
+      else if (msg.ok) reject(new Error('확장 프로그램에 서비스 로그인 정보가 저장되지 않았습니다. 확장 프로그램을 새로고침한 뒤 다시 저장해주세요.'));
       else reject(new Error(msg.error || '확장 프로그램 스케줄 동기화 실패'));
     }
 
