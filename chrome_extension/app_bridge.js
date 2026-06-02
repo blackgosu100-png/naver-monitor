@@ -61,18 +61,26 @@ window.addEventListener('message', function(event) {
   }
 
   if (msg.type === 'SYNC_SCHEDULE') {
-    chrome.runtime.sendMessage({
-      type: 'SYNC_SCHEDULE',
-      schedule: msg.schedule || null
-    }, function(response) {
-      var error = chrome.runtime.lastError ? chrome.runtime.lastError.message : '';
-      window.postMessage({
-        source: 'naver-monitor-extension',
-        type: 'SYNC_SCHEDULE_RESULT',
-        requestId: msg.requestId,
-        ok: !error && !!(response && response.ok),
-        error: error || (response && response.error ? response.error : '')
-      }, '*');
+    var auth = msg.auth || {};
+    chrome.storage.local.set({
+      serverUrl: auth.serverUrl || '',
+      accessToken: auth.accessToken || '',
+      refreshToken: auth.refreshToken || '',
+      loginEmail: auth.loginEmail || ''
+    }, function() {
+      chrome.runtime.sendMessage({
+        type: 'SYNC_SCHEDULE',
+        schedule: msg.schedule || null
+      }, function(response) {
+        var error = chrome.runtime.lastError ? chrome.runtime.lastError.message : '';
+        window.postMessage({
+          source: 'naver-monitor-extension',
+          type: 'SYNC_SCHEDULE_RESULT',
+          requestId: msg.requestId,
+          ok: !error && !!(response && response.ok),
+          error: error || (response && response.error ? response.error : '')
+        }, '*');
+      });
     });
     return;
   }
