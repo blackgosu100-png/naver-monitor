@@ -10,7 +10,7 @@ from urllib.parse import parse_qs, urlparse
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'naver-monitor-dev-secret-2024')
-APP_VERSION = '5.46'
+APP_VERSION = '5.47'
 
 @app.after_request
 def add_cors(response):
@@ -610,21 +610,41 @@ def db_get_history(user_id: str, days: int = 14):
     )
     return competitors, rows
 
+SCHEDULE_MARKETS = ['naver', 'ohouse', 'coupang_stock']
+
+def normalize_schedule_markets(value) -> list[str]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except Exception:
+            value = [item.strip() for item in value.split(',')]
+    if not isinstance(value, list):
+        value = SCHEDULE_MARKETS
+    allowed = set(SCHEDULE_MARKETS)
+    result = []
+    for item in value:
+        item = str(item or '').strip().lower()
+        if item in allowed and item not in result:
+            result.append(item)
+    return result or SCHEDULE_MARKETS
+
 def db_get_schedule(user_id: str) -> dict:
-    keys = 'schedule_enabled,schedule_hour,schedule_minute'
+    keys = 'schedule_enabled,schedule_hour,schedule_minute,schedule_markets'
     rows = sb_select('app_settings', f'?user_id=eq.{user_id}&key=in.({keys})')
     s = {row['key']: row['value'] for row in rows}
     return {
         'enabled': s.get('schedule_enabled', 'false') == 'true',
         'hour':    int(s.get('schedule_hour', 9)),
         'minute':  int(s.get('schedule_minute', 0)),
+        'markets': normalize_schedule_markets(s.get('schedule_markets')),
     }
 
-def db_save_schedule(user_id: str, enabled: bool, hour: int, minute: int):
+def db_save_schedule(user_id: str, enabled: bool, hour: int, minute: int, markets: list | None = None):
     for key, val in [
         ('schedule_enabled', str(enabled).lower()),
         ('schedule_hour',    str(hour)),
         ('schedule_minute',  str(minute)),
+        ('schedule_markets', json.dumps(normalize_schedule_markets(markets), ensure_ascii=False)),
     ]:
         sb_upsert('app_settings', {'user_id': user_id, 'key': key, 'value': val}, on_conflict='user_id,key')
 
@@ -710,16 +730,13 @@ def db_remove_ext_queue_ids(user_id: str, ids: list | None = None):
 scheduler = BackgroundScheduler(timezone='Asia/Seoul')
 
 def _update_scheduler(user_id: str):
-    s = db_get_schedule(user_id)
     job_id = f'daily_fetch_{user_id}'
     try:
         scheduler.remove_job(job_id)
     except Exception:
         pass
-    if s['enabled']:
-        scheduler.add_job(fetch_all, 'cron',
-                          hour=s['hour'], minute=s['minute'],
-                          id=job_id, args=[user_id])
+    # Browser-backed markets run from the Chrome extension alarm.
+    # Keep the legacy server scheduler disabled so saved market choices are honored.
 
 # ─── Auth 데코레이터 ──────────────────────────────────────────
 def _bearer_token() -> str:
@@ -1249,7 +1266,8 @@ def api_schedule():
     enabled = bool(body.get('enabled', False))
     hour    = max(0, min(23, int(body.get('hour', 9))))
     minute  = max(0, min(59, int(body.get('minute', 0))))
-    db_save_schedule(g.user_id, enabled, hour, minute)
+    markets = normalize_schedule_markets(body.get('markets'))
+    db_save_schedule(g.user_id, enabled, hour, minute, markets)
     _update_scheduler(g.user_id)
     return jsonify({'ok': True})
 

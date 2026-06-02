@@ -706,6 +706,14 @@ async function runScheduledAutoFetch() {
     return;
   }
   try {
+    var scheduleData = await chrome.storage.local.get('autoFetchSchedule');
+    var schedule = scheduleData.autoFetchSchedule || {};
+    var selectedMarkets = Array.isArray(schedule.markets) && schedule.markets.length
+      ? schedule.markets
+      : ['naver', 'ohouse', 'coupang_stock'];
+    function marketEnabled(name) {
+      return selectedMarkets.indexOf(name) >= 0;
+    }
     var token = await ensureServiceToken(5000);
     if (!token) {
       await notifyUser('네이버 모니터링 자동조회', '서비스 로그인이 필요해서 자동조회를 시작하지 못했습니다.');
@@ -721,9 +729,9 @@ async function runScheduledAutoFetch() {
       return;
     }
     await notifyUser('네이버 모니터링 자동조회', competitors.length + '개 상품 자동조회를 시작합니다.');
-    var naver = competitors.filter(function(comp) { return detectMarket(comp && comp.url) === 'naver'; });
-    var ohouse = competitors.filter(function(comp) { return detectMarket(comp && comp.url) === 'ohouse'; });
-    var coupang = competitors.filter(function(comp) { return detectMarket(comp && comp.url) === 'coupang'; });
+    var naver = marketEnabled('naver') ? competitors.filter(function(comp) { return detectMarket(comp && comp.url) === 'naver'; }) : [];
+    var ohouse = marketEnabled('ohouse') ? competitors.filter(function(comp) { return detectMarket(comp && comp.url) === 'ohouse'; }) : [];
+    var coupang = marketEnabled('coupang_stock') ? competitors.filter(function(comp) { return detectMarket(comp && comp.url) === 'coupang'; }) : [];
     if (naver.length) {
       await setStatus({ running: true, current: 0, total: naver.length, msg: 'Auto fetch: Naver start', results: [] });
       await runFetchSeparated(naver, '', 'naver', { scheduled: true, schedulePhase: 'naver' });

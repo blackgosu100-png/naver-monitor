@@ -783,6 +783,12 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
               <input class="form-input" type="number" id="sched-min" min="0" max="59" value="0" onchange="scheduleChanged()" style="width:70px;text-align:center">
               <span style="font-size:13px">분</span>
             </div>
+            <div style="margin-top:14px;font-size:11px;color:var(--text3);font-weight:700">자동조회 대상</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+              <label class="badge badge-gray" style="cursor:pointer"><input type="checkbox" id="sched-market-naver" onchange="scheduleChanged()" style="margin-right:5px;accent-color:var(--accent)">네이버</label>
+              <label class="badge badge-gray" style="cursor:pointer"><input type="checkbox" id="sched-market-ohouse" onchange="scheduleChanged()" style="margin-right:5px;accent-color:var(--accent)">오늘의집</label>
+              <label class="badge badge-gray" style="cursor:pointer"><input type="checkbox" id="sched-market-coupang-stock" onchange="scheduleChanged()" style="margin-right:5px;accent-color:var(--accent)">쿠팡 재고조회</label>
+            </div>
             <button class="btn btn-sm btn-primary" onclick="saveSchedule()" style="margin-top:12px">스케줄 저장</button>
             <div style="margin-top:12px;font-size:11px;color:var(--text3)">컴퓨터와 크롬이 켜져 있고 확장 프로그램 로그인이 유지되어야 정해진 시간에 네이버, 오늘의집, 쿠팡 재고조회가 순서대로 실행됩니다. 쿠팡 판매지표는 자동조회에서 제외됩니다.</div>
           </div>
@@ -1409,6 +1415,10 @@ function applyConfig(cfg) {
     document.getElementById('sched-enabled').checked = cfg.schedule.enabled;
     document.getElementById('sched-hour').value = cfg.schedule.hour;
     document.getElementById('sched-min').value = cfg.schedule.minute;
+    const markets = new Set(cfg.schedule.markets || ['naver', 'ohouse', 'coupang_stock']);
+    document.getElementById('sched-market-naver').checked = markets.has('naver');
+    document.getElementById('sched-market-ohouse').checked = markets.has('ohouse');
+    document.getElementById('sched-market-coupang-stock').checked = markets.has('coupang_stock');
   }
 }
 
@@ -2567,7 +2577,15 @@ async function saveSchedule() {
   const enabled = document.getElementById('sched-enabled').checked;
   const hour = parseInt(document.getElementById('sched-hour').value);
   const minute = parseInt(document.getElementById('sched-min').value);
-  const schedule = {enabled, hour, minute};
+  const markets = [];
+  if (document.getElementById('sched-market-naver').checked) markets.push('naver');
+  if (document.getElementById('sched-market-ohouse').checked) markets.push('ohouse');
+  if (document.getElementById('sched-market-coupang-stock').checked) markets.push('coupang_stock');
+  if (enabled && !markets.length) {
+    showToast('자동조회 대상을 하나 이상 선택해주세요');
+    return;
+  }
+  const schedule = {enabled, hour, minute, markets};
   try {
     await fetch('/api/schedule', {
       method:'PUT',
