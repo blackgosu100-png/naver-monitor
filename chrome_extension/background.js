@@ -2,7 +2,7 @@
 
 const DEFAULT_SERVER = 'https://naver-monitor-production.up.railway.app';
 const COUPANG_CACHE_KEY = 'coupangMetricCacheV2';
-const MIN_COUPANG_HELPER_VERSION = '1.3.3';
+const MIN_COUPANG_HELPER_VERSION = '1.3.4';
 const COUPANG_MONTHLY_TTL = 12 * 60 * 60 * 1000;
 const COUPANG_VIEWS_TTL = 24 * 60 * 60 * 1000;
 const COUPANG_STOCK_TTL = 3 * 60 * 60 * 1000;

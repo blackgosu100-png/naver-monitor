@@ -15,7 +15,7 @@ const PAGE_WARMUP_MS = Number(process.env.COUPANG_STOCK_PAGE_WARMUP_MS || 350);
 const PROBE_DELAY_MS = Number(process.env.COUPANG_STOCK_PROBE_DELAY_MS || 80);
 const MAX_QUANTITY = Number(process.env.COUPANG_STOCK_MAX_QUANTITY || 50000);
 const DEFAULT_STEPS = [100, 1000, 5000];
-const HELPER_VERSION = '1.3.3';
+const HELPER_VERSION = '1.3.4';
 
 let chromeProcess = null;
 let warmupPromise = null;
@@ -666,6 +666,31 @@ async function fetchQuantityInfo(cdp, productId, vendorItemId, quantity) {
   throw new Error(`quantity-info HTTP ${lastResult.status} (${quantity})`);
 }
 
+function collectQuantityHints(data) {
+  const hints = [];
+  const seen = new Set();
+  const keyPattern = /stock|remain|available|availability|limit|max|min|quantity|qty|count|order/i;
+  function walk(node, path, depth) {
+    if (node == null || depth > 8 || hints.length >= 80) return;
+    if (typeof node !== 'object') return;
+    if (seen.has(node)) return;
+    seen.add(node);
+    if (Array.isArray(node)) {
+      node.slice(0, 8).forEach((item, index) => walk(item, `${path}[${index}]`, depth + 1));
+      return;
+    }
+    for (const [key, value] of Object.entries(node)) {
+      const nextPath = path ? `${path}.${key}` : key;
+      if (keyPattern.test(key) && (typeof value === 'number' || typeof value === 'string' || typeof value === 'boolean')) {
+        hints.push({ path: nextPath, value });
+      }
+      if (value && typeof value === 'object') walk(value, nextPath, depth + 1);
+    }
+  }
+  walk(data, '', 0);
+  return hints;
+}
+
 async function estimateStock(payload) {
   const startedAt = Date.now();
   const page = await getSharedPage();
@@ -728,6 +753,15 @@ async function estimateStock(payload) {
     }
     if (!baselineProbe.state) throw new Error('baseline delivery state not found');
     const baseline = baselineProbe.state;
+    if (debugMetrics) {
+      try {
+        const highJson = await fetchQuantityInfo(cdp, productId, vendorItemId, MAX_QUANTITY);
+        debugMetrics.highQuantity = MAX_QUANTITY;
+        debugMetrics.highQuantityHints = collectQuantityHints(highJson);
+      } catch (error) {
+        debugMetrics.highQuantityError = error && error.message ? error.message : String(error);
+      }
+    }
 
     let low = 1;
     let high = null;
@@ -751,13 +785,18 @@ async function estimateStock(payload) {
         if (next > low) await applyProbe(next);
       } else {
         high = expected;
-        const prev = expected - 1;
-        if (prev > 1) {
-          const prevProbe = await probe(prev, baseline);
-          if (prevProbe.sameAsBaseline) low = prev;
-          else high = Math.min(high, prev);
+        const nearWindow = Math.min(20, Math.max(6, Math.ceil(expected * 0.03)));
+        for (let offset = 1; offset <= nearWindow; offset += 1) {
+          const near = expected - offset;
+          if (near <= 1) break;
+          const nearProbe = await probe(near, baseline);
+          if (nearProbe.sameAsBaseline) {
+            low = near;
+            break;
+          }
+          high = Math.min(high, near);
         }
-        let step = Math.max(2, Math.ceil(expected * 0.1));
+        let step = Math.max(nearWindow + 1, Math.ceil(expected * 0.12));
         let candidate = Math.max(1, expected - step);
         while (candidate > 1 && low === 1) {
           const tested = await probe(candidate, baseline);

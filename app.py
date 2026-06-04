@@ -10,7 +10,7 @@ from urllib.parse import parse_qs, urlparse
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'naver-monitor-dev-secret-2024')
-APP_VERSION = '5.63'
+APP_VERSION = '5.64'
 
 @app.after_request
 def add_cors(response):
@@ -609,6 +609,18 @@ def db_get_history(user_id: str, days: int = 14):
         f'&user_id=eq.{user_id}&fetch_date=gte.{start}&order=fetch_date',
     )
     return competitors, rows
+
+def latest_stock_by_competitor(user_id: str, days: int = 30) -> dict:
+    _, rows = db_get_history(user_id, days)
+    latest: dict = {}
+    for row in sorted(rows, key=lambda item: item.get('fetched_at') or ''):
+        if row.get('error') or row.get('total') is None:
+            continue
+        try:
+            latest[row['competitor_id']] = int(row.get('total'))
+        except (TypeError, ValueError):
+            continue
+    return latest
 
 SCHEDULE_MARKETS = ['naver', 'ohouse', 'coupang_stock']
 
@@ -1432,7 +1444,12 @@ def api_coupang_monthly():
 @login_required
 def api_public_competitors():
     competitors = db_get_competitors(g.user_id)
-    return jsonify({'competitors': active_competitors_for_user(g.user, competitors)})
+    active = active_competitors_for_user(g.user, competitors)
+    latest_stock = latest_stock_by_competitor(g.user_id)
+    for comp in active:
+        if is_coupang_url(comp.get('url') or '') and comp.get('id') in latest_stock:
+            comp['expectedStock'] = latest_stock[comp['id']]
+    return jsonify({'competitors': active})
 
 @app.route('/api/public/queue', methods=['GET'])
 @login_required
@@ -1440,6 +1457,10 @@ def api_public_queue_get():
     queue = db_get_ext_queue(g.user_id)
     active_ids = active_competitor_ids_for_user(g.user)
     visible_queue = [comp for comp in queue if comp.get('id') in active_ids]
+    latest_stock = latest_stock_by_competitor(g.user_id)
+    for comp in visible_queue:
+        if is_coupang_url(comp.get('url') or '') and comp.get('id') in latest_stock:
+            comp['expectedStock'] = latest_stock[comp['id']]
     fetch_mode = db_get_ext_queue_fetch_mode(g.user_id)
     if fetch_mode and not all(is_coupang_url(comp.get('url') or '') for comp in visible_queue):
         fetch_mode = ''
