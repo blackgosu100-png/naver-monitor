@@ -454,6 +454,14 @@ body { overflow-x: hidden; }
 .admin-muted { color: var(--text3); }
 .plan-actions { display:flex; gap:5px; flex-wrap:wrap; }
 .plan-actions .btn { padding:4px 8px; min-width:48px; }
+.fetch-log-row { border-bottom:1px solid var(--border); padding:12px 14px; font-size:12px; }
+.fetch-log-row:last-child { border-bottom:0; }
+.fetch-log-top { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+.fetch-log-title { font-weight:700; color:var(--text); }
+.fetch-log-meta { color:var(--text3); font-size:11px; margin-top:4px; }
+.fetch-log-items { margin-top:10px; display:grid; gap:5px; }
+.fetch-log-item { display:grid; grid-template-columns:1fr 70px 70px; gap:8px; align-items:center; color:var(--text2); background:var(--surface2); border:1px solid var(--border); border-radius:6px; padding:7px 9px; }
+.fetch-log-item-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
 /* ── Toast ── */
 .toast {
@@ -852,7 +860,7 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
   <div id="view-admin" style="display:none">
     <div class="topbar">
       <div class="topbar-title">관리자 보드</div>
-      <button class="btn btn-sm" onclick="loadAdminUsers()">새로고침</button>
+      <button class="btn btn-sm" onclick="loadAdminUsers(); loadAdminFetchLogs()">새로고침</button>
     </div>
     <div class="content">
       <div class="card" style="max-width:1000px">
@@ -864,6 +872,21 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
           <div class="empty-state">
             <div class="inline-spinner"></div>
             <div class="empty-state-title">회원 목록을 불러오는 중입니다</div>
+          </div>
+        </div>
+      </div>
+      <div class="card" style="max-width:1000px;margin-top:16px">
+        <div class="card-header">
+          <div>
+            <div class="card-title">조회 실행 로그</div>
+            <div style="font-size:11px;color:var(--text3)">최근 조회 소요시간과 상품별 처리 시간을 확인합니다</div>
+          </div>
+          <button class="btn btn-sm" onclick="loadAdminFetchLogs()">로그 새로고침</button>
+        </div>
+        <div id="admin-fetch-logs">
+          <div class="empty-state">
+            <div class="inline-spinner"></div>
+            <div class="empty-state-title">조회 로그를 불러오는 중입니다</div>
           </div>
         </div>
       </div>
@@ -1452,7 +1475,10 @@ function showView(view) {
     renderCompetitorLimit(appConfig);
     renderPlanStatus(appConfig);
   }
-  if (view === 'admin') loadAdminUsers();
+  if (view === 'admin') {
+    loadAdminUsers();
+    loadAdminFetchLogs();
+  }
 }
 
 // ─── History / Table ─────────────────────────────────────────
@@ -2735,6 +2761,70 @@ function renderPlanActions(user) {
       <button class="btn btn-sm" onclick="setCustomBusinessLimit('${user.id}', ${Number(user.competitor_limit) || 50})">직접</button>
     </span>
   </div>`;
+}
+
+function formatElapsed(ms) {
+  ms = Number(ms) || 0;
+  if (ms < 1000) return `${ms}ms`;
+  const sec = ms / 1000;
+  if (sec < 60) return `${sec.toFixed(1)}초`;
+  const min = Math.floor(sec / 60);
+  const rest = Math.round(sec % 60);
+  return `${min}분 ${rest}초`;
+}
+
+function fetchModeLabel(log) {
+  const mode = log.mode || '';
+  const phase = log.phase || '';
+  if (mode === 'coupang_stock' || phase === 'coupang_stock') return '쿠팡 재고조회';
+  if (mode === 'coupang_sales') return '쿠팡 판매지표';
+  if (phase === 'ohouse') return '오늘의집';
+  if (phase === 'naver') return '네이버';
+  return '전체 조회';
+}
+
+async function loadAdminFetchLogs() {
+  if (!isAdminUser) return;
+  const el = document.getElementById('admin-fetch-logs');
+  el.innerHTML = `<div class="empty-state"><div class="inline-spinner"></div><div class="empty-state-title">조회 로그를 불러오는 중입니다</div></div>`;
+  try {
+    const r = await fetch('/api/admin/fetch-logs');
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || '조회 로그 로드 실패');
+    const logs = data.logs || [];
+    if (!logs.length) {
+      el.innerHTML = '<div class="empty-state"><div class="empty-state-title">아직 조회 로그가 없습니다</div></div>';
+      return;
+    }
+    el.innerHTML = logs.map(log => {
+      const items = (log.items || []).slice(0, 12);
+      const slowest = [...items].sort((a, b) => Number(b.elapsedMs || 0) - Number(a.elapsedMs || 0)).slice(0, 5);
+      const ok = Number(log.ok || 0);
+      const errors = Number(log.errors || 0);
+      return `
+        <div class="fetch-log-row">
+          <div class="fetch-log-top">
+            <div>
+              <div class="fetch-log-title">${escHtml(fetchModeLabel(log))} · ${escHtml(log.email || log.user_id || '-')}</div>
+              <div class="fetch-log-meta">${formatAdminDate(log.startedAt)} · 총 ${formatElapsed(log.elapsedMs)} · ${ok}/${log.total || 0} 성공 · 실패 ${errors}</div>
+            </div>
+            <span class="badge ${errors ? 'badge-red' : 'badge-green'}">${log.scheduled ? '자동' : '수동'}</span>
+          </div>
+          <div class="fetch-log-items">
+            ${slowest.map(item => `
+              <div class="fetch-log-item" title="${escHtml(item.error || '')}">
+                <div class="fetch-log-item-name">${escHtml(item.name || '-')}</div>
+                <div>${formatElapsed(item.elapsedMs)}</div>
+                <div><span class="badge ${item.status === 'ok' ? 'badge-green' : 'badge-red'}">${escHtml(item.status || '-')}</span></div>
+              </div>
+            `).join('') || '<div class="admin-muted">상품별 로그 없음</div>'}
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch (e) {
+    el.innerHTML = `<div class="empty-state"><div class="empty-state-title">${escHtml(e.message || '조회 로그 로드 실패')}</div></div>`;
+  }
 }
 
 async function loadAdminUsers() {

@@ -85,6 +85,16 @@ async function apiFetch(path, options) {
   return res;
 }
 
+async function postFetchLog(log) {
+  try {
+    await apiFetch('/api/fetch-log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(log || {})
+    });
+  } catch(e) {}
+}
+
 function parseNaverUrl(url) {
   var m = url.match(/(?:smartstore|brand)\.naver\.com\/([^/?#]+)\/products\/(\d+)/);
   return m ? { slug: m[1], pid: m[2] } : null;
@@ -3157,6 +3167,10 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
   stopRequested = false;
   currentFetchTabId = null;
 
+  var runStartedMs = Date.now();
+  var runStartedAt = new Date(runStartedMs).toISOString();
+  var runId = runStartedAt + '-' + Math.random().toString(16).slice(2);
+  var itemLogs = [];
   var results = [];
   var stopped = false;
   var authRequired = false;
@@ -3179,6 +3193,13 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
           id: comp.id,
           name: comp.name,
           error: '\uD604\uC7AC \uCFE0\uD321 \uD0ED \uC870\uD68C\uC5D0\uC11C \uC81C\uC678\uB41C \uC0C1\uD488\uC785\uB2C8\uB2E4'
+        });
+        itemLogs.push({
+          name: comp.name,
+          market: market,
+          status: 'skipped',
+          elapsedMs: 0,
+          error: 'Excluded by fetch mode'
         });
         continue;
       }
@@ -3204,10 +3225,18 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
 
       if (!parsed) {
         results.push({ id: comp.id, name: comp.name, error: 'URL \uD615\uC2DD \uC624\uB958' });
+        itemLogs.push({
+          name: comp.name,
+          market: market,
+          status: 'error',
+          elapsedMs: 0,
+          error: 'URL format error'
+        });
         continue;
       }
 
       var tabId = null;
+      var itemStartedMs = Date.now();
       try {
         var cr = null;
         if (market === 'coupang') {
@@ -3263,6 +3292,20 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
       } finally {
         if (tabId !== null) chrome.tabs.remove(tabId, () => {});
         if (currentFetchTabId === tabId) currentFetchTabId = null;
+        var latest = null;
+        for (var li = results.length - 1; li >= 0; li--) {
+          if (results[li] && results[li].id === comp.id) {
+            latest = results[li];
+            break;
+          }
+        }
+        itemLogs.push({
+          name: comp.name,
+          market: market,
+          status: latest && !latest.error ? 'ok' : 'error',
+          elapsedMs: Date.now() - itemStartedMs,
+          error: latest && latest.error ? latest.error : ''
+        });
       }
 
       if (shouldStop()) { stopped = true; break; }
@@ -3292,6 +3335,21 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
     if (errItems.length) msg += '\n\uC2E4\uD328: ' + errItems.map(r => r.name + '(' + r.error + ')').join(', ');
 
     await setStatus({ running: false, done: !stopped, stopped, msg, results });
+    await postFetchLog({
+      runId: runId,
+      mode: route || 'default',
+      phase: requestContext && requestContext.schedulePhase ? requestContext.schedulePhase : '',
+      scheduled: !!(requestContext && requestContext.scheduled),
+      startedAt: runStartedAt,
+      finishedAt: new Date().toISOString(),
+      elapsedMs: Date.now() - runStartedMs,
+      total: competitors.length,
+      ok: okCount,
+      errors: errItems.length,
+      stopped: stopped,
+      message: msg,
+      items: itemLogs
+    });
   } finally {
     fetchRunning = false;
     stopRequested = false;

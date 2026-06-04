@@ -10,7 +10,7 @@ from urllib.parse import parse_qs, urlparse
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'naver-monitor-dev-secret-2024')
-APP_VERSION = '5.53'
+APP_VERSION = '5.54'
 
 @app.after_request
 def add_cors(response):
@@ -726,6 +726,56 @@ def db_remove_ext_queue_ids(user_id: str, ids: list | None = None):
     if not queued_ids:
         db_save_ext_queue_fetch_mode(user_id, '')
 
+def db_get_fetch_logs(user_id: str) -> list:
+    rows = sb_select('app_settings', f'?user_id=eq.{user_id}&key=eq.fetch_logs&limit=1')
+    if not rows:
+        return []
+    try:
+        logs = json.loads(rows[0].get('value') or '[]')
+    except Exception:
+        return []
+    return logs if isinstance(logs, list) else []
+
+def db_save_fetch_logs(user_id: str, logs: list):
+    sb_upsert(
+        'app_settings',
+        {'user_id': user_id, 'key': 'fetch_logs', 'value': json.dumps(logs[:50], ensure_ascii=False)},
+        on_conflict='user_id,key',
+    )
+
+def db_append_fetch_log(user_id: str, log: dict):
+    if not isinstance(log, dict):
+        return
+    item_logs = log.get('items') if isinstance(log.get('items'), list) else []
+    slim_items = []
+    for item in item_logs[:200]:
+        if not isinstance(item, dict):
+            continue
+        slim_items.append({
+            'name': str(item.get('name') or '')[:160],
+            'market': str(item.get('market') or '')[:30],
+            'status': str(item.get('status') or '')[:30],
+            'elapsedMs': int(item.get('elapsedMs') or 0),
+            'error': str(item.get('error') or '')[:240],
+        })
+    entry = {
+        'runId': str(log.get('runId') or '')[:80],
+        'mode': str(log.get('mode') or '')[:40],
+        'phase': str(log.get('phase') or '')[:40],
+        'startedAt': str(log.get('startedAt') or '')[:40],
+        'finishedAt': str(log.get('finishedAt') or '')[:40],
+        'elapsedMs': int(log.get('elapsedMs') or 0),
+        'total': int(log.get('total') or 0),
+        'ok': int(log.get('ok') or 0),
+        'errors': int(log.get('errors') or 0),
+        'stopped': bool(log.get('stopped')),
+        'scheduled': bool(log.get('scheduled')),
+        'message': str(log.get('message') or '')[:300],
+        'items': slim_items,
+    }
+    logs = db_get_fetch_logs(user_id)
+    db_save_fetch_logs(user_id, [entry] + logs)
+
 # ─── 스케줄러 ─────────────────────────────────────────────────
 scheduler = BackgroundScheduler(timezone='Asia/Seoul')
 
@@ -1033,6 +1083,41 @@ def api_admin_users():
     result.sort(key=lambda u: u.get('created_at') or '', reverse=True)
     return jsonify({'users': result})
 
+@app.route('/api/admin/fetch-logs')
+@admin_required
+def api_admin_fetch_logs():
+    rows = sb_select('app_settings', '?select=user_id,value&key=eq.fetch_logs')
+    email_by_id = {}
+    try:
+        if SUPABASE_URL and SUPABASE_KEY:
+            r = httpx.get(
+                f'{SUPABASE_URL}/auth/v1/admin/users',
+                headers=_admin_api_headers(),
+                params={'page': 1, 'per_page': 200},
+                timeout=20,
+            )
+            if r.status_code < 400:
+                data = r.json()
+                users = data.get('users', data if isinstance(data, list) else [])
+                email_by_id = {u.get('id'): (u.get('email') or '') for u in users}
+    except Exception:
+        email_by_id = {}
+    logs = []
+    for row in rows:
+        user_id = row.get('user_id') or ''
+        try:
+            entries = json.loads(row.get('value') or '[]')
+        except Exception:
+            entries = []
+        if not isinstance(entries, list):
+            continue
+        for entry in entries[:20]:
+            if not isinstance(entry, dict):
+                continue
+            logs.append({**entry, 'user_id': user_id, 'email': email_by_id.get(user_id, '')})
+    logs.sort(key=lambda item: item.get('startedAt') or '', reverse=True)
+    return jsonify({'logs': logs[:100]})
+
 @app.route('/api/admin/users/<uid>/plan', methods=['PUT'])
 @admin_required
 def api_admin_user_plan(uid):
@@ -1269,6 +1354,13 @@ def api_schedule():
     markets = normalize_schedule_markets(body.get('markets'))
     db_save_schedule(g.user_id, enabled, hour, minute, markets)
     _update_scheduler(g.user_id)
+    return jsonify({'ok': True})
+
+@app.route('/api/fetch-log', methods=['POST'])
+@login_required
+def api_fetch_log():
+    body = request.get_json() or {}
+    db_append_fetch_log(g.user_id, body)
     return jsonify({'ok': True})
 
 @app.route('/api/credentials', methods=['PUT'])
