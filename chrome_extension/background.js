@@ -1,7 +1,8 @@
 // 백그라운드 서비스 워커 — 팝업이 닫혀도 조회 계속 실행
 
 const DEFAULT_SERVER = 'https://naver-monitor-production.up.railway.app';
-const COUPANG_CACHE_KEY = 'coupangMetricCacheV1';
+const COUPANG_CACHE_KEY = 'coupangMetricCacheV2';
+const MIN_COUPANG_HELPER_VERSION = '1.2.1';
 const COUPANG_MONTHLY_TTL = 12 * 60 * 60 * 1000;
 const COUPANG_VIEWS_TTL = 24 * 60 * 60 * 1000;
 const COUPANG_STOCK_TTL = 3 * 60 * 60 * 1000;
@@ -186,6 +187,17 @@ function coupangStockCacheKey(parsed) {
 
 function isFreshCache(entry, ttl) {
   return !!entry && !!entry.ts && Date.now() - entry.ts < ttl;
+}
+
+function versionAtLeast(version, required) {
+  var a = String(version || '').split('.').map(function(part) { return parseInt(part, 10) || 0; });
+  var b = String(required || '').split('.').map(function(part) { return parseInt(part, 10) || 0; });
+  var len = Math.max(a.length, b.length);
+  for (var i = 0; i < len; i++) {
+    if ((a[i] || 0) > (b[i] || 0)) return true;
+    if ((a[i] || 0) < (b[i] || 0)) return false;
+  }
+  return true;
 }
 
 function isLikelyCoupangPb(comp) {
@@ -2080,6 +2092,10 @@ async function estimateCoupangStockViaLocalHelper(comp, parsed) {
       }
       var data = await res.json();
       if (data && data.ok) {
+        if (!versionAtLeast(data.helperVersion, MIN_COUPANG_HELPER_VERSION)) {
+          lastError = 'local helper update required';
+          continue;
+        }
         return {
           ok: true,
           stock: data.stock,
