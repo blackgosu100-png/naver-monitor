@@ -2109,6 +2109,7 @@ async function estimateCoupangStockViaLocalHelper(comp, parsed) {
           salePrice: data.salePrice,
           ratingCount: data.ratingCount,
           localHelper: true,
+          helperVersion: data.helperVersion || '',
           elapsedMs: data.elapsedMs,
           apiCalls: data.apiCalls
         };
@@ -2370,6 +2371,13 @@ function addCoupangProductMetricOptions(options, source) {
   var ratingCount = numOrNull(source && source.ratingCount);
   if (salePrice !== null) options.push({ name: '\uD310\uB9E4\uAC00', qty: salePrice });
   if (ratingCount !== null) options.push({ name: '\uB9AC\uBDF0\uC218', qty: ratingCount });
+  if (source && source.localHelper) {
+    options.push({ name: '__coupang_source', text: 'local-helper ' + (source.helperVersion || '') });
+  } else if (source && source.backgroundDirect) {
+    options.push({ name: '__coupang_source', text: 'background-direct' });
+  } else if (source && source.source) {
+    options.push({ name: '__coupang_source', text: String(source.source) });
+  }
 }
 
 function pickCoupangWingMetricItem(data, parsed, comp) {

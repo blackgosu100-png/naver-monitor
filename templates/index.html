@@ -1761,7 +1761,11 @@ function renderOptionsDetailGrid(comp, sortedDates, colTpl) {
   const optionNames = new Set();
   sortedDates.forEach(d => {
     const day = comp.days[d];
-    if (day && day.options) day.options.forEach(o => optionNames.add(o.name));
+    if (day && day.options) {
+      day.options.forEach(o => {
+        if (o && o.name && !String(o.name).startsWith('__')) optionNames.add(o.name);
+      });
+    }
   });
 
   if (optionNames.size === 0) {
