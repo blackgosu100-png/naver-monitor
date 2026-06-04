@@ -1315,6 +1315,23 @@ async function readCoupangStockEstimate(productUrl, productId, itemId, vendorIte
   function getProductMetrics() {
     var html = document.documentElement ? document.documentElement.outerHTML || '' : '';
     var text = document.body ? document.body.innerText || '' : '';
+    function visibleSalePriceFromTextSafe(value) {
+      var lines = String(value || '').split(/\n+/).map(function(line) { return line.trim(); }).filter(Boolean);
+      var end = lines.findIndex(function(line) {
+        return /\uBC30\uC1A1|\uD310\uB9E4\uC790|\uC218\uB7C9|\uC7A5\uBC14\uAD6C\uB2C8|\uBC14\uB85C\uAD6C\uB9E4/.test(line);
+      });
+      var main = lines.slice(0, end > 0 ? end : Math.min(lines.length, 80));
+      var prices = [];
+      for (var i = 0; i < main.length; i++) {
+        if (/1\s*\uAC1C\uB2F9|\uCE90\uC2DC|\uC801\uB9BD|\uBC30\uC1A1/.test(main[i])) continue;
+        var matches = main[i].match(/[0-9][0-9,]{3,}\s*\uC6D0/g) || [];
+        for (var j = 0; j < matches.length; j++) {
+          var n = numOrNull(matches[j]);
+          if (n !== null) prices.push(n);
+        }
+      }
+      return prices.length ? prices[0] : null;
+    }
     function firstTextFromSelectors(selectors) {
       for (var i = 0; i < selectors.length; i++) {
         var el = document.querySelector(selectors[i]);
@@ -1322,6 +1339,7 @@ async function readCoupangStockEstimate(productUrl, productId, itemId, vendorIte
       }
       return '';
     }
+    var visibleTextPrice = visibleSalePriceFromTextSafe(text);
     var visibleFinalPrice = firstTextFromSelectors([
       '.prod-coupon-price .total-price strong',
       '.prod-coupon-price .total-price',
@@ -1333,6 +1351,7 @@ async function readCoupangStockEstimate(productUrl, productId, itemId, vendorIte
       '[class*="sale"][class*="price"]'
     ]);
     var salePrice = numOrNull(
+      (visibleTextPrice !== null ? visibleTextPrice : '') ||
       visibleFinalPrice ||
       firstMatch(html, [
         /"finalPrice"\s*:\s*"?([0-9,]+)"?/i,
@@ -1605,6 +1624,23 @@ function readCoupangProductIdentity(productUrl, fallbackProductId, fallbackItemI
   function getProductMetrics() {
     var html = document.documentElement ? document.documentElement.outerHTML || '' : '';
     var text = document.body ? document.body.innerText || '' : '';
+    function visibleSalePriceFromTextSafe(value) {
+      var lines = String(value || '').split(/\n+/).map(function(line) { return line.trim(); }).filter(Boolean);
+      var end = lines.findIndex(function(line) {
+        return /\uBC30\uC1A1|\uD310\uB9E4\uC790|\uC218\uB7C9|\uC7A5\uBC14\uAD6C\uB2C8|\uBC14\uB85C\uAD6C\uB9E4/.test(line);
+      });
+      var main = lines.slice(0, end > 0 ? end : Math.min(lines.length, 80));
+      var prices = [];
+      for (var i = 0; i < main.length; i++) {
+        if (/1\s*\uAC1C\uB2F9|\uCE90\uC2DC|\uC801\uB9BD|\uBC30\uC1A1/.test(main[i])) continue;
+        var matches = main[i].match(/[0-9][0-9,]{3,}\s*\uC6D0/g) || [];
+        for (var j = 0; j < matches.length; j++) {
+          var n = numOrNull(matches[j]);
+          if (n !== null) prices.push(n);
+        }
+      }
+      return prices.length ? prices[0] : null;
+    }
     function firstTextFromSelectors(selectors) {
       for (var i = 0; i < selectors.length; i++) {
         var el = document.querySelector(selectors[i]);
@@ -1622,7 +1658,9 @@ function readCoupangProductIdentity(productUrl, fallbackProductId, fallbackItemI
       '[class*="coupon"][class*="price"]',
       '[class*="sale"][class*="price"]'
     ]);
+    var visibleTextPrice = visibleSalePriceFromTextSafe(text);
     var salePrice = numOrNull(
+      (visibleTextPrice !== null ? visibleTextPrice : '') ||
       visibleFinalPrice ||
       firstMatch(html, [
         /"finalPrice"\s*:\s*"?([0-9,]+)"?/i,

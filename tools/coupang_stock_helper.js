@@ -327,9 +327,33 @@ function numOrNull(value) {
   return Number.isFinite(n) ? n : null;
 }
 
-function extractProductMetricsFromHtml(html) {
+function visibleSalePriceFromText(value) {
+  const lines = String(value || '').split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  const end = lines.findIndex((line) => /\uBC30\uC1A1|\uD310\uB9E4\uC790|\uC218\uB7C9|\uC7A5\uBC14\uAD6C\uB2C8|\uBC14\uB85C\uAD6C\uB9E4/.test(line));
+  const main = lines.slice(0, end > 0 ? end : Math.min(lines.length, 80));
+  const prices = [];
+  for (const line of main) {
+    if (/1\s*\uAC1C\uB2F9|\uCE90\uC2DC|\uC801\uB9BD|\uBC30\uC1A1/.test(line)) continue;
+    const matches = line.match(/[0-9][0-9,]{3,}\s*\uC6D0/g) || [];
+    for (const found of matches) {
+      const n = numOrNull(found);
+      if (n !== null) prices.push(n);
+    }
+  }
+  return prices.length ? prices[0] : null;
+}
+
+function collectPriceDebugLines(value) {
+  return String(value || '')
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter((line) => line && /[0-9][0-9,]{3,}\s*\uC6D0|\uD560\uC778|\uCFE0\uD321\uD310\uB9E4\uAC00|\uD310\uB9E4\uC790/.test(line))
+    .slice(0, 30);
+}
+
+function extractProductMetricsFromHtml(html, visibleText = '') {
   const source = String(html || '');
-  const text = stripHtml(source);
+  const text = visibleText || stripHtml(source);
   function match(patterns) {
     for (const pattern of patterns) {
       const found = source.match(pattern) || text.match(pattern);
@@ -337,8 +361,9 @@ function extractProductMetricsFromHtml(html) {
     }
     return '';
   }
+  const visibleTextPrice = visibleSalePriceFromText(text);
   return {
-    salePrice: numOrNull(match([
+    salePrice: visibleTextPrice !== null ? visibleTextPrice : numOrNull(match([
       /"finalPrice"\s*:\s*"?([0-9,]+)"?/i,
       /"couponPrice"\s*:\s*"?([0-9,]+)"?/i,
       /"discount(?:ed)?Price"\s*:\s*"?([0-9,]+)"?/i,
@@ -522,7 +547,12 @@ async function estimateStock(payload) {
     if (!productHtml) {
       productHtml = await cdp.evaluate('document.documentElement ? document.documentElement.outerHTML : ""', 8000).catch(() => '');
     }
-    const productMetrics = extractProductMetricsFromHtml(productHtml);
+    const productText = await cdp.evaluate('document.body ? document.body.innerText : ""', 8000).catch(() => '');
+    const productMetrics = extractProductMetricsFromHtml(productHtml, productText);
+    const debugMetrics = payload.debug ? {
+      priceLines: collectPriceDebugLines(productText),
+      textSalePrice: visibleSalePriceFromText(productText),
+    } : null;
     if (!productId || !vendorItemId) {
       throw new Error('productId or vendorItemId not found');
     }
@@ -618,6 +648,7 @@ async function estimateStock(payload) {
         elapsedMs: Date.now() - startedAt,
         source: 'local-cdp-helper',
         helperVersion: HELPER_VERSION,
+        ...(debugMetrics ? { debug: debugMetrics } : {}),
       };
     }
 
@@ -641,6 +672,7 @@ async function estimateStock(payload) {
       elapsedMs: Date.now() - startedAt,
       source: 'local-cdp-helper',
       helperVersion: HELPER_VERSION,
+      ...(debugMetrics ? { debug: debugMetrics } : {}),
     };
   } finally {
     cdp.close();
