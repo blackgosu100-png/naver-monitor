@@ -1,8 +1,8 @@
 // 백그라운드 서비스 워커 — 팝업이 닫혀도 조회 계속 실행
 
 const DEFAULT_SERVER = 'https://naver-monitor-production.up.railway.app';
-const COUPANG_CACHE_KEY = 'coupangMetricCacheV2';
-const MIN_COUPANG_HELPER_VERSION = '1.4.1';
+const COUPANG_CACHE_KEY = 'coupangMetricCacheV3';
+const MIN_COUPANG_HELPER_VERSION = '1.4.2';
 const COUPANG_MONTHLY_TTL = 12 * 60 * 60 * 1000;
 const COUPANG_VIEWS_TTL = 24 * 60 * 60 * 1000;
 const COUPANG_STOCK_TTL = 3 * 60 * 60 * 1000;
@@ -2107,6 +2107,7 @@ async function estimateCoupangStockViaLocalHelper(comp, parsed) {
           itemId: data.itemId || payload.itemId,
           vendorItemId: data.vendorItemId || payload.vendorItemId,
           salePrice: data.salePrice,
+          priceSource: data.priceSource || '',
           ratingCount: data.ratingCount,
           localHelper: true,
           helperVersion: data.helperVersion || '',
@@ -2367,12 +2368,13 @@ function numOrNull(value) {
 }
 
 function addCoupangProductMetricOptions(options, source) {
-  var salePrice = numOrNull(source && source.salePrice);
+  var trustedSalePrice = !!(source && source.localHelper && source.priceSource === 'quantity-info:1');
+  var salePrice = trustedSalePrice ? numOrNull(source && source.salePrice) : null;
   var ratingCount = numOrNull(source && source.ratingCount);
   if (salePrice !== null) options.push({ name: '\uD310\uB9E4\uAC00', qty: salePrice });
   if (ratingCount !== null) options.push({ name: '\uB9AC\uBDF0\uC218', qty: ratingCount });
   if (source && source.localHelper) {
-    options.push({ name: '__coupang_source', text: 'local-helper ' + (source.helperVersion || '') });
+    options.push({ name: '__coupang_source', text: 'local-helper ' + (source.helperVersion || '') + ' ' + (source.priceSource || '') });
   } else if (source && source.backgroundDirect) {
     options.push({ name: '__coupang_source', text: 'background-direct' });
   } else if (source && source.source) {
@@ -2893,7 +2895,8 @@ async function runFetch(competitors, fetchMode) {
                 ok: true,
                 stock: Number(stockOnly.stock),
                 options: stockCacheOptions,
-                salePrice: stockOnly.salePrice,
+                salePrice: stockOnly.localHelper && stockOnly.priceSource === 'quantity-info:1' ? stockOnly.salePrice : null,
+                priceSource: stockOnly.priceSource || '',
                 ratingCount: stockOnly.ratingCount,
                 image_url: stockOnly.image_url || ''
               });
@@ -3203,7 +3206,8 @@ async function collectCoupangStockMetricOnly(comp, parsed, index, total, results
       ok: true,
       stock: value,
       options: options,
-      salePrice: stock.salePrice,
+      salePrice: stock.localHelper && stock.priceSource === 'quantity-info:1' ? stock.salePrice : null,
+      priceSource: stock.priceSource || '',
       ratingCount: stock.ratingCount,
       image_url: stock.image_url || ''
     });
