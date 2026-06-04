@@ -15,7 +15,7 @@ const PAGE_WARMUP_MS = Number(process.env.COUPANG_STOCK_PAGE_WARMUP_MS || 350);
 const PROBE_DELAY_MS = Number(process.env.COUPANG_STOCK_PROBE_DELAY_MS || 80);
 const MAX_QUANTITY = Number(process.env.COUPANG_STOCK_MAX_QUANTITY || 50000);
 const DEFAULT_STEPS = [100, 1000, 5000];
-const HELPER_VERSION = '1.3.4';
+const HELPER_VERSION = '1.4.0';
 
 let chromeProcess = null;
 let warmupPromise = null;
@@ -666,6 +666,48 @@ async function fetchQuantityInfo(cdp, productId, vendorItemId, quantity) {
   throw new Error(`quantity-info HTTP ${lastResult.status} (${quantity})`);
 }
 
+async function fetchQuantityInfoBatch(cdp, productId, vendorItemId, quantities) {
+  const unique = [...new Set(quantities.map((q) => Math.max(1, Math.floor(Number(q) || 1))))];
+  if (!unique.length) return [];
+  const requests = unique.map((quantity) => ({
+    quantity,
+    url: buildQuantityInfoUrl(productId, vendorItemId, quantity),
+  }));
+  const expression = `(async () => {
+    const requests = ${JSON.stringify(requests)};
+    return await Promise.all(requests.map(async (item) => {
+      try {
+        const res = await fetch(item.url, {
+          credentials: 'include',
+          cache: 'no-store',
+          headers: {
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7'
+          }
+        });
+        return { quantity: item.quantity, ok: res.ok, status: res.status, text: await res.text() };
+      } catch (error) {
+        return { quantity: item.quantity, ok: false, status: 0, text: '', error: error && error.message ? error.message : String(error) };
+      }
+    }));
+  })()`;
+
+  const rows = await cdp.evaluate(expression, 45000);
+  const out = [];
+  for (const row of rows || []) {
+    if (row && row.ok && row.text) {
+      try {
+        out.push({ quantity: row.quantity, data: JSON.parse(row.text) });
+        continue;
+      } catch {
+        // Fall through to single retry below.
+      }
+    }
+    out.push({ quantity: row && row.quantity, error: row && (row.error || `HTTP ${row.status}`) });
+  }
+  return out;
+}
+
 function collectQuantityHints(data) {
   const hints = [];
   const seen = new Set();
@@ -685,6 +727,33 @@ function collectQuantityHints(data) {
         hints.push({ path: nextPath, value });
       }
       if (value && typeof value === 'object') walk(value, nextPath, depth + 1);
+    }
+  }
+  walk(data, '', 0);
+  return hints;
+}
+
+function collectTextHints(data) {
+  const hints = [];
+  const seen = new Set();
+  const textPattern = /\d|남음|재고|품절|구매|수량|가능|최대|최소|remaining|stock|available|quantity|limit/i;
+  function walk(node, path, depth) {
+    if (node == null || depth > 8 || hints.length >= 120) return;
+    if (typeof node === 'string') {
+      const text = node.replace(/\s+/g, ' ').trim();
+      if (text && text.length <= 500 && textPattern.test(text)) hints.push({ path, text });
+      return;
+    }
+    if (typeof node !== 'object') return;
+    if (seen.has(node)) return;
+    seen.add(node);
+    if (Array.isArray(node)) {
+      node.slice(0, 12).forEach((item, index) => walk(item, `${path}[${index}]`, depth + 1));
+      return;
+    }
+    for (const [key, value] of Object.entries(node)) {
+      const nextPath = path ? `${path}.${key}` : key;
+      walk(value, nextPath, depth + 1);
     }
   }
   walk(data, '', 0);
@@ -745,6 +814,41 @@ async function estimateStock(payload) {
       return result;
     }
 
+    async function probeMany(quantities, baseline) {
+      const wanted = [...new Set(quantities
+        .map((q) => Math.max(1, Math.floor(Number(q) || 1)))
+        .filter((q) => !cache.has(q)))];
+      if (wanted.length) {
+        if (apiCalls > 0) await sleep(PROBE_DELAY_MS);
+        apiCalls += wanted.length;
+        const rows = await fetchQuantityInfoBatch(cdp, productId, vendorItemId, wanted);
+        for (const row of rows) {
+          const quantity = Math.max(1, Math.floor(Number(row.quantity) || 1));
+          if (!quantity || cache.has(quantity) || !row.data) continue;
+          const state = extractDeliveryState(row.data);
+          cache.set(quantity, {
+            quantity,
+            state,
+            sameAsBaseline: baseline ? sameDeliveryState(baseline, state) : false,
+          });
+        }
+        for (const quantity of wanted) {
+          if (cache.has(quantity)) continue;
+          const json = await fetchQuantityInfo(cdp, productId, vendorItemId, quantity);
+          const state = extractDeliveryState(json);
+          cache.set(quantity, {
+            quantity,
+            state,
+            sameAsBaseline: baseline ? sameDeliveryState(baseline, state) : false,
+          });
+        }
+      }
+      return [...new Set(quantities.map((q) => Math.max(1, Math.floor(Number(q) || 1))))]
+        .map((q) => cache.get(q))
+        .filter(Boolean)
+        .sort((a, b) => a.quantity - b.quantity);
+    }
+
     let baselineProbe = await probe(1);
     if (!baselineProbe.state) {
       cache.delete(1);
@@ -758,6 +862,8 @@ async function estimateStock(payload) {
         const highJson = await fetchQuantityInfo(cdp, productId, vendorItemId, MAX_QUANTITY);
         debugMetrics.highQuantity = MAX_QUANTITY;
         debugMetrics.highQuantityHints = collectQuantityHints(highJson);
+        debugMetrics.highTextHints = collectTextHints(highJson);
+        debugMetrics.highDeliveryState = extractDeliveryState(highJson);
       } catch (error) {
         debugMetrics.highQuantityError = error && error.message ? error.message : String(error);
       }
@@ -786,15 +892,19 @@ async function estimateStock(payload) {
       } else {
         high = expected;
         const nearWindow = Math.min(20, Math.max(6, Math.ceil(expected * 0.03)));
+        const nearQuantities = [];
         for (let offset = 1; offset <= nearWindow; offset += 1) {
           const near = expected - offset;
           if (near <= 1) break;
-          const nearProbe = await probe(near, baseline);
+          nearQuantities.push(near);
+        }
+        const nearProbes = await probeMany(nearQuantities, baseline);
+        for (const nearProbe of nearProbes.sort((a, b) => b.quantity - a.quantity)) {
           if (nearProbe.sameAsBaseline) {
-            low = near;
+            low = nearProbe.quantity;
             break;
           }
-          high = Math.min(high, near);
+          high = Math.min(high, nearProbe.quantity);
         }
         let step = Math.max(nearWindow + 1, Math.ceil(expected * 0.12));
         let candidate = Math.max(1, expected - step);
@@ -812,9 +922,16 @@ async function estimateStock(payload) {
     }
 
     if (high == null) {
-      for (const step of DEFAULT_STEPS) {
-        if (step <= low) continue;
-        if (await applyProbe(step)) break;
+      const firstWave = [10, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, MAX_QUANTITY]
+        .filter((step) => step > low && step <= MAX_QUANTITY);
+      const waveProbes = await probeMany(firstWave, baseline);
+      for (const tested of waveProbes) {
+        if (tested.sameAsBaseline) {
+          low = Math.max(low, tested.quantity);
+        } else {
+          high = high == null ? tested.quantity : Math.min(high, tested.quantity);
+          break;
+        }
       }
     }
 
@@ -838,10 +955,21 @@ async function estimateStock(payload) {
     }
 
     while (high - low > 1) {
-      const mid = Math.floor((low + high) / 2);
-      const midProbe = await probe(mid, baseline);
-      if (midProbe.sameAsBaseline) low = mid;
-      else high = mid;
+      const span = high - low;
+      const mids = [
+        low + Math.floor(span / 4),
+        low + Math.floor(span / 2),
+        low + Math.floor((span * 3) / 4),
+      ].filter((q) => q > low && q < high);
+      const midProbes = await probeMany(mids.length ? mids : [Math.floor((low + high) / 2)], baseline);
+      for (const midProbe of midProbes) {
+        if (midProbe.sameAsBaseline) {
+          low = Math.max(low, midProbe.quantity);
+        } else {
+          high = Math.min(high, midProbe.quantity);
+          break;
+        }
+      }
     }
 
     return {
