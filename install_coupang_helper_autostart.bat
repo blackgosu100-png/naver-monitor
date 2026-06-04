@@ -24,6 +24,10 @@ echo.
 echo Coupang stock helper autostart is enabled.
 echo It will start automatically when you log in to Windows.
 echo.
+echo Update note:
+echo - If you update this app in the same folder, you do not need to reinstall autostart.
+echo - If you move this folder or unzip a new copy to another folder, run this installer again.
+echo.
 echo Starting it now...
 start "Coupang Stock Helper" /min cmd /c ""%SCRIPT%""
 pause
