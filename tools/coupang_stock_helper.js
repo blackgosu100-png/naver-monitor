@@ -15,10 +15,12 @@ const PAGE_WARMUP_MS = Number(process.env.COUPANG_STOCK_PAGE_WARMUP_MS || 900);
 const PROBE_DELAY_MS = Number(process.env.COUPANG_STOCK_PROBE_DELAY_MS || 180);
 const MAX_QUANTITY = Number(process.env.COUPANG_STOCK_MAX_QUANTITY || 50000);
 const DEFAULT_STEPS = [100, 1000, 5000];
-const HELPER_VERSION = '1.2.1';
+const HELPER_VERSION = '1.3.0';
 
 let chromeProcess = null;
 let warmupPromise = null;
+let sharedPage = null;
+let stockQueue = Promise.resolve();
 let warmupState = {
   startedAt: null,
   finishedAt: null,
@@ -157,6 +159,40 @@ async function closeTarget(targetId) {
   } catch {
     // best effort
   }
+}
+
+async function getSharedPage() {
+  await warmupChrome();
+  if (sharedPage && sharedPage.cdp) {
+    try {
+      await sharedPage.cdp.evaluate('document.readyState', 1000);
+      return sharedPage;
+    } catch {
+      try { sharedPage.cdp.close(); } catch {}
+      try { await closeTarget(sharedPage.targetId); } catch {}
+      sharedPage = null;
+    }
+  }
+
+  const target = await createTarget();
+  const cdp = new CdpClient(target.webSocketDebuggerUrl);
+  await cdp.connect();
+  await setupPage(cdp);
+  sharedPage = { targetId: target.id, cdp };
+  return sharedPage;
+}
+
+async function closeSharedPage() {
+  if (!sharedPage) return;
+  try { sharedPage.cdp.close(); } catch {}
+  try { await closeTarget(sharedPage.targetId); } catch {}
+  sharedPage = null;
+}
+
+function runStockJob(fn) {
+  const job = stockQueue.then(fn, fn);
+  stockQueue = job.catch(() => undefined);
+  return job;
 }
 
 class CdpClient {
@@ -522,14 +558,11 @@ async function fetchQuantityInfo(cdp, productId, vendorItemId, quantity) {
 
 async function estimateStock(payload) {
   const startedAt = Date.now();
-  await warmupChrome();
-  const target = await createTarget();
-  const cdp = new CdpClient(target.webSocketDebuggerUrl);
-  await cdp.connect();
+  const page = await getSharedPage();
+  const cdp = page.cdp;
 
   let apiCalls = 0;
   try {
-    await setupPage(cdp);
     const productUrl = normalizeProductUrl(payload.productUrl);
     let { productId, itemId, vendorItemId } = parseIdsFromUrl(productUrl);
     productId = String(payload.productId || productId || '');
@@ -674,9 +707,9 @@ async function estimateStock(payload) {
       helperVersion: HELPER_VERSION,
       ...(debugMetrics ? { debug: debugMetrics } : {}),
     };
-  } finally {
-    cdp.close();
-    await closeTarget(target.id);
+  } catch (error) {
+    try { await closeSharedPage(); } catch {}
+    throw error;
   }
 }
 
@@ -720,15 +753,19 @@ const server = http.createServer(async (req, res) => {
     if ((req.method === 'GET' || req.method === 'POST') && req.url === '/shutdown') {
       jsonResponse(res, 200, { ok: true, message: 'shutting down' });
       setTimeout(() => {
-        if (chromeProcess && !chromeProcess.killed) chromeProcess.kill();
-        server.close(() => process.exit(0));
+        closeSharedPage()
+          .catch(() => undefined)
+          .finally(() => {
+            if (chromeProcess && !chromeProcess.killed) chromeProcess.kill();
+            server.close(() => process.exit(0));
+          });
       }, 50);
       return;
     }
     if (req.method === 'POST' && req.url === '/stock') {
       const body = await readBody(req);
       const payload = body ? JSON.parse(body) : {};
-      const result = await estimateStock(payload);
+      const result = await runStockJob(() => estimateStock(payload));
       jsonResponse(res, 200, result);
       return;
     }
@@ -756,6 +793,10 @@ server.listen(PORT, '127.0.0.1', () => {
 });
 
 process.on('SIGINT', () => {
-  if (chromeProcess && !chromeProcess.killed) chromeProcess.kill();
-  process.exit(0);
+  closeSharedPage()
+    .catch(() => undefined)
+    .finally(() => {
+      if (chromeProcess && !chromeProcess.killed) chromeProcess.kill();
+      process.exit(0);
+    });
 });
