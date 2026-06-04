@@ -15,7 +15,7 @@ const PAGE_WARMUP_MS = Number(process.env.COUPANG_STOCK_PAGE_WARMUP_MS || 350);
 const PROBE_DELAY_MS = Number(process.env.COUPANG_STOCK_PROBE_DELAY_MS || 80);
 const MAX_QUANTITY = Number(process.env.COUPANG_STOCK_MAX_QUANTITY || 50000);
 const DEFAULT_STEPS = [100, 1000, 5000];
-const HELPER_VERSION = '1.4.0';
+const HELPER_VERSION = '1.4.1';
 
 let chromeProcess = null;
 let warmupPromise = null;
@@ -418,6 +418,44 @@ function extractProductMetricsFromHtml(html, visibleText = '') {
   };
 }
 
+function deepValue(node, path) {
+  let current = node;
+  for (const part of path) {
+    if (current == null) return null;
+    current = current[part];
+  }
+  return current == null ? null : current;
+}
+
+function normalizeUnitPrice(value, quantity) {
+  const n = numOrNull(value);
+  if (n === null) return null;
+  const q = Math.max(1, Math.floor(Number(quantity) || 1));
+  if (q > 1 && n > 1000000 && n % q === 0) return n / q;
+  return n;
+}
+
+function extractPriceFromQuantityInfo(data, quantity = 1) {
+  const item = Array.isArray(data) ? data[0] : data;
+  if (!item || typeof item !== 'object') return null;
+  const candidates = [
+    ['price', 'finalPrice'],
+    ['price', 'couponPrice'],
+    ['price', 'salePrice'],
+    ['moduleData', 0, 'detailPriceBundle', 'finalPrice', 'price'],
+    ['moduleData', 0, 'detailPriceBundle', 'finalPrice', 'displayPrice'],
+    ['moduleData', 3, 'priceInfo', 'finalPrice', 'price'],
+    ['moduleData', 3, 'priceInfo', 'finalPrice', 'displayPrice'],
+    ['priceList', 1, 'priceAmount'],
+    ['priceList', 0, 'priceAmount'],
+  ];
+  for (const path of candidates) {
+    const price = normalizeUnitPrice(deepValue(item, path), quantity);
+    if (price !== null && price > 0 && price < 10000000) return price;
+  }
+  return null;
+}
+
 async function extractProductMetricsFromPage(cdp, html, visibleText, debug = false) {
   const domMetrics = await cdp.evaluate(`(() => {
     function visible(el) {
@@ -807,6 +845,7 @@ async function estimateStock(payload) {
       const state = extractDeliveryState(json);
       const result = {
         quantity,
+        data: json,
         state,
         sameAsBaseline: baseline ? sameDeliveryState(baseline, state) : false,
       };
@@ -828,6 +867,7 @@ async function estimateStock(payload) {
           const state = extractDeliveryState(row.data);
           cache.set(quantity, {
             quantity,
+            data: row.data,
             state,
             sameAsBaseline: baseline ? sameDeliveryState(baseline, state) : false,
           });
@@ -838,6 +878,7 @@ async function estimateStock(payload) {
           const state = extractDeliveryState(json);
           cache.set(quantity, {
             quantity,
+            data: json,
             state,
             sameAsBaseline: baseline ? sameDeliveryState(baseline, state) : false,
           });
@@ -857,7 +898,16 @@ async function estimateStock(payload) {
     }
     if (!baselineProbe.state) throw new Error('baseline delivery state not found');
     const baseline = baselineProbe.state;
+    const quantityPrice = extractPriceFromQuantityInfo(baselineProbe.data, 1);
+    if (quantityPrice !== null) {
+      productMetrics.salePrice = quantityPrice;
+      productMetrics.priceSource = 'quantity-info:1';
+      productMetrics.priceText = String(quantityPrice);
+    }
     if (debugMetrics) {
+      debugMetrics.quantityInfoUnitPrice = quantityPrice;
+      debugMetrics.priceSource = productMetrics.priceSource || debugMetrics.priceSource || '';
+      debugMetrics.priceText = productMetrics.priceText || debugMetrics.priceText || '';
       try {
         const highJson = await fetchQuantityInfo(cdp, productId, vendorItemId, MAX_QUANTITY);
         debugMetrics.highQuantity = MAX_QUANTITY;
