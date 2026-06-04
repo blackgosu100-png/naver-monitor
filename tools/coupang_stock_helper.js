@@ -11,11 +11,11 @@ const DEBUG_PORT = Number(process.env.COUPANG_STOCK_DEBUG_PORT || 9333);
 const DEBUG_HOST = '127.0.0.1';
 const PROFILE_DIR = process.env.COUPANG_STOCK_PROFILE_DIR ||
   path.resolve(__dirname, '..', '.coupang-stock-helper-profile');
-const PAGE_WARMUP_MS = Number(process.env.COUPANG_STOCK_PAGE_WARMUP_MS || 900);
-const PROBE_DELAY_MS = Number(process.env.COUPANG_STOCK_PROBE_DELAY_MS || 180);
+const PAGE_WARMUP_MS = Number(process.env.COUPANG_STOCK_PAGE_WARMUP_MS || 350);
+const PROBE_DELAY_MS = Number(process.env.COUPANG_STOCK_PROBE_DELAY_MS || 80);
 const MAX_QUANTITY = Number(process.env.COUPANG_STOCK_MAX_QUANTITY || 50000);
 const DEFAULT_STEPS = [100, 1000, 5000];
-const HELPER_VERSION = '1.3.0';
+const HELPER_VERSION = '1.3.3';
 
 let chromeProcess = null;
 let warmupPromise = null;
@@ -418,6 +418,87 @@ function extractProductMetricsFromHtml(html, visibleText = '') {
   };
 }
 
+async function extractProductMetricsFromPage(cdp, html, visibleText, debug = false) {
+  const domMetrics = await cdp.evaluate(`(() => {
+    function visible(el) {
+      if (!el) return false;
+      const rect = el.getBoundingClientRect();
+      const style = window.getComputedStyle(el);
+      return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+    }
+    function numOrNull(value) {
+      if (value == null || value === '') return null;
+      const cleaned = String(value).replace(/[^0-9.]/g, '');
+      if (!cleaned) return null;
+      const n = Number(cleaned);
+      return Number.isFinite(n) ? n : null;
+    }
+    function firstPriceFromSelector(selector) {
+      const nodes = Array.from(document.querySelectorAll(selector));
+      for (const el of nodes) {
+        if (!visible(el)) continue;
+        const text = (el.textContent || '').replace(/\\s+/g, ' ').trim();
+        if (/1\\s*개당|캐시|적립|배송/.test(text)) continue;
+        const matches = text.match(/[0-9][0-9,]{3,}\\s*원/g) || [];
+        for (const found of matches) {
+          const n = numOrNull(found);
+          if (n !== null) return { value: n, selector, text };
+        }
+      }
+      return null;
+    }
+    const priceSelectors = [
+      '.prod-price .total-price strong',
+      '.prod-price .total-price',
+      '.prod-sale-price .total-price strong',
+      '.prod-sale-price .total-price',
+      '.prod-coupon-price .total-price strong',
+      '.prod-coupon-price .total-price',
+      '.total-price strong',
+      '.total-price'
+    ];
+    let price = null;
+    for (const selector of priceSelectors) {
+      price = firstPriceFromSelector(selector);
+      if (price) break;
+    }
+    const reviewSelectors = [
+      '.sdp-review__average__total-star__info-count',
+      '.prod-review-count',
+      '[class*="review"][class*="count"]'
+    ];
+    let ratingCount = null;
+    for (const selector of reviewSelectors) {
+      const nodes = Array.from(document.querySelectorAll(selector));
+      for (const el of nodes) {
+        if (!visible(el)) continue;
+        const text = el.textContent || '';
+        const m = text.match(/[0-9][0-9,]*/);
+        if (m) {
+          ratingCount = numOrNull(m[0]);
+          if (ratingCount !== null) break;
+        }
+      }
+      if (ratingCount !== null) break;
+    }
+    return {
+      salePrice: price ? price.value : null,
+      priceSource: price ? price.selector : '',
+      priceText: price ? price.text : '',
+      ratingCount
+    };
+  })()`, 8000).catch(() => null);
+
+  const fallback = extractProductMetricsFromHtml(html, visibleText);
+  return {
+    salePrice: domMetrics && domMetrics.salePrice !== null ? domMetrics.salePrice : fallback.salePrice,
+    ratingCount: domMetrics && domMetrics.ratingCount !== null ? domMetrics.ratingCount : fallback.ratingCount,
+    priceSource: domMetrics && domMetrics.salePrice !== null ? domMetrics.priceSource : 'text-fallback',
+    priceText: domMetrics && domMetrics.salePrice !== null ? domMetrics.priceText : '',
+    ...(debug ? { fallbackSalePrice: fallback.salePrice } : {}),
+  };
+}
+
 function normalizeDeliveryText(text) {
   if (!text) return '';
   return stripHtml(text)
@@ -530,6 +611,24 @@ async function navigateProductPage(cdp, productUrl) {
     if (String(href).includes('/products/') && ready && ready !== 'loading') break;
     await sleep(120);
   }
+  const priceEnd = Date.now() + 2500;
+  while (Date.now() < priceEnd) {
+    const hasPrice = await cdp.evaluate(`(() => {
+      const selectors = [
+        '.prod-price .total-price',
+        '.prod-sale-price .total-price',
+        '.prod-coupon-price .total-price',
+        '.total-price',
+        '[class*="price"]'
+      ];
+      return selectors.some((selector) => {
+        const el = document.querySelector(selector);
+        return el && /[0-9][0-9,]{3,}\\s*원/.test(el.textContent || '');
+      });
+    })()`).catch(() => false);
+    if (hasPrice) break;
+    await sleep(120);
+  }
   await sleep(PAGE_WARMUP_MS);
 }
 
@@ -546,14 +645,25 @@ async function fetchQuantityInfo(cdp, productId, vendorItemId, quantity) {
     });
     return { ok: res.ok, status: res.status, text: await res.text() };
   })()`;
-  const result = await cdp.evaluate(expression, 30000);
-  if (!result || !result.text) throw new Error(`empty quantity-info response (${quantity})`);
-  if (!result.ok) throw new Error(`quantity-info HTTP ${result.status} (${quantity})`);
-  try {
-    return JSON.parse(result.text);
-  } catch {
-    throw new Error(`quantity-info JSON parse failed (${quantity})`);
+  let lastResult = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const result = await cdp.evaluate(expression, 30000);
+    lastResult = result;
+    if (result && result.ok && result.text) {
+      try {
+        return JSON.parse(result.text);
+      } catch {
+        throw new Error(`quantity-info JSON parse failed (${quantity})`);
+      }
+    }
+    if (attempt < 3 && (!result || !result.text || result.status === 403 || result.status === 429)) {
+      await sleep(700 * attempt);
+      continue;
+    }
+    break;
   }
+  if (!lastResult || !lastResult.text) throw new Error(`empty quantity-info response (${quantity})`);
+  throw new Error(`quantity-info HTTP ${lastResult.status} (${quantity})`);
 }
 
 async function estimateStock(payload) {
@@ -581,10 +691,13 @@ async function estimateStock(payload) {
       productHtml = await cdp.evaluate('document.documentElement ? document.documentElement.outerHTML : ""', 8000).catch(() => '');
     }
     const productText = await cdp.evaluate('document.body ? document.body.innerText : ""', 8000).catch(() => '');
-    const productMetrics = extractProductMetricsFromHtml(productHtml, productText);
+    const productMetrics = await extractProductMetricsFromPage(cdp, productHtml, productText, !!payload.debug);
     const debugMetrics = payload.debug ? {
       priceLines: collectPriceDebugLines(productText),
       textSalePrice: visibleSalePriceFromText(productText),
+      priceSource: productMetrics.priceSource || '',
+      priceText: productMetrics.priceText || '',
+      fallbackSalePrice: productMetrics.fallbackSalePrice,
     } : null;
     if (!productId || !vendorItemId) {
       throw new Error('productId or vendorItemId not found');
@@ -739,9 +852,10 @@ const server = http.createServer(async (req, res) => {
         ok: true,
         service: 'coupang-stock-helper',
         version: HELPER_VERSION,
-        port: PORT,
-        debugPort: DEBUG_PORT,
-        warmup: {
+      port: PORT,
+      debugPort: DEBUG_PORT,
+      sharedPageReady: !!sharedPage,
+      warmup: {
           ...warmupState,
           elapsedMs: warmupState.startedAt
             ? ((warmupState.finishedAt || Date.now()) - warmupState.startedAt)
@@ -783,9 +897,10 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log(`[coupang-stock-helper] chrome debug port ${DEBUG_PORT}`);
   console.log('[coupang-stock-helper] warming up Chrome...');
   warmupChrome()
+    .then(() => getSharedPage())
     .then(() => {
       const elapsed = warmupState.finishedAt - warmupState.startedAt;
-      console.log(`[coupang-stock-helper] Chrome ready (${elapsed}ms)`);
+      console.log(`[coupang-stock-helper] Chrome ready (${elapsed}ms), shared page ready`);
     })
     .catch(error => {
       console.error('[coupang-stock-helper] Chrome warmup failed:', error && error.message ? error.message : error);
