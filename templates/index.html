@@ -562,10 +562,13 @@ body { overflow-x: hidden; }
 .plan-meta { color:var(--text2); font-size:12px; line-height:1.7; flex:1; }
 .plan-card .btn { justify-content:center; width:100%; }
 .upgrade-foot { margin-top:14px; padding:12px 14px; border-radius:8px; background:#f8fafc; color:var(--text2); font-size:12px; line-height:1.7; }
+.modal-actions { display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap; margin-top:18px; }
 @media (max-width: 720px) {
   .plan-grid { grid-template-columns:1fr; }
   .upgrade-head { padding:18px; }
   .upgrade-body { padding:16px 18px 18px; }
+  .modal-actions { justify-content:stretch; }
+  .modal-actions .btn { flex:1; justify-content:center; }
 }
 
 /* ── Loading ── */
@@ -934,8 +937,34 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
   </div>
 </div>
 
+<!-- Coupang login modal -->
+<div class="modal-backdrop" id="coupang-login-modal" onclick="closeCoupangLoginModal(false, event)">
+  <div class="upgrade-modal" role="dialog" aria-modal="true" aria-labelledby="coupang-login-title" onclick="event.stopPropagation()">
+    <div class="upgrade-head">
+      <div>
+        <div class="upgrade-title" id="coupang-login-title">쿠팡 로그인 확인이 필요합니다</div>
+        <div class="upgrade-desc">
+          쿠팡 판매가는 로그인, 와우, 쿠폰 세션에 따라 달라질 수 있습니다. 정확한 판매가와 매출 추정을 위해 같은 크롬에서 쿠팡 로그인 상태를 확인해 주세요.
+        </div>
+      </div>
+      <button class="modal-close" type="button" onclick="closeCoupangLoginModal(false)" aria-label="닫기">×</button>
+    </div>
+    <div class="upgrade-body">
+      <div class="upgrade-foot">
+        로그인 바로가기를 누르면 새 탭에서 쿠팡 로그인 페이지가 열립니다. 로그인 완료 후 이 화면으로 돌아와 조회를 시작하면 됩니다.
+      </div>
+      <div class="modal-actions">
+        <button class="btn" type="button" onclick="openCoupangLoginUrl()">쿠팡 로그인 바로가기</button>
+        <button class="btn btn-primary" type="button" onclick="closeCoupangLoginModal(true)">로그인 완료 · 조회 시작</button>
+        <button class="btn btn-sm" type="button" onclick="closeCoupangLoginModal(false)">취소</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 const nativeFetch = window.fetch.bind(window);
+const COUPANG_LOGIN_URL = 'https://login.coupang.com/login/login.pang?rtnUrl=https%3A%2F%2Fwww.coupang.com%2Fnp%2Fpost%2Flogin%3Fr%3Dhttp%253A%252F%252Fwww.coupang.com%252F';
 const CONFIG_CACHE_KEY = 'naverMonitorConfigCache:v1';
 const HISTORY_CACHE_KEY = 'naverMonitorHistoryCache:v1';
 const HISTORY_MODE_KEY = 'naverMonitorHistoryMode:v1';
@@ -2165,13 +2194,28 @@ function shouldWarnCoupangLogin(fetchMode, market = currentMarket()) {
   return isCoupangFetchMode(fetchMode) || isCoupangMarket(market);
 }
 
+let coupangLoginResolve = null;
+
+function openCoupangLoginUrl() {
+  window.open(COUPANG_LOGIN_URL, '_blank', 'noopener');
+}
+
+function closeCoupangLoginModal(confirmed = false, event = null) {
+  if (event && event.target && event.target.id !== 'coupang-login-modal') return;
+  document.getElementById('coupang-login-modal')?.classList.remove('show');
+  if (coupangLoginResolve) {
+    const resolve = coupangLoginResolve;
+    coupangLoginResolve = null;
+    resolve(Boolean(confirmed));
+  }
+}
+
 function confirmCoupangLoginBeforeFetch(fetchMode, market = currentMarket()) {
-  if (!shouldWarnCoupangLogin(fetchMode, market)) return true;
-  return window.confirm(
-    '쿠팡 판매가는 로그인/와우/쿠폰 세션에 따라 달라질 수 있습니다.\n\n' +
-    '정확한 판매가와 매출 추정을 위해 먼저 크롬에서 쿠팡에 로그인한 상태인지 확인해 주세요.\n\n' +
-    '로그인 상태로 조회를 시작할까요?'
-  );
+  if (!shouldWarnCoupangLogin(fetchMode, market)) return Promise.resolve(true);
+  document.getElementById('coupang-login-modal')?.classList.add('show');
+  return new Promise(resolve => {
+    coupangLoginResolve = resolve;
+  });
 }
 
 function parseVersionParts(version) {
@@ -2386,7 +2430,7 @@ async function fetchAll() {
   const fetchLabel = isCoupangStockMarket() ? '재고 조회' : '전체 조회';
   const fetchMode = currentFetchMode();
   const fetchMarket = currentMarket();
-  if (!confirmCoupangLoginBeforeFetch(fetchMode, fetchMarket)) return;
+  if (!(await confirmCoupangLoginBeforeFetch(fetchMode, fetchMarket))) return;
   showLoading(`크롬 확장 프로그램에 ${fetchLabel} 요청 중...`);
   const btn = document.getElementById('fetch-btn');
   btn.disabled = true;
@@ -2423,7 +2467,7 @@ async function fetchSingle(cid, name, forcedFetchMode = currentFetchMode(), forc
   const fetchMode = forcedFetchMode || currentFetchMode();
   const fetchMarket = forcedMarket || currentMarket();
   const fetchLabel = fetchMode === 'coupang_stock' ? '재고 조회' : '선택상품조회';
-  if (!confirmCoupangLoginBeforeFetch(fetchMode, fetchMarket)) return;
+  if (!(await confirmCoupangLoginBeforeFetch(fetchMode, fetchMarket))) return;
   showLoading(`${name} ${fetchLabel} 요청 중...`);
   try {
     const comp = getDashboardCompetitors().find(item => item.id === cid);
