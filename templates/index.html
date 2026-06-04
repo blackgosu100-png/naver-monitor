@@ -2161,6 +2161,19 @@ function isCoupangFetchMode(fetchMode) {
   return ['coupang_stock', 'coupang_sales', 'stock', 'sales'].includes(String(fetchMode || '').toLowerCase());
 }
 
+function shouldWarnCoupangLogin(fetchMode, market = currentMarket()) {
+  return isCoupangFetchMode(fetchMode) || isCoupangMarket(market);
+}
+
+function confirmCoupangLoginBeforeFetch(fetchMode, market = currentMarket()) {
+  if (!shouldWarnCoupangLogin(fetchMode, market)) return true;
+  return window.confirm(
+    '쿠팡 판매가는 로그인/와우/쿠폰 세션에 따라 달라질 수 있습니다.\n\n' +
+    '정확한 판매가와 매출 추정을 위해 먼저 크롬에서 쿠팡에 로그인한 상태인지 확인해 주세요.\n\n' +
+    '로그인 상태로 조회를 시작할까요?'
+  );
+}
+
 function parseVersionParts(version) {
   return String(version || '').split('.').map(part => parseInt(part, 10) || 0);
 }
@@ -2373,6 +2386,7 @@ async function fetchAll() {
   const fetchLabel = isCoupangStockMarket() ? '재고 조회' : '전체 조회';
   const fetchMode = currentFetchMode();
   const fetchMarket = currentMarket();
+  if (!confirmCoupangLoginBeforeFetch(fetchMode, fetchMarket)) return;
   showLoading(`크롬 확장 프로그램에 ${fetchLabel} 요청 중...`);
   const btn = document.getElementById('fetch-btn');
   btn.disabled = true;
@@ -2409,6 +2423,7 @@ async function fetchSingle(cid, name, forcedFetchMode = currentFetchMode(), forc
   const fetchMode = forcedFetchMode || currentFetchMode();
   const fetchMarket = forcedMarket || currentMarket();
   const fetchLabel = fetchMode === 'coupang_stock' ? '재고 조회' : '선택상품조회';
+  if (!confirmCoupangLoginBeforeFetch(fetchMode, fetchMarket)) return;
   showLoading(`${name} ${fetchLabel} 요청 중...`);
   try {
     const comp = getDashboardCompetitors().find(item => item.id === cid);
@@ -2674,6 +2689,9 @@ async function saveSchedule() {
     showToast(enabled
       ? `⏰ 자동조회 저장됨: 매일 ${hour}시 ${minute}분 · ${marketLabels.join(', ')}`
       : '자동조회 사용 안 함으로 저장됨');
+    if (enabled && markets.includes('coupang_stock')) {
+      showToast('쿠팡 재고조회 판매가는 크롬의 쿠팡 로그인 세션 기준으로 저장됩니다');
+    }
   } catch {
     showToast('저장 실패');
   }
@@ -2682,7 +2700,7 @@ async function saveSchedule() {
 async function runScheduleNow() {
   try {
     await runExtensionScheduleNow();
-    showToast('자동조회 테스트를 시작했습니다');
+    showToast('자동조회 테스트를 시작했습니다. 쿠팡 판매가는 크롬 로그인 세션 기준입니다');
   } catch (e) {
     showToast(e.message || '자동조회 테스트 시작 실패');
   }

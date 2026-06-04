@@ -748,7 +748,8 @@ async function runScheduledAutoFetch() {
       await runFetchSeparated(ohouse, '', 'ohouse', { scheduled: true, schedulePhase: 'ohouse' });
     }
     if (coupang.length) {
-      await setStatus({ running: true, current: 0, total: coupang.length, msg: 'Auto fetch: Coupang stock start', results: [] });
+      await notifyUser('쿠팡 재고조회 자동조회', '판매가는 현재 크롬의 쿠팡 로그인/와우/쿠폰 세션 기준으로 저장됩니다.');
+      await setStatus({ running: true, current: 0, total: coupang.length, msg: '쿠팡 재고조회 시작: 판매가는 크롬 쿠팡 로그인 세션 기준입니다.', results: [] });
       await runFetchSeparated(coupang, 'coupang_stock', 'coupang_stock', { scheduled: true, schedulePhase: 'coupang_stock' });
     }
   } catch(e) {

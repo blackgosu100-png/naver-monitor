@@ -211,10 +211,17 @@ async function checkAndProcessQueue() {
     showMsg('queue-msg', '대기 중인 조회 ' + queue.length + '개를 백그라운드에서 시작합니다.', 'info');
 
     var fetchMode = data.fetchMode || data.fetch_mode || '';
+    var isCoupangQueue = false;
     if (fetchMode && queue.some(function(comp) {
       return !/coupang\.com\/(?:v[pm]\/)?products\//i.test(String((comp && comp.url) || ''));
     })) {
       fetchMode = '';
+    }
+    isCoupangQueue = fetchMode && queue.some(function(comp) {
+      return /coupang\.com\/(?:v[pm]\/)?products\//i.test(String((comp && comp.url) || ''));
+    });
+    if (isCoupangQueue) {
+      showMsg('queue-msg', '쿠팡 판매가는 현재 크롬의 쿠팡 로그인/와우/쿠폰 세션 기준으로 조회됩니다.', 'info');
     }
     await new Promise(function(resolve, reject) {
       chrome.runtime.sendMessage({ type: 'START_FETCH', competitors: queue, fetchMode: fetchMode }, function(response) {
