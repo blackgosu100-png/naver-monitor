@@ -2686,7 +2686,7 @@ function renderCompList(competitors) {
   });
   if (summary) {
     const searchText = search ? ` · 검색 "${escHtml(search)}"` : '';
-    const dragText = (!search && filter === 'all' && filtered.length > 1) ? ' · 손잡이를 드래그해 순서 변경' : '';
+    const dragText = (!search && filtered.length > 1) ? ' · 손잡이를 드래그해 순서 변경' : '';
     summary.innerHTML = `${compFilterLabel(filter)} ${filtered.length}개 표시 / 전체 ${source.length}개${searchText}${dragText}`;
   }
   if (!source.length) {
@@ -2697,13 +2697,16 @@ function renderCompList(competitors) {
     el.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:16px 0">조건에 맞는 경쟁사가 없습니다</div>';
     return;
   }
-  const canReorder = !search && filter === 'all' && filtered.length > 1;
+  const canReorder = !search && filtered.length > 1;
   el.innerHTML = filtered.map(c => {
     const canFetch = isCompetitorFetchAllowed(c.id);
     const marketName = COMPETITOR_MARKET_LABELS[competitorMarket(c)] || '네이버';
+    const dragTitle = search
+      ? '검색 중에는 순서 변경을 잠시 꺼둡니다'
+      : (canReorder ? '드래그해서 순서 변경' : '순서를 바꿀 상품이 2개 이상 필요합니다');
     return `
     <div class="comp-list-item" id="cli-${c.id}" data-cid="${c.id}" draggable="${canReorder ? 'true' : 'false'}">
-      <button class="comp-drag-handle" type="button" ${canReorder ? '' : 'disabled'} title="${canReorder ? '드래그해서 순서 변경' : '전체 보기에서 검색어가 없을 때 순서 변경 가능'}" aria-label="순서 변경">
+      <button class="comp-drag-handle" type="button" ${canReorder ? '' : 'disabled'} title="${dragTitle}" aria-label="순서 변경">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="9" cy="5" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="19" r="1"/></svg>
       </button>
       ${productThumb(c)}
@@ -2759,11 +2762,12 @@ function getDragAfterElement(container, y) {
 }
 
 async function saveCompetitorOrderFromDom() {
-  const ids = [...document.querySelectorAll('#comp-list .comp-list-item')]
+  const visibleIds = [...document.querySelectorAll('#comp-list .comp-list-item')]
     .map(item => item.dataset.cid)
     .filter(Boolean);
-  if (ids.length < 2) return;
+  if (visibleIds.length < 2) return;
   const currentIds = (appConfig.competitors || []).map(comp => comp.id);
+  const ids = mergeVisibleOrderIntoFullOrder(currentIds, visibleIds);
   if (ids.join('|') === currentIds.join('|')) return;
   appConfig.competitors = orderItemsByIds(appConfig.competitors || [], ids);
   if (historyData && historyData.competitors) {
@@ -2798,6 +2802,12 @@ function orderItemsByIds(items, ids) {
     const bi = order.has(b.id) ? order.get(b.id) : order.size;
     return ai - bi;
   });
+}
+
+function mergeVisibleOrderIntoFullOrder(currentIds, visibleIds) {
+  const visibleSet = new Set(visibleIds);
+  const nextVisible = [...visibleIds];
+  return currentIds.map(id => visibleSet.has(id) ? nextVisible.shift() : id).filter(Boolean);
 }
 
 async function addCompetitor() {
