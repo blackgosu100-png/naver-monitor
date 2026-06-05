@@ -14,8 +14,10 @@ const PROFILE_DIR = process.env.COUPANG_STOCK_PROFILE_DIR ||
 const PAGE_WARMUP_MS = Number(process.env.COUPANG_STOCK_PAGE_WARMUP_MS || 350);
 const PROBE_DELAY_MS = Number(process.env.COUPANG_STOCK_PROBE_DELAY_MS || 80);
 const MAX_QUANTITY = Number(process.env.COUPANG_STOCK_MAX_QUANTITY || 50000);
+const QUANTITY_FETCH_TIMEOUT_MS = Number(process.env.COUPANG_STOCK_QUANTITY_FETCH_TIMEOUT_MS || 4500);
+const STOCK_ITEM_TIMEOUT_MS = Number(process.env.COUPANG_STOCK_ITEM_TIMEOUT_MS || 25000);
 const DEFAULT_STEPS = [100, 1000, 5000];
-const HELPER_VERSION = '1.5.0';
+const HELPER_VERSION = '1.5.1';
 
 let chromeProcess = null;
 let warmupPromise = null;
@@ -685,19 +687,28 @@ async function ensureCoupangOriginPage(cdp) {
 async function fetchQuantityInfo(cdp, productId, vendorItemId, quantity) {
   const requestUrl = buildQuantityInfoUrl(productId, vendorItemId, quantity);
   const expression = `(async () => {
-    const res = await fetch(${JSON.stringify(requestUrl)}, {
-      credentials: 'include',
-      cache: 'no-store',
-      headers: {
-        'Accept': 'application/json, text/plain, */*',
-        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7'
-      }
-    });
-    return { ok: res.ok, status: res.status, text: await res.text() };
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ${JSON.stringify(QUANTITY_FETCH_TIMEOUT_MS)});
+    try {
+      const res = await fetch(${JSON.stringify(requestUrl)}, {
+        credentials: 'include',
+        cache: 'no-store',
+        signal: controller.signal,
+        headers: {
+          'Accept': 'application/json, text/plain, */*',
+          'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7'
+        }
+      });
+      return { ok: res.ok, status: res.status, text: await res.text() };
+    } catch (error) {
+      return { ok: false, status: 0, text: '', error: error && error.message ? error.message : String(error) };
+    } finally {
+      clearTimeout(timer);
+    }
   })()`;
   let lastResult = null;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
-    const result = await cdp.evaluate(expression, 30000);
+    const result = await cdp.evaluate(expression, QUANTITY_FETCH_TIMEOUT_MS + 2500);
     lastResult = result;
     if (result && result.ok && result.text) {
       try {
@@ -713,7 +724,7 @@ async function fetchQuantityInfo(cdp, productId, vendorItemId, quantity) {
     break;
   }
   if (!lastResult || !lastResult.text) throw new Error(`empty quantity-info response (${quantity})`);
-  throw new Error(`quantity-info HTTP ${lastResult.status} (${quantity})`);
+  throw new Error(lastResult.error || `quantity-info HTTP ${lastResult.status} (${quantity})`);
 }
 
 async function fetchQuantityInfoBatch(cdp, productId, vendorItemId, quantities) {
@@ -726,10 +737,13 @@ async function fetchQuantityInfoBatch(cdp, productId, vendorItemId, quantities) 
   const expression = `(async () => {
     const requests = ${JSON.stringify(requests)};
     return await Promise.all(requests.map(async (item) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), ${JSON.stringify(QUANTITY_FETCH_TIMEOUT_MS)});
       try {
         const res = await fetch(item.url, {
           credentials: 'include',
           cache: 'no-store',
+          signal: controller.signal,
           headers: {
             'Accept': 'application/json, text/plain, */*',
             'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7'
@@ -738,11 +752,13 @@ async function fetchQuantityInfoBatch(cdp, productId, vendorItemId, quantities) 
         return { quantity: item.quantity, ok: res.ok, status: res.status, text: await res.text() };
       } catch (error) {
         return { quantity: item.quantity, ok: false, status: 0, text: '', error: error && error.message ? error.message : String(error) };
+      } finally {
+        clearTimeout(timer);
       }
     }));
   })()`;
 
-  const rows = await cdp.evaluate(expression, 45000);
+  const rows = await cdp.evaluate(expression, QUANTITY_FETCH_TIMEOUT_MS + 3500);
   const out = [];
   for (const row of rows || []) {
     if (row && row.ok && row.text) {
@@ -812,6 +828,7 @@ function collectTextHints(data) {
 
 async function estimateStock(payload) {
   const startedAt = Date.now();
+  const deadline = startedAt + STOCK_ITEM_TIMEOUT_MS;
   const page = await getSharedPage();
   const cdp = page.cdp;
 
@@ -856,6 +873,7 @@ async function estimateStock(payload) {
 
     const cache = new Map();
     async function probe(quantity, baseline) {
+      if (Date.now() > deadline) throw new Error('stock item timeout');
       quantity = Math.max(1, Math.floor(Number(quantity) || 1));
       if (cache.has(quantity)) return cache.get(quantity);
       if (apiCalls > 0) await sleep(PROBE_DELAY_MS);
@@ -873,6 +891,7 @@ async function estimateStock(payload) {
     }
 
     async function probeMany(quantities, baseline) {
+      if (Date.now() > deadline) throw new Error('stock item timeout');
       const wanted = [...new Set(quantities
         .map((q) => Math.max(1, Math.floor(Number(q) || 1)))
         .filter((q) => !cache.has(q)))];
@@ -1025,6 +1044,7 @@ async function estimateStock(payload) {
     }
 
     while (high - low > 1) {
+      if (Date.now() > deadline) throw new Error('stock item timeout');
       const span = high - low;
       const mids = [
         low + Math.floor(span / 4),
