@@ -15,7 +15,7 @@ const PAGE_WARMUP_MS = Number(process.env.COUPANG_STOCK_PAGE_WARMUP_MS || 350);
 const PROBE_DELAY_MS = Number(process.env.COUPANG_STOCK_PROBE_DELAY_MS || 80);
 const MAX_QUANTITY = Number(process.env.COUPANG_STOCK_MAX_QUANTITY || 50000);
 const DEFAULT_STEPS = [100, 1000, 5000];
-const HELPER_VERSION = '1.4.3';
+const HELPER_VERSION = '1.5.0';
 
 let chromeProcess = null;
 let warmupPromise = null;
@@ -1064,6 +1064,44 @@ async function estimateStock(payload) {
   }
 }
 
+async function estimateStockBatch(payload) {
+  const startedAt = Date.now();
+  const items = Array.isArray(payload && payload.items) ? payload.items : [];
+  const results = [];
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index] || {};
+    const itemStartedAt = Date.now();
+    try {
+      const result = await estimateStock(item);
+      results.push({
+        index,
+        id: item.id || '',
+        name: item.name || '',
+        ok: !!(result && result.ok),
+        elapsedMs: Date.now() - itemStartedAt,
+        ...result,
+      });
+    } catch (error) {
+      results.push({
+        index,
+        id: item.id || '',
+        name: item.name || '',
+        ok: false,
+        elapsedMs: Date.now() - itemStartedAt,
+        error: error && error.message ? error.message : String(error),
+      });
+    }
+  }
+  return {
+    ok: true,
+    source: 'local-cdp-helper-batch',
+    helperVersion: HELPER_VERSION,
+    total: items.length,
+    elapsedMs: Date.now() - startedAt,
+    results,
+  };
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let body = '';
@@ -1118,6 +1156,13 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       const payload = body ? JSON.parse(body) : {};
       const result = await runStockJob(() => estimateStock(payload));
+      jsonResponse(res, 200, result);
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/stock/batch') {
+      const body = await readBody(req);
+      const payload = body ? JSON.parse(body) : {};
+      const result = await runStockJob(() => estimateStockBatch(payload));
       jsonResponse(res, 200, result);
       return;
     }

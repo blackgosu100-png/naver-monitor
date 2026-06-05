@@ -2,7 +2,7 @@
 
 const DEFAULT_SERVER = 'https://naver-monitor-production.up.railway.app';
 const COUPANG_CACHE_KEY = 'coupangMetricCacheV3';
-const MIN_COUPANG_HELPER_VERSION = '1.4.3';
+const MIN_COUPANG_HELPER_VERSION = '1.5.0';
 const COUPANG_MONTHLY_TTL = 12 * 60 * 60 * 1000;
 const COUPANG_VIEWS_TTL = 24 * 60 * 60 * 1000;
 const COUPANG_STOCK_TTL = 3 * 60 * 60 * 1000;
@@ -2170,6 +2170,78 @@ async function estimateCoupangStockViaLocalHelper(comp, parsed) {
   return { ok: false, error: lastError || 'local helper unavailable' };
 }
 
+async function estimateCoupangStockBatchViaLocalHelper(items) {
+  items = Array.isArray(items) ? items : [];
+  if (!items.length) return { ok: false, error: 'no Coupang batch items' };
+  var urls = [
+    'http://127.0.0.1:8765/stock/batch',
+    'http://localhost:8765/stock/batch'
+  ];
+  var payload = {
+    items: items.map(function(item) {
+      var comp = item.comp || {};
+      var parsed = item.parsed || {};
+      return {
+        id: comp.id || '',
+        name: comp.name || '',
+        productUrl: comp.url || '',
+        productId: parsed.pid || '',
+        itemId: parsed.itemId || '',
+        vendorItemId: parsed.vendorItemId || '',
+        expectedStock: comp.expectedStock != null ? comp.expectedStock : null,
+        fastStockOnly: !!(parsed.pid && parsed.vendorItemId)
+      };
+    })
+  };
+  var lastError = '';
+  for (var i = 0; i < urls.length; i++) {
+    var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    var timer = controller ? setTimeout(function() { controller.abort(); }, Math.max(90000, items.length * 25000)) : null;
+    try {
+      var res = await fetch(urls[i], {
+        method: 'POST',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: controller ? controller.signal : undefined
+      });
+      if (!res.ok) {
+        lastError = 'local helper batch HTTP ' + res.status;
+        continue;
+      }
+      var data = await res.json();
+      if (!data || !data.ok) {
+        lastError = (data && data.error) || 'local helper batch returned no result';
+        continue;
+      }
+      if (!versionAtLeast(data.helperVersion, MIN_COUPANG_HELPER_VERSION)) {
+        lastError = 'local helper update required';
+        continue;
+      }
+      var byId = {};
+      (data.results || []).forEach(function(row) {
+        if (!row || !row.id) return;
+        byId[row.id] = Object.assign({}, row, {
+          localHelper: true,
+          helperVersion: data.helperVersion || row.helperVersion || '',
+          batchHelper: true
+        });
+      });
+      return {
+        ok: true,
+        helperVersion: data.helperVersion || '',
+        elapsedMs: data.elapsedMs,
+        resultsById: byId
+      };
+    } catch(e) {
+      lastError = e && e.message ? e.message : String(e);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+  return { ok: false, error: lastError || 'local helper batch unavailable' };
+}
+
 async function readJsonFromCurrentTab(tabId) {
   var res = await chrome.scripting.executeScript({
     target: { tabId },
@@ -3210,15 +3282,35 @@ async function collectCoupangStockMetricOnly(comp, parsed, index, total, results
     } catch(e) {}
   }
 
-  await setStatus({
-    running: true,
-    current: index + 1,
-    total: total,
-    name: comp.name,
-    msg: '\uCFE0\uD321 \uC7AC\uACE0\uC870\uD68C \uBE60\uB978 \uACBD\uB85C \uD655\uC778 \uC911...',
-    results
-  });
-  var stock = await estimateCoupangStockInBackground(comp, parsed);
+  var stock = null;
+  if (
+    requestContext &&
+    requestContext.coupangStockBatchResults &&
+    Object.prototype.hasOwnProperty.call(requestContext.coupangStockBatchResults, comp.id)
+  ) {
+    stock = requestContext.coupangStockBatchResults[comp.id];
+    await setStatus({
+      running: true,
+      current: index + 1,
+      total: total,
+      name: comp.name,
+      msg: '\uCFE0\uD321 \uB85C\uCEEC \uBC30\uCE58 \uD5EC\uD37C \uACB0\uACFC \uC801\uC6A9'
+        + (stock.elapsedMs ? ' (' + (stock.elapsedMs / 1000).toFixed(1) + '\uCD08)' : ''),
+      results
+    });
+    if (!stock.ok) stock = null;
+  }
+  if (!stock) {
+    await setStatus({
+      running: true,
+      current: index + 1,
+      total: total,
+      name: comp.name,
+      msg: '\uCFE0\uD321 \uC7AC\uACE0\uC870\uD68C \uBE60\uB978 \uACBD\uB85C \uD655\uC778 \uC911...',
+      results
+    });
+    stock = await estimateCoupangStockInBackground(comp, parsed);
+  }
   if (!stock || !stock.ok) {
     await setStatus({
       running: true,
@@ -3311,6 +3403,38 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
   }
   if (route === 'coupang_stock') {
     requestContext = Object.assign({}, requestContext || {}, { reuseCoupangStockTab: true, coupangStockTabId: null });
+    var batchItems = [];
+    competitors.forEach(function(comp) {
+      if (detectMarket(comp && comp.url) !== 'coupang') return;
+      var parsed = parseCoupangUrl(comp.url);
+      if (!parsed) return;
+      batchItems.push({ comp: comp, parsed: parsed });
+    });
+    if (batchItems.length) {
+      await setStatus({
+        running: true,
+        current: 0,
+        total: competitors.length,
+        msg: '\uCFE0\uD321 \uB85C\uCEEC \uB3C4\uC6B0\uBBF8 \uBC30\uCE58 \uC870\uD68C \uC2DC\uB3C4 \uC911...',
+        results: []
+      });
+      var batchResult = await estimateCoupangStockBatchViaLocalHelper(batchItems);
+      if (shouldStop()) {
+        stopped = true;
+      } else if (batchResult && batchResult.ok) {
+        requestContext.coupangStockBatchResults = batchResult.resultsById || {};
+        await setStatus({
+          running: true,
+          current: 0,
+          total: competitors.length,
+          msg: '\uCFE0\uD321 \uB85C\uCEEC \uB3C4\uC6B0\uBBF8 \uBC30\uCE58 \uC644\uB8CC'
+            + (batchResult.elapsedMs ? ' (' + (batchResult.elapsedMs / 1000).toFixed(1) + '\uCD08)' : ''),
+          results: []
+        });
+      } else {
+        requestContext.coupangStockBatchError = (batchResult && batchResult.error) || '';
+      }
+    }
   }
 
   try {
