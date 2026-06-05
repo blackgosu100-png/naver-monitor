@@ -2236,8 +2236,9 @@ async function openCoupangHelperFolder() {
   const isLocalHost = ['localhost', '127.0.0.1', '::1'].includes(location.hostname);
   const endpoints = isLocalHost
     ? ['/api/coupang-helper-folder']
-    : ['http://127.0.0.1:5001/api/coupang-helper-folder', '/api/coupang-helper-folder'];
+    : ['http://127.0.0.1:5001/api/coupang-helper-folder'];
   let lastError = '';
+  const foot = document.getElementById('coupang-login-foot');
   async function postWithTimeout(url) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 2500);
@@ -2263,7 +2264,9 @@ async function openCoupangHelperFolder() {
     }
     throw new Error(lastError);
   } catch(e) {
-    showToast('로컬 앱이 켜져 있지 않으면 폴더를 자동으로 열 수 없습니다. 앱 폴더에서 run_coupang_stock_helper.bat를 실행해 주세요.');
+    if (foot) {
+      foot.textContent = '로컬 앱이 켜져 있지 않으면 폴더를 자동으로 열 수 없습니다. 앱 폴더에서 run_coupang_stock_helper.bat를 직접 실행하거나, 도우미 없이 바로 재고 조회를 시작하세요.';
+    }
   }
 }
 
@@ -2289,17 +2292,18 @@ function confirmCoupangLoginBeforeFetch(fetchMode, market = currentMarket()) {
   if (title) title.textContent = isStock ? '쿠팡 재고조회 도우미 실행 확인' : '쿠팡 로그인 확인이 필요합니다';
   if (desc) {
     desc.textContent = isStock
-      ? '쿠팡 재고조회는 로컬 도우미가 실행되어 있으면 상품 창을 반복해서 열고 닫지 않고 더 빠르게 조회합니다.'
+      ? '쿠팡 재고조회는 로컬 도우미가 실행되어 있으면 더 빠릅니다. 도우미가 없어도 바로 조회를 시작할 수 있습니다.'
       : '쿠팡 판매가는 로그인, 와우, 쿠폰 세션에 따라 달라질 수 있습니다. 정확한 판매가와 매출 추정을 위해 같은 크롬에서 쿠팡 로그인 상태를 확인해 주세요.';
   }
   if (foot) {
     foot.textContent = isStock
-      ? '도우미 폴더 열기를 눌러 run_coupang_stock_helper.bat를 실행한 뒤, 이 화면으로 돌아와 재고 조회를 시작하세요.'
+      ? '로컬 앱이 켜져 있으면 도우미 폴더 열기로 run_coupang_stock_helper.bat 위치를 열 수 있습니다. 준비가 안 됐어도 바로 조회를 시작해도 됩니다.'
       : '로그인 바로가기를 누르면 새 탭에서 쿠팡 로그인 페이지가 열립니다. 로그인 완료 후 이 화면으로 돌아와 조회를 시작하면 됩니다.';
   }
   if (loginBtn) loginBtn.style.display = isStock ? 'none' : '';
   if (helperBtn) helperBtn.style.display = isStock ? '' : 'none';
-  if (confirmBtn) confirmBtn.textContent = isStock ? '도우미 실행 완료 · 재고 조회 시작' : '로그인 완료 · 조회 시작';
+  if (helperBtn) helperBtn.textContent = isStock ? '로컬 앱에서 도우미 폴더 열기' : '도우미 폴더 열기';
+  if (confirmBtn) confirmBtn.textContent = isStock ? '바로 재고 조회 시작' : '로그인 완료 · 조회 시작';
   document.getElementById('coupang-login-modal')?.classList.add('show');
   return new Promise(resolve => {
     coupangLoginResolve = resolve;
