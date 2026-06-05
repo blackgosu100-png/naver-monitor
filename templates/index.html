@@ -506,7 +506,7 @@ body { overflow-x: hidden; }
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%) scale(.98);
-  width: min(360px, calc(100vw - 48px));
+  width: min(560px, calc(100vw - 32px));
   padding: 12px 14px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -522,6 +522,34 @@ body { overflow-x: hidden; }
 .fetch-progress-track { height:6px; border-radius:999px; background:var(--surface2); overflow:hidden; }
 .fetch-progress-fill { width:0; height:100%; background:var(--accent); transition:width .2s ease; }
 .fetch-progress-msg { margin-top:7px; color:var(--text2); font-size:11px; line-height:1.5; }
+.fetch-console {
+  margin-top:10px;
+  height:172px;
+  overflow-y:auto;
+  border-radius:6px;
+  border:1px solid #14532d;
+  background:#020617;
+  color:#86efac;
+  font-family:var(--mono);
+  font-size:11px;
+  line-height:1.55;
+  padding:9px 10px;
+  box-shadow:inset 0 0 0 1px rgba(34,197,94,.08), inset 0 -18px 30px rgba(34,197,94,.04);
+}
+.fetch-console-line {
+  display:block;
+  white-space:pre-wrap;
+  word-break:break-word;
+  color:#86efac;
+  text-shadow:0 0 8px rgba(34,197,94,.28);
+  animation:consoleLineIn .16s ease both;
+}
+.fetch-console-line.muted { color:#6ee7b7; opacity:.78; }
+.fetch-console-line.ok { color:#bbf7d0; }
+.fetch-console-line.err { color:#fca5a5; text-shadow:0 0 8px rgba(248,113,113,.22); }
+.fetch-console-cursor { display:inline-block; width:7px; height:12px; margin-left:3px; background:#86efac; vertical-align:-2px; animation:consoleBlink 1s steps(1) infinite; }
+@keyframes consoleBlink { 50% { opacity:0; } }
+@keyframes consoleLineIn { from { opacity:0; transform:translateY(3px); } to { opacity:1; transform:translateY(0); } }
 @keyframes progressIn { to { transform: translate(-50%, -50%) scale(1); } }
 .cell-loading {
   display:inline-block;
@@ -936,6 +964,7 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
   </div>
   <div class="fetch-progress-track"><div class="fetch-progress-fill" id="fetch-progress-fill"></div></div>
   <div class="fetch-progress-msg" id="fetch-progress-msg">확장 프로그램과 연결 중입니다</div>
+  <div class="fetch-console" id="fetch-console" aria-label="실시간 조회 로그"></div>
 </div>
 
 <!-- Upgrade modal -->
@@ -993,7 +1022,7 @@ const TIME_RANGE_KEY = 'naverMonitorTimeRange:v1';
 const MARKET_KEY = 'naverMonitorMarket:v1';
 const COMP_FILTER_KEY = 'naverMonitorCompFilter:v1';
 const TIME_COLUMN_LIMIT = 10;
-const REQUIRED_COUPANG_EXTENSION_VERSION = '5.78';
+const REQUIRED_COUPANG_EXTENSION_VERSION = '5.79';
 const MARKETS = ['naver', 'ohouse', 'coupang', 'coupang_stock'];
 const MARKET_LABELS = {
   naver: '네이버',
@@ -1071,6 +1100,8 @@ let historyAutoRefreshInFlight = false;
 let extensionHistoryRefreshTimer = null;
 let fetchProgressTimer = null;
 let pendingFetch = null;
+let fetchConsoleLines = [];
+let fetchConsoleLastKey = '';
 const EXTENSION_STORE_URL = 'https://chromewebstore.google.com/detail/%EB%84%A4%EC%9D%B4%EB%B2%84-%EA%B2%BD%EC%9F%81%EC%82%AC-%EB%AA%A8%EB%8B%88%ED%84%B0%EB%A7%81/bihcbfmkldglanbhabgaiiccnhfbnmfk';
 
 function readCache(key) {
@@ -1599,6 +1630,58 @@ function loadingCell(extraClass = '') {
   return `<span class="cell-loading ${extraClass}" aria-label="조회 중"></span>`;
 }
 
+function resetFetchConsole() {
+  fetchConsoleLines = [];
+  fetchConsoleLastKey = '';
+  const el = document.getElementById('fetch-console');
+  if (el) el.innerHTML = '';
+}
+
+function formatConsoleTime() {
+  const now = new Date();
+  return now.toLocaleTimeString('ko-KR', {hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit'});
+}
+
+function pushFetchConsoleLine(text, tone = '') {
+  const el = document.getElementById('fetch-console');
+  if (!el || !text) return;
+  const key = `${tone}:${text}`;
+  if (key === fetchConsoleLastKey) return;
+  fetchConsoleLastKey = key;
+  fetchConsoleLines.push({ text, tone });
+  if (fetchConsoleLines.length > 80) fetchConsoleLines = fetchConsoleLines.slice(-80);
+  el.innerHTML = fetchConsoleLines.map(line => {
+    const cls = line.tone ? ` ${line.tone}` : '';
+    return `<span class="fetch-console-line${cls}">${escHtml(line.text)}</span>`;
+  }).join('') + '<span class="fetch-console-line muted">&gt; <span class="fetch-console-cursor"></span></span>';
+  el.scrollTop = el.scrollHeight;
+}
+
+function updateFetchConsole(status) {
+  if (!status) return;
+  const current = Number(status.current || 0);
+  const total = Number(status.total || 0);
+  const done = !status.running && (status.done || status.stopped);
+  const prefix = `[${formatConsoleTime()}]`;
+  if (!fetchConsoleLines.length) {
+    pushFetchConsoleLine(`${prefix} fetch session opened`, 'muted');
+  }
+  const item = status.name ? ` ${status.name}` : '';
+  const count = total ? ` (${Math.min(current, total)}/${total})` : '';
+  const msg = status.msg || (done ? '조회 완료' : '상품 데이터를 수집하고 있습니다');
+  pushFetchConsoleLine(`${prefix}${count}${item} :: ${msg}`, done ? 'ok' : '');
+  if (Array.isArray(status.results)) {
+    status.results.slice(-3).forEach(result => {
+      if (!result || !result.id) return;
+      if (result.error) {
+        pushFetchConsoleLine(`${prefix} result ${result.name || result.id} :: ERROR ${shortErrorMessage(result.error)}`, 'err');
+      } else if (result.total !== undefined && result.total !== null) {
+        pushFetchConsoleLine(`${prefix} result ${result.name || result.id} :: stock=${Number(result.total).toLocaleString()}`, 'ok');
+      }
+    });
+  }
+}
+
 function updateFetchProgress(status) {
   const box = document.getElementById('fetch-progress');
   if (!box) return;
@@ -1608,6 +1691,7 @@ function updateFetchProgress(status) {
   }
   if (!status) {
     box.classList.remove('show');
+    resetFetchConsole();
     return;
   }
 
@@ -1620,6 +1704,7 @@ function updateFetchProgress(status) {
   document.getElementById('fetch-progress-fill').style.width = done ? '100%' : `${pct}%`;
   document.getElementById('fetch-progress-msg').textContent = status.msg || (done ? '결과를 갱신하는 중입니다' : '상품 데이터를 수집하고 있습니다');
   box.classList.add('show');
+  updateFetchConsole(status);
 
   if (pendingFetch && Array.isArray(status.results)) {
     let changed = false;
@@ -2571,6 +2656,7 @@ async function fetchAll() {
     }
     await ensureCoupangExtensionVersion(fetchMode);
     try {
+      resetFetchConsole();
       beginPendingFetch(competitors, fetchMode, fetchMarket);
       await requestExtensionFetch(competitors, fetchMode, fetchMarket);
       startHistoryAutoRefresh(competitors.length);
@@ -2610,6 +2696,7 @@ async function fetchSingle(cid, name, forcedFetchMode = currentFetchMode(), forc
     }
     await ensureCoupangExtensionVersion(fetchMode);
     try {
+      resetFetchConsole();
       beginPendingFetch([comp], fetchMode, fetchMarket);
       await requestExtensionFetch([comp], fetchMode, fetchMarket);
       startHistoryAutoRefresh(1);
