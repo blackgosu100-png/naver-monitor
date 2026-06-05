@@ -693,6 +693,13 @@ async function setStatus(status) {
   await chrome.storage.local.set({ fetchStatus: status });
 }
 
+async function reportFetchStatus(requestContext, status, detail) {
+  if (requestContext && typeof requestContext.statusLogger === 'function') {
+    return requestContext.statusLogger(status, detail || {});
+  }
+  return setStatus(status);
+}
+
 function shouldStop() {
   return !!stopRequested;
 }
@@ -3264,14 +3271,14 @@ function normalizeSeparatedFetchMode(fetchMode, requestedMarket) {
 }
 
 async function collectCoupangStockMetricOnly(comp, parsed, index, total, results, requestContext) {
-  await setStatus({
+  await reportFetchStatus(requestContext, {
     running: true,
     current: index + 1,
     total: total,
     name: comp.name,
     msg: '\uCFE0\uD321 \uC7AC\uACE0\uC870\uD68C\uB9CC \uC2E4\uD589 \uC911...',
     results
-  });
+  }, { source: 'start' });
 
   if (comp && comp.expectedStock == null) {
     try {
@@ -3289,7 +3296,7 @@ async function collectCoupangStockMetricOnly(comp, parsed, index, total, results
     Object.prototype.hasOwnProperty.call(requestContext.coupangStockBatchResults, comp.id)
   ) {
     stock = requestContext.coupangStockBatchResults[comp.id];
-    await setStatus({
+    await reportFetchStatus(requestContext, {
       running: true,
       current: index + 1,
       total: total,
@@ -3297,33 +3304,33 @@ async function collectCoupangStockMetricOnly(comp, parsed, index, total, results
       msg: '\uCFE0\uD321 \uB85C\uCEEC \uBC30\uCE58 \uD5EC\uD37C \uACB0\uACFC \uC801\uC6A9'
         + (stock.elapsedMs ? ' (' + (stock.elapsedMs / 1000).toFixed(1) + '\uCD08)' : ''),
       results
-    });
+    }, { source: 'local-batch', stock: stock && stock.stock, apiCalls: stock && stock.apiCalls });
     if (!stock.ok) stock = null;
   }
   if (!stock) {
-    await setStatus({
+    await reportFetchStatus(requestContext, {
       running: true,
       current: index + 1,
       total: total,
       name: comp.name,
       msg: '\uCFE0\uD321 \uB85C\uCEEC \uBE60\uB978 \uD5EC\uD37C \uD655\uC778 \uC911...',
       results
-    });
+    }, { source: 'local-helper' });
     stock = await estimateCoupangStockViaLocalHelper(comp, parsed);
   }
   if (!stock || !stock.ok) {
-    await setStatus({
+    await reportFetchStatus(requestContext, {
       running: true,
       current: index + 1,
       total: total,
       name: comp.name,
       msg: '\uCFE0\uD321 \uC7AC\uACE0\uC870\uD68C \uBE60\uB978 \uACBD\uB85C \uD655\uC778 \uC911...',
       results
-    });
+    }, { source: 'background-direct', error: stock && stock.error });
     stock = await estimateCoupangStockInBackground(comp, parsed);
   }
   if (stock && stock.ok && stock.localHelper) {
-    await setStatus({
+    await reportFetchStatus(requestContext, {
       running: true,
       current: index + 1,
       total: total,
@@ -3333,17 +3340,17 @@ async function collectCoupangStockMetricOnly(comp, parsed, index, total, results
         + (stock.apiCalls ? ', API ' + stock.apiCalls + '\uD68C' : '')
         + (stock.elapsedMs ? ')' : ''),
       results
-    });
+    }, { level: 'ok', source: 'local-helper', stock: stock.stock, apiCalls: stock.apiCalls });
   }
   if (!stock || !stock.ok) {
-    await setStatus({
+    await reportFetchStatus(requestContext, {
       running: true,
       current: index + 1,
       total: total,
       name: comp.name,
       msg: '\uCFE0\uD321 \uBE0C\uB77C\uC6B0\uC800 \uC138\uC158\uC73C\uB85C \uC7AC\uACE0\uC870\uD68C \uC911...',
       results
-    });
+    }, { source: 'browser-fallback', error: stock && stock.error });
     stock = await collectCoupangStockFromPage(comp, parsed, requestContext);
   }
   if (stock && stock.stopped) return stock;
@@ -3378,7 +3385,10 @@ async function collectCoupangStockMetricOnly(comp, parsed, index, total, results
     ok: true,
     total: value,
     options: options,
-    image_url: stock.image_url || ''
+    image_url: stock.image_url || '',
+    debugSource: stock.localHelper ? 'local-helper' : stock.backgroundDirect ? 'background-direct' : 'browser-fallback',
+    debugElapsedMs: stock.elapsedMs || 0,
+    debugApiCalls: stock.apiCalls || 0
   };
 }
 
@@ -3392,6 +3402,7 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
   var runStartedAt = new Date(runStartedMs).toISOString();
   var runId = runStartedAt + '-' + Math.random().toString(16).slice(2);
   var itemLogs = [];
+  var eventLogs = [];
   var results = [];
   var stopped = false;
   var authRequired = false;
@@ -3404,6 +3415,37 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
   if (route === 'coupang_stock') {
     requestContext = Object.assign({}, requestContext || {}, { reuseCoupangStockTab: true, coupangStockTabId: null });
   }
+  requestContext = requestContext || {};
+  requestContext.statusLogger = async function(status, detail) {
+    detail = detail || {};
+    var msg = status && status.msg ? String(status.msg) : '';
+    var event = {
+      at: new Date().toISOString(),
+      elapsedMs: Date.now() - runStartedMs,
+      current: Number(status && status.current || 0),
+      total: Number(status && status.total || competitors.length || 0),
+      name: String(status && status.name || ''),
+      level: String(detail.level || (detail.error ? 'error' : 'info')),
+      msg: msg,
+      source: String(detail.source || ''),
+      apiCalls: Number(detail.apiCalls || 0),
+      stock: detail.stock != null ? detail.stock : null,
+      error: detail.error ? String(detail.error) : ''
+    };
+    var key = [
+      event.current,
+      event.name,
+      event.msg,
+      event.source,
+      event.stock,
+      event.error
+    ].join('|');
+    var last = eventLogs[eventLogs.length - 1];
+    var lastKey = last ? [last.current, last.name, last.msg, last.source, last.stock, last.error].join('|') : '';
+    if (key !== lastKey) eventLogs.push(event);
+    status.events = eventLogs.slice(-160);
+    await setStatus(status);
+  };
 
   try {
     for (var i = 0; i < competitors.length; i++) {
@@ -3434,7 +3476,7 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
           ? parseOhouseUrl(comp.url)
           : parseNaverUrl(comp.url);
 
-      await setStatus({
+      await reportFetchStatus(requestContext, {
         running: true,
         current: i + 1,
         total: competitors.length,
@@ -3445,7 +3487,7 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
             ? '\uCFE0\uD321 \uD310\uB9E4\uC9C0\uD45C \uC870\uD68C \uC911...'
             : '\uC870\uD68C \uC911...',
         results
-      });
+      }, { source: route || market || 'start' });
 
       if (!parsed) {
         results.push({ id: comp.id, name: comp.name, error: 'URL \uD615\uC2DD \uC624\uB958' });
@@ -3477,7 +3519,7 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
           tabId = await openTab(comp.url);
           currentFetchTabId = tabId;
           cr = await waitForCache(tabId, parsed.pid, async (msg) => {
-            await setStatus({ running: true, current: i + 1, total: competitors.length, name: comp.name, msg, results });
+            await reportFetchStatus(requestContext, { running: true, current: i + 1, total: competitors.length, name: comp.name, msg, results }, { source: 'browser-tab' });
           });
           if (cr && cr.retryDesktop) {
             try { await chrome.tabs.remove(tabId); } catch(e) {}
@@ -3485,7 +3527,7 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
             tabId = await openTab(comp.url);
             currentFetchTabId = tabId;
             cr = await waitForCache(tabId, parsed.pid, async (msg) => {
-              await setStatus({ running: true, current: i + 1, total: competitors.length, name: comp.name, msg: 'PC URL 재시도 - ' + msg, results });
+              await reportFetchStatus(requestContext, { running: true, current: i + 1, total: competitors.length, name: comp.name, msg: 'PC URL 재시도 - ' + msg, results }, { source: 'browser-tab' });
             });
           }
         }
@@ -3528,15 +3570,24 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
           market: market,
           status: latest && !latest.error ? 'ok' : 'error',
           elapsedMs: Date.now() - itemStartedMs,
+          total: latest && latest.total != null ? latest.total : null,
+          source: cr && cr.debugSource ? cr.debugSource : '',
+          apiCalls: cr && cr.debugApiCalls ? cr.debugApiCalls : 0,
           error: latest && latest.error ? latest.error : ''
         });
-        await setStatus({
+        await reportFetchStatus(requestContext, {
           running: true,
           current: i + 1,
           total: competitors.length,
           name: comp.name,
           msg: latest && !latest.error ? '\uC870\uD68C \uC644\uB8CC - \uACB0\uACFC \uD45C\uC2DC' : '\uC870\uD68C \uC2E4\uD328 - \uB2E4\uC74C \uC0C1\uD488\uC73C\uB85C \uC774\uB3D9',
           results
+        }, {
+          level: latest && !latest.error ? 'ok' : 'error',
+          source: cr && cr.debugSource ? cr.debugSource : '',
+          apiCalls: cr && cr.debugApiCalls ? cr.debugApiCalls : 0,
+          stock: latest && latest.total != null ? latest.total : null,
+          error: latest && latest.error
         });
       }
 
@@ -3566,7 +3617,7 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
       : `\uC870\uD68C \uC644\uB8CC! ${okCount}/${results.length} \uC131\uACF5`;
     if (errItems.length) msg += '\n\uC2E4\uD328: ' + errItems.map(r => r.name + '(' + r.error + ')').join(', ');
 
-    await setStatus({ running: false, done: !stopped, stopped, msg, results });
+    await reportFetchStatus(requestContext, { running: false, done: !stopped, stopped, msg, results }, { level: stopped || errItems.length ? 'error' : 'ok', source: 'summary' });
     await postFetchLog({
       runId: runId,
       mode: route || 'default',
@@ -3580,7 +3631,8 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
       errors: errItems.length,
       stopped: stopped,
       message: msg,
-      items: itemLogs
+      items: itemLogs,
+      events: eventLogs
     });
   } finally {
     if (requestContext && requestContext.coupangStockTabId != null) {

@@ -10,7 +10,7 @@ from urllib.parse import parse_qs, urlparse
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'naver-monitor-dev-secret-2024')
-APP_VERSION = '5.79'
+APP_VERSION = '5.80'
 
 @app.after_request
 def add_cors(response):
@@ -794,7 +794,28 @@ def db_append_fetch_log(user_id: str, log: dict):
             'market': str(item.get('market') or '')[:30],
             'status': str(item.get('status') or '')[:30],
             'elapsedMs': int(item.get('elapsedMs') or 0),
+            'total': item.get('total'),
+            'source': str(item.get('source') or '')[:40],
+            'apiCalls': int(item.get('apiCalls') or 0),
             'error': str(item.get('error') or '')[:240],
+        })
+    event_logs = log.get('events') if isinstance(log.get('events'), list) else []
+    slim_events = []
+    for event in event_logs[:300]:
+        if not isinstance(event, dict):
+            continue
+        slim_events.append({
+            'at': str(event.get('at') or '')[:40],
+            'elapsedMs': int(event.get('elapsedMs') or 0),
+            'current': int(event.get('current') or 0),
+            'total': int(event.get('total') or 0),
+            'name': str(event.get('name') or '')[:160],
+            'level': str(event.get('level') or '')[:20],
+            'msg': str(event.get('msg') or '')[:300],
+            'source': str(event.get('source') or '')[:40],
+            'apiCalls': int(event.get('apiCalls') or 0),
+            'stock': event.get('stock'),
+            'error': str(event.get('error') or '')[:240],
         })
     entry = {
         'runId': str(log.get('runId') or '')[:80],
@@ -810,6 +831,7 @@ def db_append_fetch_log(user_id: str, log: dict):
         'scheduled': bool(log.get('scheduled')),
         'message': str(log.get('message') or '')[:300],
         'items': slim_items,
+        'events': slim_events,
     }
     logs = db_get_fetch_logs(user_id)
     db_save_fetch_logs(user_id, [entry] + logs)
@@ -1442,6 +1464,11 @@ def api_fetch_log():
     body = request.get_json() or {}
     db_append_fetch_log(g.user_id, body)
     return jsonify({'ok': True})
+
+@app.route('/api/fetch-logs')
+@login_required
+def api_fetch_logs():
+    return jsonify({'logs': db_get_fetch_logs(g.user_id)[:50]})
 
 @app.route('/api/credentials', methods=['PUT'])
 @login_required

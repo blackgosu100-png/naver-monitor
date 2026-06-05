@@ -548,6 +548,32 @@ body { overflow-x: hidden; }
 .fetch-console-line.ok { color:#bbf7d0; }
 .fetch-console-line.err { color:#fca5a5; text-shadow:0 0 8px rgba(248,113,113,.22); }
 .fetch-console-cursor { display:inline-block; width:7px; height:12px; margin-left:3px; background:#86efac; vertical-align:-2px; animation:consoleBlink 1s steps(1) infinite; }
+.log-layout { display:grid; grid-template-columns:minmax(280px,360px) 1fr; gap:16px; align-items:start; }
+.log-list { display:flex; flex-direction:column; gap:8px; }
+.log-run-btn {
+  width:100%;
+  text-align:left;
+  border:1px solid var(--border);
+  background:var(--surface);
+  border-radius:8px;
+  padding:12px;
+  cursor:pointer;
+  color:var(--text);
+  transition:border-color .12s, box-shadow .12s, background .12s;
+}
+.log-run-btn:hover,
+.log-run-btn.active { border-color:#86efac; box-shadow:0 0 0 3px rgba(3,199,90,.08); background:#fbfffd; }
+.log-run-title { font-size:13px; font-weight:700; margin-bottom:5px; }
+.log-run-meta { font-size:11px; color:var(--text3); line-height:1.6; }
+.log-detail-console { height:440px; margin-top:0; font-size:12px; }
+.log-detail-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; margin-bottom:12px; }
+.log-metric { border:1px solid var(--border); border-radius:8px; padding:10px 12px; background:#fcfcfd; }
+.log-metric-label { font-size:11px; color:var(--text3); margin-bottom:4px; }
+.log-metric-value { font-size:16px; font-weight:800; color:var(--text); }
+.log-items { margin-top:12px; border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+.log-item-row { display:grid; grid-template-columns:1fr 86px 86px 72px; gap:10px; padding:9px 12px; border-top:1px solid #f1f3f5; font-size:12px; align-items:center; }
+.log-item-row:first-child { border-top:0; background:#fcfcfd; color:var(--text3); font-size:11px; font-weight:700; }
+.log-item-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 @keyframes consoleBlink { 50% { opacity:0; } }
 @keyframes consoleLineIn { from { opacity:0; transform:translateY(3px); } to { opacity:1; transform:translateY(0); } }
 @keyframes progressIn { to { transform: translate(-50%, -50%) scale(1); } }
@@ -613,6 +639,10 @@ body { overflow-x: hidden; }
 .modal-actions { display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap; margin-top:18px; }
 @media (max-width: 720px) {
   .plan-grid { grid-template-columns:1fr; }
+  .log-layout { grid-template-columns:1fr; }
+  .log-detail-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .log-item-row { grid-template-columns:1fr 68px 72px 58px; gap:6px; padding:8px; }
+  .log-detail-console { height:340px; }
   .upgrade-head { padding:18px; }
   .upgrade-body { padding:16px 18px 18px; }
   .modal-actions { justify-content:stretch; }
@@ -721,6 +751,10 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
     <div class="nav-item" id="nav-settings" onclick="showView('settings')">
       <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="2.5"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41"/></svg>
       설정
+    </div>
+    <div class="nav-item" id="nav-logs" onclick="showView('logs')">
+      <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 2h10v12H3z"/><path d="M5 5h6M5 8h6M5 11h3"/></svg>
+      로그
     </div>
     <div class="nav-item" id="nav-admin" onclick="showView('admin')" style="display:none">
       <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1l5 2v4c0 3.3-2.1 6.2-5 7.2C5.1 13.2 3 10.3 3 7V3l5-2z"/><path d="M5.8 8.1l1.4 1.4 3-3"/></svg>
@@ -907,6 +941,48 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
     </div>
   </div>
 
+  <!-- Logs View -->
+  <div id="view-logs" style="display:none">
+    <div class="topbar">
+      <div class="topbar-title">조회 로그</div>
+      <button class="btn btn-sm" onclick="loadFetchLogs()">새로고침</button>
+    </div>
+    <div class="content">
+      <div class="log-layout">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">최근 실행</div>
+              <div style="font-size:11px;color:var(--text3)">느린 상품과 실패 경로를 빠르게 확인합니다</div>
+            </div>
+          </div>
+          <div style="padding:12px">
+            <div class="log-list" id="fetch-log-list">
+              <div class="empty-state">
+                <div class="inline-spinner"></div>
+                <div class="empty-state-title">로그를 불러오는 중입니다</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title" id="fetch-log-detail-title">상세 로그</div>
+              <div style="font-size:11px;color:var(--text3)" id="fetch-log-detail-meta">실행을 선택하면 타임라인이 표시됩니다</div>
+            </div>
+          </div>
+          <div style="padding:16px" id="fetch-log-detail">
+            <div class="empty-state">
+              <div class="empty-state-title">왼쪽에서 조회 기록을 선택하세요</div>
+              <div class="empty-state-desc">초 단위 타임스탬프, 처리 경로, API 호출 수, 실패 이유를 확인할 수 있습니다</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Admin View -->
   <div id="view-admin" style="display:none">
     <div class="topbar">
@@ -1022,7 +1098,7 @@ const TIME_RANGE_KEY = 'naverMonitorTimeRange:v1';
 const MARKET_KEY = 'naverMonitorMarket:v1';
 const COMP_FILTER_KEY = 'naverMonitorCompFilter:v1';
 const TIME_COLUMN_LIMIT = 10;
-const REQUIRED_COUPANG_EXTENSION_VERSION = '5.79';
+const REQUIRED_COUPANG_EXTENSION_VERSION = '5.80';
 const MARKETS = ['naver', 'ohouse', 'coupang', 'coupang_stock'];
 const MARKET_LABELS = {
   naver: '네이버',
@@ -1033,6 +1109,8 @@ const MARKET_LABELS = {
 const COMPETITOR_MARKET_LABELS = {naver:'네이버', ohouse:'오늘의집', coupang:'쿠팡'};
 let accessToken = '';
 let appConfig = {};
+let fetchLogData = [];
+let selectedFetchLogId = '';
 
 async function initAuth() {
   accessToken = localStorage.getItem('naverMonitorAccessToken') || '';
@@ -1546,9 +1624,11 @@ function showView(view) {
   if (view === 'admin' && !isAdminUser) view = 'dashboard';
   document.getElementById('view-dashboard').style.display = view === 'dashboard' ? '' : 'none';
   document.getElementById('view-settings').style.display = view === 'settings' ? '' : 'none';
+  document.getElementById('view-logs').style.display = view === 'logs' ? '' : 'none';
   document.getElementById('view-admin').style.display = view === 'admin' ? '' : 'none';
   document.getElementById('nav-dashboard').className = 'nav-item' + (view === 'dashboard' ? ' active' : '');
   document.getElementById('nav-settings').className = 'nav-item' + (view === 'settings' ? ' active' : '');
+  document.getElementById('nav-logs').className = 'nav-item' + (view === 'logs' ? ' active' : '');
   document.getElementById('nav-admin').className = 'nav-item' + (view === 'admin' ? ' active' : '');
   syncMarketUI();
   if (view === 'settings') {
@@ -1559,6 +1639,9 @@ function showView(view) {
   if (view === 'admin') {
     loadAdminUsers();
     loadAdminFetchLogs();
+  }
+  if (view === 'logs') {
+    loadFetchLogs();
   }
 }
 
@@ -3138,6 +3221,137 @@ function copyStoreUrl() {
 
 function openStoreUrl() {
   window.open(EXTENSION_STORE_URL, '_blank');
+}
+
+// ─── Fetch Logs ─────────────────────────────────────────────
+function formatLogDate(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('ko-KR', {
+    month:'2-digit',
+    day:'2-digit',
+    hour12:false,
+    hour:'2-digit',
+    minute:'2-digit',
+    second:'2-digit'
+  });
+}
+
+function formatLogClock(value) {
+  if (!value) return '--:--:--';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '--:--:--';
+  return date.toLocaleTimeString('ko-KR', {hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit'});
+}
+
+function logSourceLabel(source) {
+  source = String(source || '');
+  if (source === 'local-helper' || source === 'local-batch') return '로컬헬퍼';
+  if (source === 'background-direct') return '빠른경로';
+  if (source === 'browser-fallback' || source === 'browser-tab') return '브라우저';
+  if (source === 'summary') return '요약';
+  return source || '-';
+}
+
+async function loadFetchLogs() {
+  const listEl = document.getElementById('fetch-log-list');
+  if (!listEl) return;
+  listEl.innerHTML = `<div class="empty-state"><div class="inline-spinner"></div><div class="empty-state-title">로그를 불러오는 중입니다</div></div>`;
+  try {
+    const r = await fetch('/api/fetch-logs');
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || '로그 로드 실패');
+    fetchLogData = data.logs || [];
+    if (!fetchLogData.length) {
+      listEl.innerHTML = '<div class="empty-state"><div class="empty-state-title">아직 조회 로그가 없습니다</div></div>';
+      renderFetchLogDetail(null);
+      return;
+    }
+    if (!selectedFetchLogId || !fetchLogData.some(log => log.runId === selectedFetchLogId)) {
+      selectedFetchLogId = fetchLogData[0].runId;
+    }
+    renderFetchLogList();
+    renderFetchLogDetail(fetchLogData.find(log => log.runId === selectedFetchLogId) || fetchLogData[0]);
+  } catch (e) {
+    listEl.innerHTML = `<div class="empty-state"><div class="empty-state-title">${escHtml(e.message || '로그 로드 실패')}</div></div>`;
+  }
+}
+
+function renderFetchLogList() {
+  const listEl = document.getElementById('fetch-log-list');
+  if (!listEl) return;
+  listEl.innerHTML = fetchLogData.map(log => {
+    const errors = Number(log.errors || 0);
+    const ok = Number(log.ok || 0);
+    const total = Number(log.total || 0);
+    return `
+      <button class="log-run-btn ${log.runId === selectedFetchLogId ? 'active' : ''}" type="button" onclick="selectFetchLog('${escHtml(log.runId || '')}')">
+        <div class="log-run-title">${escHtml(fetchModeLabel(log))} · ${ok}/${total} 성공</div>
+        <div class="log-run-meta">${formatLogDate(log.startedAt)} · 총 ${formatElapsed(log.elapsedMs)} · 실패 ${errors}</div>
+      </button>
+    `;
+  }).join('');
+}
+
+function selectFetchLog(runId) {
+  selectedFetchLogId = runId;
+  renderFetchLogList();
+  renderFetchLogDetail(fetchLogData.find(log => log.runId === runId) || null);
+}
+
+function renderFetchLogDetail(log) {
+  const title = document.getElementById('fetch-log-detail-title');
+  const meta = document.getElementById('fetch-log-detail-meta');
+  const detail = document.getElementById('fetch-log-detail');
+  if (!detail) return;
+  if (!log) {
+    if (title) title.textContent = '상세 로그';
+    if (meta) meta.textContent = '실행을 선택하면 타임라인이 표시됩니다';
+    detail.innerHTML = '<div class="empty-state"><div class="empty-state-title">표시할 로그가 없습니다</div></div>';
+    return;
+  }
+  const events = Array.isArray(log.events) ? log.events : [];
+  const items = Array.isArray(log.items) ? log.items : [];
+  const slowest = [...items].sort((a, b) => Number(b.elapsedMs || 0) - Number(a.elapsedMs || 0))[0];
+  if (title) title.textContent = fetchModeLabel(log);
+  if (meta) meta.textContent = `${formatLogDate(log.startedAt)} 시작 · ${formatLogDate(log.finishedAt)} 종료`;
+  detail.innerHTML = `
+    <div class="log-detail-grid">
+      <div class="log-metric"><div class="log-metric-label">총 소요</div><div class="log-metric-value">${formatElapsed(log.elapsedMs)}</div></div>
+      <div class="log-metric"><div class="log-metric-label">성공</div><div class="log-metric-value">${Number(log.ok || 0)}/${Number(log.total || 0)}</div></div>
+      <div class="log-metric"><div class="log-metric-label">실패</div><div class="log-metric-value">${Number(log.errors || 0)}</div></div>
+      <div class="log-metric"><div class="log-metric-label">최장 상품</div><div class="log-metric-value" title="${escHtml(slowest && slowest.name || '-')}">${slowest ? formatElapsed(slowest.elapsedMs) : '-'}</div></div>
+    </div>
+    <div class="fetch-console log-detail-console">
+      ${events.length ? events.map(event => renderFetchLogEvent(event)).join('') : '<span class="fetch-console-line muted">저장된 상세 이벤트가 없습니다. 다음 조회부터 단계별 로그가 기록됩니다.</span>'}
+      <span class="fetch-console-line muted">&gt; <span class="fetch-console-cursor"></span></span>
+    </div>
+    <div class="log-items">
+      <div class="log-item-row"><div>상품</div><div>소요</div><div>경로</div><div>재고</div></div>
+      ${items.map(item => `
+        <div class="log-item-row" title="${escHtml(item.error || '')}">
+          <div class="log-item-name">${escHtml(item.name || '-')}</div>
+          <div>${formatElapsed(item.elapsedMs)}</div>
+          <div>${escHtml(logSourceLabel(item.source))}${item.apiCalls ? ` · ${Number(item.apiCalls)}회` : ''}</div>
+          <div>${item.total === null || item.total === undefined ? '-' : Number(item.total).toLocaleString()}</div>
+        </div>
+      `).join('') || '<div class="log-item-row"><div class="log-item-name">상품별 로그 없음</div><div>-</div><div>-</div><div>-</div></div>'}
+    </div>
+  `;
+  const consoleEl = detail.querySelector('.log-detail-console');
+  if (consoleEl) consoleEl.scrollTop = consoleEl.scrollHeight;
+}
+
+function renderFetchLogEvent(event) {
+  const level = event.level === 'error' ? 'err' : event.level === 'ok' ? 'ok' : '';
+  const count = event.total ? `(${event.current}/${event.total}) ` : '';
+  const source = event.source ? ` [${logSourceLabel(event.source)}]` : '';
+  const api = event.apiCalls ? ` api=${Number(event.apiCalls)}회` : '';
+  const stock = event.stock !== null && event.stock !== undefined ? ` stock=${Number(event.stock).toLocaleString()}` : '';
+  const error = event.error ? ` error=${shortErrorMessage(event.error)}` : '';
+  const elapsed = event.elapsedMs ? ` +${formatElapsed(event.elapsedMs)}` : '';
+  return `<span class="fetch-console-line ${level}">[${formatLogClock(event.at)}]${elapsed} ${count}${escHtml(event.name || '')}${source} :: ${escHtml(event.msg || '')}${api}${stock}${escHtml(error)}</span>`;
 }
 
 // ─── Admin ──────────────────────────────────────────────────
