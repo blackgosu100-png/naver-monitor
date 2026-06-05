@@ -3403,38 +3403,6 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
   }
   if (route === 'coupang_stock') {
     requestContext = Object.assign({}, requestContext || {}, { reuseCoupangStockTab: true, coupangStockTabId: null });
-    var batchItems = [];
-    competitors.forEach(function(comp) {
-      if (detectMarket(comp && comp.url) !== 'coupang') return;
-      var parsed = parseCoupangUrl(comp.url);
-      if (!parsed) return;
-      batchItems.push({ comp: comp, parsed: parsed });
-    });
-    if (batchItems.length) {
-      await setStatus({
-        running: true,
-        current: 0,
-        total: competitors.length,
-        msg: '\uCFE0\uD321 \uB85C\uCEEC \uB3C4\uC6B0\uBBF8 \uBC30\uCE58 \uC870\uD68C \uC2DC\uB3C4 \uC911...',
-        results: []
-      });
-      var batchResult = await estimateCoupangStockBatchViaLocalHelper(batchItems);
-      if (shouldStop()) {
-        stopped = true;
-      } else if (batchResult && batchResult.ok) {
-        requestContext.coupangStockBatchResults = batchResult.resultsById || {};
-        await setStatus({
-          running: true,
-          current: 0,
-          total: competitors.length,
-          msg: '\uCFE0\uD321 \uB85C\uCEEC \uB3C4\uC6B0\uBBF8 \uBC30\uCE58 \uC644\uB8CC'
-            + (batchResult.elapsedMs ? ' (' + (batchResult.elapsedMs / 1000).toFixed(1) + '\uCD08)' : ''),
-          results: []
-        });
-      } else {
-        requestContext.coupangStockBatchError = (batchResult && batchResult.error) || '';
-      }
-    }
   }
 
   try {
