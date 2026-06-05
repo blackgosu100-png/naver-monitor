@@ -16,10 +16,12 @@ const PROBE_DELAY_MS = Number(process.env.COUPANG_STOCK_PROBE_DELAY_MS || 80);
 const MAX_QUANTITY = Number(process.env.COUPANG_STOCK_MAX_QUANTITY || 99999);
 const QUANTITY_FETCH_TIMEOUT_MS = Number(process.env.COUPANG_STOCK_QUANTITY_FETCH_TIMEOUT_MS || 4500);
 const STOCK_ITEM_TIMEOUT_MS = Number(process.env.COUPANG_STOCK_ITEM_TIMEOUT_MS || 25000);
+const AUTO_CLOSE_CHROME = process.env.COUPANG_STOCK_AUTO_CLOSE_CHROME !== '0';
 const DEFAULT_STEPS = [100, 1000, 5000];
-const HELPER_VERSION = '1.5.2';
+const HELPER_VERSION = '1.5.3';
 
 let chromeProcess = null;
+let helperStartedChrome = false;
 let warmupPromise = null;
 let sharedPage = null;
 let stockQueue = Promise.resolve();
@@ -120,6 +122,7 @@ async function ensureChrome() {
     detached: false,
     windowsHide: false,
   });
+  helperStartedChrome = true;
   chromeProcess.on('exit', () => {
     chromeProcess = null;
   });
@@ -198,8 +201,38 @@ async function closeSharedPage() {
   sharedPage = null;
 }
 
+async function closeDebugBrowser() {
+  if (!helperStartedChrome) return;
+  try {
+    const version = await fetchJson(`http://${DEBUG_HOST}:${DEBUG_PORT}/json/version`, {}, 500);
+    if (version && version.webSocketDebuggerUrl) {
+      const cdp = new CdpClient(version.webSocketDebuggerUrl);
+      await cdp.connect();
+      await cdp.send('Browser.close', {}, 1000).catch(() => undefined);
+      cdp.close();
+      await sleep(350);
+    }
+  } catch {
+    // best effort
+  }
+}
+
+async function closeChromeAfterJob() {
+  if (!AUTO_CLOSE_CHROME) return;
+  await closeSharedPage().catch(() => undefined);
+  await closeDebugBrowser().catch(() => undefined);
+  warmupPromise = null;
+  if (chromeProcess && !chromeProcess.killed) {
+    chromeProcess.kill();
+    chromeProcess = null;
+  }
+  helperStartedChrome = false;
+}
+
 function runStockJob(fn) {
-  const job = stockQueue.then(fn, fn);
+  const job = stockQueue
+    .then(fn, fn)
+    .finally(() => closeChromeAfterJob());
   stockQueue = job.catch(() => undefined);
   return job;
 }
@@ -1172,10 +1205,11 @@ const server = http.createServer(async (req, res) => {
         ok: true,
         service: 'coupang-stock-helper',
         version: HELPER_VERSION,
-      port: PORT,
-      debugPort: DEBUG_PORT,
-      sharedPageReady: !!sharedPage,
-      warmup: {
+        port: PORT,
+        debugPort: DEBUG_PORT,
+        autoCloseChrome: AUTO_CLOSE_CHROME,
+        sharedPageReady: !!sharedPage,
+        warmup: {
           ...warmupState,
           elapsedMs: warmupState.startedAt
             ? ((warmupState.finishedAt || Date.now()) - warmupState.startedAt)
