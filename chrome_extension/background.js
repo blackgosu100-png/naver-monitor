@@ -2,7 +2,7 @@
 
 const DEFAULT_SERVER = 'https://naver-monitor-production.up.railway.app';
 const COUPANG_CACHE_KEY = 'coupangMetricCacheV3';
-const MIN_COUPANG_HELPER_VERSION = '1.4.2';
+const MIN_COUPANG_HELPER_VERSION = '1.4.3';
 const COUPANG_MONTHLY_TTL = 12 * 60 * 60 * 1000;
 const COUPANG_VIEWS_TTL = 24 * 60 * 60 * 1000;
 const COUPANG_STOCK_TTL = 3 * 60 * 60 * 1000;
@@ -2116,7 +2116,8 @@ async function estimateCoupangStockViaLocalHelper(comp, parsed) {
     productId: (parsed && parsed.pid) || '',
     itemId: (parsed && parsed.itemId) || '',
     vendorItemId: (parsed && parsed.vendorItemId) || '',
-    expectedStock: comp && comp.expectedStock != null ? comp.expectedStock : null
+    expectedStock: comp && comp.expectedStock != null ? comp.expectedStock : null,
+    fastStockOnly: !!(parsed && parsed.pid && parsed.vendorItemId)
   };
   var lastError = '';
   for (var i = 0; i < urls.length; i++) {

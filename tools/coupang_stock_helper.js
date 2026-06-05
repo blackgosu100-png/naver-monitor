@@ -15,7 +15,7 @@ const PAGE_WARMUP_MS = Number(process.env.COUPANG_STOCK_PAGE_WARMUP_MS || 350);
 const PROBE_DELAY_MS = Number(process.env.COUPANG_STOCK_PROBE_DELAY_MS || 80);
 const MAX_QUANTITY = Number(process.env.COUPANG_STOCK_MAX_QUANTITY || 50000);
 const DEFAULT_STEPS = [100, 1000, 5000];
-const HELPER_VERSION = '1.4.2';
+const HELPER_VERSION = '1.4.3';
 
 let chromeProcess = null;
 let warmupPromise = null;
@@ -670,6 +670,18 @@ async function navigateProductPage(cdp, productUrl) {
   await sleep(PAGE_WARMUP_MS);
 }
 
+async function ensureCoupangOriginPage(cdp) {
+  const href = await cdp.evaluate('location.href').catch(() => '');
+  if (/^https:\/\/(?:www\.)?coupang\.com\//i.test(String(href || ''))) return;
+  const loadPromise = Promise.race([
+    cdp.waitFor('Page.loadEventFired', 8000).catch(() => null),
+    cdp.waitFor('Page.domContentEventFired', 5000).catch(() => null),
+  ]);
+  await cdp.send('Page.navigate', { url: 'https://www.coupang.com/' });
+  await loadPromise;
+  await sleep(150);
+}
+
 async function fetchQuantityInfo(cdp, productId, vendorItemId, quantity) {
   const requestUrl = buildQuantityInfoUrl(productId, vendorItemId, quantity);
   const expression = `(async () => {
@@ -811,26 +823,33 @@ async function estimateStock(payload) {
     itemId = String(payload.itemId || itemId || '');
     vendorItemId = String(payload.vendorItemId || vendorItemId || '');
 
-    await navigateProductPage(cdp, productUrl);
-
+    const fastStockOnly = !!payload.fastStockOnly && productId && vendorItemId;
     let productHtml = '';
-    if (!vendorItemId) {
-      productHtml = await cdp.evaluate('document.documentElement ? document.documentElement.outerHTML : ""', 8000);
-      const html = productHtml;
-      vendorItemId = resolveVendorItemIdFromHtml(String(html || ''), itemId);
+    let productText = '';
+    let productMetrics = { salePrice: null, ratingCount: null, priceSource: '', priceText: '' };
+    let debugMetrics = null;
+    if (fastStockOnly) {
+      await ensureCoupangOriginPage(cdp);
+    } else {
+      await navigateProductPage(cdp, productUrl);
+      if (!vendorItemId) {
+        productHtml = await cdp.evaluate('document.documentElement ? document.documentElement.outerHTML : ""', 8000);
+        const html = productHtml;
+        vendorItemId = resolveVendorItemIdFromHtml(String(html || ''), itemId);
+      }
+      if (!productHtml) {
+        productHtml = await cdp.evaluate('document.documentElement ? document.documentElement.outerHTML : ""', 8000).catch(() => '');
+      }
+      productText = await cdp.evaluate('document.body ? document.body.innerText : ""', 8000).catch(() => '');
+      productMetrics = await extractProductMetricsFromPage(cdp, productHtml, productText, !!payload.debug);
+      debugMetrics = payload.debug ? {
+        priceLines: collectPriceDebugLines(productText),
+        textSalePrice: visibleSalePriceFromText(productText),
+        priceSource: productMetrics.priceSource || '',
+        priceText: productMetrics.priceText || '',
+        fallbackSalePrice: productMetrics.fallbackSalePrice,
+      } : null;
     }
-    if (!productHtml) {
-      productHtml = await cdp.evaluate('document.documentElement ? document.documentElement.outerHTML : ""', 8000).catch(() => '');
-    }
-    const productText = await cdp.evaluate('document.body ? document.body.innerText : ""', 8000).catch(() => '');
-    const productMetrics = await extractProductMetricsFromPage(cdp, productHtml, productText, !!payload.debug);
-    const debugMetrics = payload.debug ? {
-      priceLines: collectPriceDebugLines(productText),
-      textSalePrice: visibleSalePriceFromText(productText),
-      priceSource: productMetrics.priceSource || '',
-      priceText: productMetrics.priceText || '',
-      fallbackSalePrice: productMetrics.fallbackSalePrice,
-    } : null;
     if (!productId || !vendorItemId) {
       throw new Error('productId or vendorItemId not found');
     }
