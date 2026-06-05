@@ -1939,6 +1939,44 @@ function buildCoupangQuantityInfoBackgroundUrl(productId, vendorItemId, quantity
   return url.toString();
 }
 
+function coupangDeepValue(node, path) {
+  var current = node;
+  for (var i = 0; i < path.length; i++) {
+    if (current == null) return null;
+    current = current[path[i]];
+  }
+  return current == null ? null : current;
+}
+
+function normalizeCoupangUnitPrice(value, quantity) {
+  var n = numOrNull(value);
+  if (n === null) return null;
+  var q = Math.max(1, Math.floor(Number(quantity) || 1));
+  if (q > 1 && n > 1000000 && n % q === 0) return n / q;
+  return n;
+}
+
+function extractCoupangPriceFromQuantityInfo(data, quantity) {
+  var item = Array.isArray(data) ? data[0] : data;
+  if (!item || typeof item !== 'object') return null;
+  var candidates = [
+    ['price', 'finalPrice'],
+    ['price', 'couponPrice'],
+    ['price', 'salePrice'],
+    ['moduleData', 0, 'detailPriceBundle', 'finalPrice', 'price'],
+    ['moduleData', 0, 'detailPriceBundle', 'finalPrice', 'displayPrice'],
+    ['moduleData', 3, 'priceInfo', 'finalPrice', 'price'],
+    ['moduleData', 3, 'priceInfo', 'finalPrice', 'displayPrice'],
+    ['priceList', 1, 'priceAmount'],
+    ['priceList', 0, 'priceAmount']
+  ];
+  for (var i = 0; i < candidates.length; i++) {
+    var price = normalizeCoupangUnitPrice(coupangDeepValue(item, candidates[i]), quantity);
+    if (price !== null && price > 0 && price < 10000000) return price;
+  }
+  return null;
+}
+
 async function fetchCoupangQuantityInfoBackground(productId, vendorItemId, quantity, productUrl) {
   var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
   var timer = controller ? setTimeout(function() { controller.abort(); }, 2500) : null;
@@ -1974,17 +2012,19 @@ async function estimateCoupangStockInBackground(comp, parsed) {
   async function probeState(quantity, waitBefore) {
     quantity = Math.max(1, Math.floor(Number(quantity) || 1));
     var cacheKey = String(quantity);
-    if (Object.prototype.hasOwnProperty.call(probeCache, cacheKey)) return probeCache[cacheKey];
+    if (Object.prototype.hasOwnProperty.call(probeCache, cacheKey)) return probeCache[cacheKey].state;
     if (waitBefore) await delay(120);
     var data = await fetchCoupangQuantityInfoBackground(productId, vendorItemId, quantity, productUrl);
     var state = extractCoupangDeliveryState(data);
-    probeCache[cacheKey] = state;
+    probeCache[cacheKey] = { state: state, data: data };
     return state;
   }
 
   try {
     var baseline = await probeState(1, false);
     if (!baseline) return { ok: false, error: 'background delivery state not found' };
+    var baselineData = probeCache['1'] && probeCache['1'].data ? probeCache['1'].data : null;
+    var salePrice = baselineData ? extractCoupangPriceFromQuantityInfo(baselineData, 1) : null;
 
     var low = 1;
     var high = null;
@@ -2037,6 +2077,8 @@ async function estimateCoupangStockInBackground(comp, parsed) {
         image_url: '',
         productId: productId,
         vendorItemId: vendorItemId,
+        salePrice: salePrice,
+        priceSource: salePrice !== null ? 'quantity-info:1' : '',
         backgroundDirect: true
       };
     }
@@ -2055,6 +2097,8 @@ async function estimateCoupangStockInBackground(comp, parsed) {
       image_url: '',
       productId: productId,
       vendorItemId: vendorItemId,
+      salePrice: salePrice,
+      priceSource: salePrice !== null ? 'quantity-info:1' : '',
       backgroundDirect: true
     };
   } catch(e) {
@@ -2368,7 +2412,7 @@ function numOrNull(value) {
 }
 
 function addCoupangProductMetricOptions(options, source) {
-  var trustedSalePrice = !!(source && source.localHelper && source.priceSource === 'quantity-info:1');
+  var trustedSalePrice = !!(source && source.priceSource === 'quantity-info:1' && (source.localHelper || source.backgroundDirect));
   var salePrice = trustedSalePrice ? numOrNull(source && source.salePrice) : null;
   var ratingCount = numOrNull(source && source.ratingCount);
   if (salePrice !== null) options.push({ name: '\uD310\uB9E4\uAC00', qty: salePrice });
@@ -2895,7 +2939,7 @@ async function runFetch(competitors, fetchMode) {
                 ok: true,
                 stock: Number(stockOnly.stock),
                 options: stockCacheOptions,
-                salePrice: stockOnly.localHelper && stockOnly.priceSource === 'quantity-info:1' ? stockOnly.salePrice : null,
+                salePrice: stockOnly.priceSource === 'quantity-info:1' && (stockOnly.localHelper || stockOnly.backgroundDirect) ? stockOnly.salePrice : null,
                 priceSource: stockOnly.priceSource || '',
                 ratingCount: stockOnly.ratingCount,
                 image_url: stockOnly.image_url || ''
@@ -3153,10 +3197,21 @@ async function collectCoupangStockMetricOnly(comp, parsed, index, total, results
     current: index + 1,
     total: total,
     name: comp.name,
-    msg: '\uCFE0\uD321 \uB85C\uCEEC \uBE60\uB978 \uD5EC\uD37C \uD655\uC778 \uC911...',
+    msg: '\uCFE0\uD321 \uC7AC\uACE0\uC870\uD68C \uBE60\uB978 \uACBD\uB85C \uD655\uC778 \uC911...',
     results
   });
-  var stock = await estimateCoupangStockViaLocalHelper(comp, parsed);
+  var stock = await estimateCoupangStockInBackground(comp, parsed);
+  if (!stock || !stock.ok) {
+    await setStatus({
+      running: true,
+      current: index + 1,
+      total: total,
+      name: comp.name,
+      msg: '\uCFE0\uD321 \uB85C\uCEEC \uBE60\uB978 \uD5EC\uD37C \uD655\uC778 \uC911...',
+      results
+    });
+    stock = await estimateCoupangStockViaLocalHelper(comp, parsed);
+  }
   if (stock && stock.ok && stock.localHelper) {
     await setStatus({
       running: true,
@@ -3169,17 +3224,6 @@ async function collectCoupangStockMetricOnly(comp, parsed, index, total, results
         + (stock.elapsedMs ? ')' : ''),
       results
     });
-  }
-  if (!stock || !stock.ok) {
-    await setStatus({
-      running: true,
-      current: index + 1,
-      total: total,
-      name: comp.name,
-      msg: '\uCFE0\uD321 \uC7AC\uACE0\uC870\uD68C \uBE60\uB978 \uACBD\uB85C \uD655\uC778 \uC911...',
-      results
-    });
-    stock = await estimateCoupangStockInBackground(comp, parsed);
   }
   if (!stock || !stock.ok) {
     await setStatus({
@@ -3206,7 +3250,7 @@ async function collectCoupangStockMetricOnly(comp, parsed, index, total, results
       ok: true,
       stock: value,
       options: options,
-      salePrice: stock.localHelper && stock.priceSource === 'quantity-info:1' ? stock.salePrice : null,
+      salePrice: stock.priceSource === 'quantity-info:1' && (stock.localHelper || stock.backgroundDirect) ? stock.salePrice : null,
       priceSource: stock.priceSource || '',
       ratingCount: stock.ratingCount,
       image_url: stock.image_url || ''
