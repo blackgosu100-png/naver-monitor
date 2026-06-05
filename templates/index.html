@@ -216,6 +216,7 @@ body { overflow-x: hidden; }
   background: var(--surface);
 }
 .m-row:hover { background: #fafbfc; }
+.m-row.dragging { opacity: .58; border-color: var(--accent); background: #f0fdf4; }
 .m-row > :first-child {
   position: sticky;
   left: 0;
@@ -1699,6 +1700,7 @@ function renderTable(data) {
   const dateColTpl = sortedDates.length ? `repeat(${sortedDates.length}, minmax(112px, 124px))` : '';
   const colTpl = `310px ${dateColTpl} 92px`;
   let html = `<div class="monitor-wrap">`;
+  const canReorderRows = competitors.length > 1;
 
   // Header row
   html += `<div class="m-row m-head" style="grid-template-columns:${colTpl}">`;
@@ -1713,8 +1715,11 @@ function renderTable(data) {
   // Data rows
   competitors.forEach(comp => {
     const isExpanded = expandedRows.has(comp.id);
-    html += `<div class="m-row${isExpanded ? ' m-expanded' : ''}" data-cid="${comp.id}" style="grid-template-columns:${colTpl}" onclick="toggleExpand('${comp.id}')">`;
+    html += `<div class="m-row monitor-product-row${isExpanded ? ' m-expanded' : ''}" data-cid="${comp.id}" draggable="${canReorderRows ? 'true' : 'false'}" style="grid-template-columns:${colTpl}" onclick="toggleExpand('${comp.id}')">`;
     html += `<div class="biz-name"><div class="biz-cell">
+      <button class="comp-drag-handle monitor-drag-handle" type="button" ${canReorderRows ? '' : 'disabled'} onclick="event.stopPropagation()" title="${canReorderRows ? '드래그해서 순서 변경' : '순서를 바꿀 상품이 2개 이상 필요합니다'}" aria-label="순서 변경">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="9" cy="5" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="19" r="1"/></svg>
+      </button>
       <button class="product-link-btn" type="button" onclick="event.stopPropagation(); window.open('${escHtml(comp.url)}','_blank')" title="${label} 상품 페이지 열기" aria-label="${label} 상품 페이지 열기">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6.5 3H3.8A1.8 1.8 0 002 4.8v7.4A1.8 1.8 0 003.8 14h7.4a1.8 1.8 0 001.8-1.8V9.5"/><path d="M9 2h5v5"/><path d="M8 8l6-6"/></svg>
       </button>
@@ -1773,6 +1778,7 @@ function renderTable(data) {
 
   html += `</div>`;
   wrap.innerHTML = html;
+  setupMonitorDragSort(canReorderRows);
 }
 
 function renderOptionsDetailGrid(comp, sortedDates, colTpl) {
@@ -2745,14 +2751,44 @@ function setupCompetitorDragSort(enabled) {
   list.addEventListener('dragover', event => {
     if (!dragged) return;
     event.preventDefault();
-    const after = getDragAfterElement(list, event.clientY);
+    const after = getDragAfterElement(list, event.clientY, '.comp-list-item');
     if (!after) list.appendChild(dragged);
     else list.insertBefore(dragged, after);
   });
 }
 
-function getDragAfterElement(container, y) {
-  const items = [...container.querySelectorAll('.comp-list-item:not(.dragging)')];
+function setupMonitorDragSort(enabled) {
+  const list = document.querySelector('#table-wrap .monitor-wrap');
+  if (!list || !enabled) return;
+  let dragged = null;
+  list.querySelectorAll('.monitor-product-row').forEach(item => {
+    item.addEventListener('dragstart', event => {
+      if (!event.target.closest('.monitor-drag-handle')) {
+        event.preventDefault();
+        return;
+      }
+      dragged = item;
+      item.classList.add('dragging');
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', item.dataset.cid || '');
+    });
+    item.addEventListener('dragend', () => {
+      item.classList.remove('dragging');
+      dragged = null;
+      saveMonitorCompetitorOrderFromDom();
+    });
+  });
+  list.addEventListener('dragover', event => {
+    if (!dragged) return;
+    event.preventDefault();
+    const after = getDragAfterElement(list, event.clientY, '.monitor-product-row');
+    if (!after) list.appendChild(dragged);
+    else list.insertBefore(dragged, after);
+  });
+}
+
+function getDragAfterElement(container, y, selector) {
+  const items = [...container.querySelectorAll(`${selector}:not(.dragging)`)];
   return items.reduce((closest, child) => {
     const box = child.getBoundingClientRect();
     const offset = y - box.top - box.height / 2;
@@ -2765,6 +2801,17 @@ async function saveCompetitorOrderFromDom() {
   const visibleIds = [...document.querySelectorAll('#comp-list .comp-list-item')]
     .map(item => item.dataset.cid)
     .filter(Boolean);
+  await persistCompetitorOrder(visibleIds);
+}
+
+async function saveMonitorCompetitorOrderFromDom() {
+  const visibleIds = [...document.querySelectorAll('#table-wrap .monitor-product-row')]
+    .map(item => item.dataset.cid)
+    .filter(Boolean);
+  await persistCompetitorOrder(visibleIds);
+}
+
+async function persistCompetitorOrder(visibleIds) {
   if (visibleIds.length < 2) return;
   const currentIds = (appConfig.competitors || []).map(comp => comp.id);
   const ids = mergeVisibleOrderIntoFullOrder(currentIds, visibleIds);
