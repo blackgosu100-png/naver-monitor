@@ -993,7 +993,7 @@ const TIME_RANGE_KEY = 'naverMonitorTimeRange:v1';
 const MARKET_KEY = 'naverMonitorMarket:v1';
 const COMP_FILTER_KEY = 'naverMonitorCompFilter:v1';
 const TIME_COLUMN_LIMIT = 10;
-const REQUIRED_COUPANG_EXTENSION_VERSION = '5.76';
+const REQUIRED_COUPANG_EXTENSION_VERSION = '5.77';
 const MARKETS = ['naver', 'ohouse', 'coupang', 'coupang_stock'];
 const MARKET_LABELS = {
   naver: '네이버',
@@ -1560,7 +1560,8 @@ function beginPendingFetch(competitors, fetchMode = currentFetchMode(), market =
     key: currentMinuteKey(),
     ids: new Set((competitors || []).map(comp => comp.id)),
     market,
-    fetchMode
+    fetchMode,
+    results: {}
   };
   renderTable(historyData);
 }
@@ -1579,6 +1580,19 @@ function isPendingCell(comp, dateKey) {
     pendingFetch.ids &&
     pendingFetch.ids.has(comp.id)
   );
+}
+
+function pendingDayForCell(comp, dateKey) {
+  if (!isPendingCell(comp, dateKey) || !pendingFetch || !pendingFetch.results) return null;
+  const result = pendingFetch.results[comp.id];
+  if (!result) return null;
+  return {
+    total: result.total ?? null,
+    options: result.options || [],
+    error: result.error || null,
+    fetched_at: result.fetched_at || new Date().toISOString(),
+    pending: true
+  };
 }
 
 function loadingCell(extraClass = '') {
@@ -1606,6 +1620,29 @@ function updateFetchProgress(status) {
   document.getElementById('fetch-progress-fill').style.width = done ? '100%' : `${pct}%`;
   document.getElementById('fetch-progress-msg').textContent = status.msg || (done ? '결과를 갱신하는 중입니다' : '상품 데이터를 수집하고 있습니다');
   box.classList.add('show');
+
+  if (pendingFetch && Array.isArray(status.results)) {
+    let changed = false;
+    status.results.forEach(result => {
+      if (!result || !result.id || !pendingFetch.ids || !pendingFetch.ids.has(result.id)) return;
+      const prev = pendingFetch.results[result.id];
+      const nextKey = JSON.stringify({
+        total: result.total ?? null,
+        error: result.error || null,
+        options: result.options || []
+      });
+      const prevKey = prev ? JSON.stringify({
+        total: prev.total ?? null,
+        error: prev.error || null,
+        options: prev.options || []
+      }) : '';
+      if (nextKey !== prevKey) {
+        pendingFetch.results[result.id] = result;
+        changed = true;
+      }
+    });
+    if (changed) renderTable(historyData);
+  }
 
   if (done) {
     fetchProgressTimer = setTimeout(() => box.classList.remove('show'), 5500);
@@ -1728,7 +1765,7 @@ function renderTable(data) {
       ${productThumb(comp)}<div class="biz-cell-main"><span class="biz-dot"></span>${escHtml(comp.name)}<span class="expand-arr">▾</span></div></div></div>`;
 
     sortedDates.forEach((d, dateIndex) => {
-      const day = comp.days[d];
+      const day = comp.days[d] || pendingDayForCell(comp, d);
       if (!day && isPendingCell(comp, d)) {
         html += `<div class="date-cell"><div class="d-num">${loadingCell()}</div><div></div></div>`;
       } else if (!day) {
@@ -1786,7 +1823,7 @@ function renderTable(data) {
 function renderOptionsDetailGrid(comp, sortedDates, colTpl) {
   const optionNames = new Set();
   sortedDates.forEach(d => {
-    const day = comp.days[d];
+    const day = comp.days[d] || pendingDayForCell(comp, d);
     if (day && day.options) {
       day.options.forEach(o => {
         if (o && o.name && !String(o.name).startsWith('__')) optionNames.add(o.name);
@@ -1912,7 +1949,7 @@ function previousCoupangMetricValue(comp, sortedDates, index, metric) {
 }
 
 function coupangMetricValueForCell(comp, sortedDates, index, metric) {
-  const day = comp.days[sortedDates[index]];
+  const day = comp.days[sortedDates[index]] || pendingDayForCell(comp, sortedDates[index]);
   if (metric === 'reviewDelta') {
     const current = coupangMetricValue(day, 'reviews');
     const prev = previousCoupangMetricValue(comp, sortedDates, index, 'reviews');
@@ -1974,7 +2011,7 @@ function renderCoupangMetricsDetailGrid(comp, sortedDates, colTpl) {
 
   let hasData = false;
   sortedDates.forEach(d => {
-    const day = comp.days[d];
+    const day = comp.days[d] || pendingDayForCell(comp, d);
     rows.forEach(row => {
       const index = sortedDates.indexOf(d);
       if (coupangMetricValueForCell(comp, sortedDates, index, row.key) !== null || coupangMetricError(day, row.key)) hasData = true;
@@ -1996,7 +2033,7 @@ function renderCoupangMetricsDetailGrid(comp, sortedDates, colTpl) {
     html += `<div class="m-row m-opt-row" style="grid-template-columns:${colTpl}">`;
     html += `<div class="opt-name">${row.label}</div>`;
     sortedDates.forEach(d => {
-      const day = comp.days[d];
+      const day = comp.days[d] || pendingDayForCell(comp, d);
       if (!day && isPendingCell(comp, d)) {
         html += `<div class="date-cell"><div class="d-num">${loadingCell('small')}</div><div></div></div>`;
         return;

@@ -1,4 +1,6 @@
 __pycache__/
 *.pyc
+.venv/
+.coupang-stock-helper-profile/
 data.json
 dist/

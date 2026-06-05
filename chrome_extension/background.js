@@ -3530,6 +3530,14 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
           elapsedMs: Date.now() - itemStartedMs,
           error: latest && latest.error ? latest.error : ''
         });
+        await setStatus({
+          running: true,
+          current: i + 1,
+          total: competitors.length,
+          name: comp.name,
+          msg: latest && !latest.error ? '\uC870\uD68C \uC644\uB8CC - \uACB0\uACFC \uD45C\uC2DC' : '\uC870\uD68C \uC2E4\uD328 - \uB2E4\uC74C \uC0C1\uD488\uC73C\uB85C \uC774\uB3D9',
+          results
+        });
       }
 
       if (shouldStop()) { stopped = true; break; }

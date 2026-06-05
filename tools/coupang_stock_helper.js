@@ -50,6 +50,9 @@ function findChromeExecutable() {
   const username = process.env.USERNAME || '';
   const candidates = [
     process.env.CHROME_PATH,
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    '/Applications/Chromium.app/Contents/MacOS/Chromium',
+    '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
     'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
     'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
     username ? `C:\\Users\\${username}\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe` : '',
@@ -164,6 +167,10 @@ async function closeTarget(targetId) {
 }
 
 async function getSharedPage() {
+  if (!(await isDebuggerReady())) {
+    warmupPromise = null;
+    sharedPage = null;
+  }
   await warmupChrome();
   if (sharedPage && sharedPage.cdp) {
     try {
@@ -246,11 +253,24 @@ class CdpClient {
     }
   }
 
-  send(method, params = {}) {
+  send(method, params = {}, timeoutMs = 30000) {
     const id = this.nextId++;
     this.ws.send(JSON.stringify({ id, method, params }));
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`${method} timeout`));
+      }, timeoutMs);
+      this.pending.set(id, {
+        resolve: (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        reject: (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      });
     });
   }
 
@@ -277,7 +297,7 @@ class CdpClient {
       awaitPromise: true,
       returnByValue: true,
       timeout: timeoutMs,
-    });
+    }, timeoutMs + 1000);
     if (result.exceptionDetails) {
       throw new Error(result.exceptionDetails.text || 'Runtime.evaluate failed');
     }
