@@ -13,11 +13,11 @@ const PROFILE_DIR = process.env.COUPANG_STOCK_PROFILE_DIR ||
   path.resolve(__dirname, '..', '.coupang-stock-helper-profile');
 const PAGE_WARMUP_MS = Number(process.env.COUPANG_STOCK_PAGE_WARMUP_MS || 350);
 const PROBE_DELAY_MS = Number(process.env.COUPANG_STOCK_PROBE_DELAY_MS || 80);
-const MAX_QUANTITY = Number(process.env.COUPANG_STOCK_MAX_QUANTITY || 50000);
+const MAX_QUANTITY = Number(process.env.COUPANG_STOCK_MAX_QUANTITY || 99999);
 const QUANTITY_FETCH_TIMEOUT_MS = Number(process.env.COUPANG_STOCK_QUANTITY_FETCH_TIMEOUT_MS || 4500);
 const STOCK_ITEM_TIMEOUT_MS = Number(process.env.COUPANG_STOCK_ITEM_TIMEOUT_MS || 25000);
 const DEFAULT_STEPS = [100, 1000, 5000];
-const HELPER_VERSION = '1.5.1';
+const HELPER_VERSION = '1.5.2';
 
 let chromeProcess = null;
 let warmupPromise = null;
@@ -992,20 +992,24 @@ async function estimateStock(payload) {
     let expected = Number(payload.expectedStock);
     if (Number.isFinite(expected) && expected > 1) {
       expected = Math.min(MAX_QUANTITY, Math.max(2, Math.floor(expected)));
-      const expectedProbe = await probe(expected, baseline);
+      const next = Math.min(MAX_QUANTITY, expected + 1);
+      const expectedPair = await probeMany(next > expected ? [expected, next] : [expected], baseline);
+      const expectedProbe = expectedPair.find((item) => item.quantity === expected) || await probe(expected, baseline);
       if (expectedProbe.sameAsBaseline) {
         low = expected;
-        const next = Math.min(MAX_QUANTITY, expected + 1);
-        if (next > low) await applyProbe(next);
+        const nextProbe = expectedPair.find((item) => item.quantity === next);
+        if (nextProbe) {
+          if (nextProbe.sameAsBaseline) low = Math.max(low, nextProbe.quantity);
+          else high = high == null ? nextProbe.quantity : Math.min(high, nextProbe.quantity);
+        } else if (next > low) {
+          await applyProbe(next);
+        }
       } else {
         high = expected;
-        const nearWindow = Math.min(20, Math.max(6, Math.ceil(expected * 0.03)));
-        const nearQuantities = [];
-        for (let offset = 1; offset <= nearWindow; offset += 1) {
-          const near = expected - offset;
-          if (near <= 1) break;
-          nearQuantities.push(near);
-        }
+        const nearOffsets = [1, 2, 3, 5, 8, 13, 21, 34];
+        const nearQuantities = nearOffsets
+          .map((offset) => expected - offset)
+          .filter((quantity) => quantity > 1);
         const nearProbes = await probeMany(nearQuantities, baseline);
         for (const nearProbe of nearProbes.sort((a, b) => b.quantity - a.quantity)) {
           if (nearProbe.sameAsBaseline) {
@@ -1014,7 +1018,7 @@ async function estimateStock(payload) {
           }
           high = Math.min(high, nearProbe.quantity);
         }
-        let step = Math.max(nearWindow + 1, Math.ceil(expected * 0.12));
+        let step = Math.max(55, Math.ceil(expected * 0.18));
         let candidate = Math.max(1, expected - step);
         while (candidate > 1 && low === 1) {
           const tested = await probe(candidate, baseline);
@@ -1030,7 +1034,7 @@ async function estimateStock(payload) {
     }
 
     if (high == null) {
-      const firstWave = [10, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, MAX_QUANTITY]
+      const firstWave = [100, 1000, 3000, 10000, 30000, MAX_QUANTITY]
         .filter((step) => step > low && step <= MAX_QUANTITY);
       const waveProbes = await probeMany(firstWave, baseline);
       for (const tested of waveProbes) {
