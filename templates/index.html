@@ -2223,13 +2223,39 @@ function openCoupangLoginUrl() {
 }
 
 async function openCoupangHelperFolder() {
+  const token = localStorage.getItem('naverMonitorAccessToken') || '';
+  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+  const isLocalHost = ['localhost', '127.0.0.1', '::1'].includes(location.hostname);
+  const endpoints = isLocalHost
+    ? ['/api/coupang-helper-folder']
+    : ['http://127.0.0.1:5001/api/coupang-helper-folder', '/api/coupang-helper-folder'];
+  let lastError = '';
+  async function postWithTimeout(url) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2500);
+    try {
+      const r = await fetch(url, { method: 'POST', headers, signal: controller.signal });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || data.error) throw new Error(data.error || '도우미 폴더를 열지 못했습니다');
+      return data;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
   try {
-    const r = await fetch('/api/coupang-helper-folder', { method: 'POST' });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok || data.error) throw new Error(data.error || '도우미 폴더를 열지 못했습니다');
-    showToast(data.message || '도우미 폴더를 열었습니다');
+    for (const endpoint of endpoints) {
+      try {
+        const data = await postWithTimeout(endpoint);
+        showToast(data.message || '도우미 폴더를 열었습니다');
+        return;
+      } catch(e) {
+        lastError = e.message || String(e);
+        if (endpoint.startsWith('/') && !isLocalHost) break;
+      }
+    }
+    throw new Error(lastError);
   } catch(e) {
-    showToast(e.message || '도우미 폴더를 열지 못했습니다');
+    showToast('로컬 앱이 켜져 있지 않으면 폴더를 자동으로 열 수 없습니다. 앱 폴더에서 run_coupang_stock_helper.bat를 실행해 주세요.');
   }
 }
 

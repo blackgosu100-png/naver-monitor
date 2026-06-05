@@ -10,19 +10,23 @@ from urllib.parse import parse_qs, urlparse
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'naver-monitor-dev-secret-2024')
-APP_VERSION = '5.69'
+APP_VERSION = '5.70'
 
 @app.after_request
 def add_cors(response):
     origin = request.headers.get('Origin', '')
-    if origin.startswith('chrome-extension://'):
+    if origin.startswith('chrome-extension://') or (
+        request.path == '/api/coupang-helper-folder' and origin.startswith(('http://', 'https://'))
+    ):
         response.headers['Access-Control-Allow-Origin'] = origin
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, DELETE, OPTIONS'
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+        response.headers['Access-Control-Allow-Private-Network'] = 'true'
     return response
 
 @app.route('/api/public/<path:p>', methods=['OPTIONS'])
 @app.route('/api/stock-data', methods=['OPTIONS'])
+@app.route('/api/coupang-helper-folder', methods=['OPTIONS'])
 def cors_preflight(p=''):
     origin = request.headers.get('Origin', '')
     resp = app.make_default_options_response()
