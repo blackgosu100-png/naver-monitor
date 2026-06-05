@@ -10,7 +10,7 @@ from urllib.parse import parse_qs, urlparse
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'naver-monitor-dev-secret-2024')
-APP_VERSION = '5.68'
+APP_VERSION = '5.69'
 
 @app.after_request
 def add_cors(response):
@@ -1016,6 +1016,26 @@ def api_config():
         'competitor_count': len(competitors),
         'active_competitor_ids': list(active_competitor_ids_for_user(g.user, competitors)),
         'schedule':    db_get_schedule(g.user_id),
+    })
+
+@app.route('/api/coupang-helper-folder', methods=['POST'])
+@login_required
+def api_coupang_helper_folder():
+    base_dir = os.path.abspath(os.path.dirname(__file__))
+    launcher = os.path.join(base_dir, 'run_coupang_stock_helper.bat')
+    if os.name != 'nt':
+        return jsonify({'error': '도우미 폴더 열기는 Windows 로컬 실행 환경에서만 사용할 수 있습니다.'}), 400
+    if not os.path.exists(launcher):
+        return jsonify({'error': 'run_coupang_stock_helper.bat 파일을 찾을 수 없습니다.'}), 404
+    try:
+        os.startfile(base_dir)  # type: ignore[attr-defined]
+    except Exception as exc:
+        return jsonify({'error': f'도우미 폴더를 열지 못했습니다: {exc}'}), 500
+    return jsonify({
+        'ok': True,
+        'folder': base_dir,
+        'launcher': launcher,
+        'message': '폴더가 열렸습니다. run_coupang_stock_helper.bat를 실행한 뒤 재고 조회를 시작하세요.',
     })
 
 @app.route('/api/plan-request', methods=['POST'])

@@ -31,10 +31,8 @@ if errorlevel 1 (
 set SUPABASE_URL=https://itarmufbqvkmdkxhrkfy.supabase.co
 set SUPABASE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml0YXJtdWZicXZrbWRreGhya2Z5Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODE2NDgwOCwiZXhwIjoyMDkzNzQwODA4fQ.kvvCisVSHV7j1CSJzvwHxWEXfqjZqjK1hJZjobb7BCk
 
-where node >nul 2>&1
-if not errorlevel 1 (
-    start "Coupang Stock Helper" /min cmd /c ""%~dp0run_coupang_stock_helper.bat""
-)
+echo 쿠팡 재고조회 도우미는 자동으로 시작하지 않습니다.
+echo 대시보드의 쿠팡 재고조회 화면에서 도우미 폴더 열기 버튼을 눌러 필요할 때 실행하세요.
 
 start "" "chrome.exe" "http://localhost:5001"
 set PORT=5001

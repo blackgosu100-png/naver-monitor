@@ -390,6 +390,23 @@ body { overflow-x: hidden; }
   transition: border-color .12s;
 }
 .comp-list-item:hover { border-color: var(--border2); }
+.comp-list-item.dragging { opacity: .58; border-color: var(--accent); background: #f0fdf4; }
+.comp-drag-handle {
+  width: 28px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text3);
+  cursor: grab;
+  flex-shrink: 0;
+}
+.comp-drag-handle:active { cursor: grabbing; }
+.comp-drag-handle:disabled { cursor: not-allowed; opacity: .45; }
+.comp-drag-handle svg { width: 15px; height: 15px; }
 .product-thumb {
   width: 38px;
   height: 38px;
@@ -782,7 +799,7 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
         <div class="card">
           <div class="card-header"><div class="card-title">⏰ 자동 조회 스케줄</div></div>
           <div style="padding:20px">
-            <div class="badge badge-green" style="margin-bottom:14px">네이버 · 오늘의집 · 쿠팡 재고조회 자동 실행</div>
+            <div class="badge badge-green" style="margin-bottom:14px">네이버 · 오늘의집 자동 실행 · 쿠팡 재고조회는 도우미 실행 후 권장</div>
             <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:16px;font-size:13px;color:var(--text2)">
               <input type="checkbox" id="sched-enabled" onchange="scheduleChanged()" style="width:16px;height:16px;accent-color:var(--accent)">
               매일 자동 조회 사용
@@ -804,7 +821,7 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
               <button class="btn btn-sm btn-primary" onclick="saveSchedule()">스케줄 저장</button>
               <button class="btn btn-sm" onclick="runScheduleNow()">지금 자동조회 테스트</button>
             </div>
-            <div style="margin-top:12px;font-size:11px;color:var(--text3)">컴퓨터와 크롬이 켜져 있고 확장 프로그램 로그인이 유지되어야 정해진 시간에 네이버, 오늘의집, 쿠팡 재고조회가 순서대로 실행됩니다. 쿠팡 판매지표는 자동조회에서 제외됩니다.</div>
+            <div style="margin-top:12px;font-size:11px;color:var(--text3)">컴퓨터와 크롬이 켜져 있고 확장 프로그램 로그인이 유지되어야 정해진 시간에 조회가 실행됩니다. 쿠팡 재고조회는 도우미를 미리 실행했을 때 가장 빠르며, 쿠팡 판매지표는 자동조회에서 제외됩니다.</div>
           </div>
         </div>
 
@@ -943,19 +960,20 @@ select.form-input { appearance: none; background-image: url("data:image/svg+xml,
     <div class="upgrade-head">
       <div>
         <div class="upgrade-title" id="coupang-login-title">쿠팡 로그인 확인이 필요합니다</div>
-        <div class="upgrade-desc">
+        <div class="upgrade-desc" id="coupang-login-desc">
           쿠팡 판매가는 로그인, 와우, 쿠폰 세션에 따라 달라질 수 있습니다. 정확한 판매가와 매출 추정을 위해 같은 크롬에서 쿠팡 로그인 상태를 확인해 주세요.
         </div>
       </div>
       <button class="modal-close" type="button" onclick="closeCoupangLoginModal(false)" aria-label="닫기">×</button>
     </div>
     <div class="upgrade-body">
-      <div class="upgrade-foot">
+      <div class="upgrade-foot" id="coupang-login-foot">
         로그인 바로가기를 누르면 새 탭에서 쿠팡 로그인 페이지가 열립니다. 로그인 완료 후 이 화면으로 돌아와 조회를 시작하면 됩니다.
       </div>
       <div class="modal-actions">
-        <button class="btn" type="button" onclick="openCoupangLoginUrl()">쿠팡 로그인 바로가기</button>
-        <button class="btn btn-primary" type="button" onclick="closeCoupangLoginModal(true)">로그인 완료 · 조회 시작</button>
+        <button class="btn" id="coupang-login-link-btn" type="button" onclick="openCoupangLoginUrl()">쿠팡 로그인 바로가기</button>
+        <button class="btn" id="coupang-helper-folder-btn" type="button" onclick="openCoupangHelperFolder()" style="display:none">도우미 폴더 열기</button>
+        <button class="btn btn-primary" id="coupang-login-confirm-btn" type="button" onclick="closeCoupangLoginModal(true)">로그인 완료 · 조회 시작</button>
         <button class="btn btn-sm" type="button" onclick="closeCoupangLoginModal(false)">취소</button>
       </div>
     </div>
@@ -972,7 +990,7 @@ const TIME_RANGE_KEY = 'naverMonitorTimeRange:v1';
 const MARKET_KEY = 'naverMonitorMarket:v1';
 const COMP_FILTER_KEY = 'naverMonitorCompFilter:v1';
 const TIME_COLUMN_LIMIT = 10;
-const REQUIRED_COUPANG_EXTENSION_VERSION = '5.32';
+const REQUIRED_COUPANG_EXTENSION_VERSION = '5.69';
 const MARKETS = ['naver', 'ohouse', 'coupang', 'coupang_stock'];
 const MARKET_LABELS = {
   naver: '네이버',
@@ -2204,6 +2222,17 @@ function openCoupangLoginUrl() {
   window.open(COUPANG_LOGIN_URL, '_blank', 'noopener');
 }
 
+async function openCoupangHelperFolder() {
+  try {
+    const r = await fetch('/api/coupang-helper-folder', { method: 'POST' });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || data.error) throw new Error(data.error || '도우미 폴더를 열지 못했습니다');
+    showToast(data.message || '도우미 폴더를 열었습니다');
+  } catch(e) {
+    showToast(e.message || '도우미 폴더를 열지 못했습니다');
+  }
+}
+
 function closeCoupangLoginModal(confirmed = false, event = null) {
   if (event && event.target && event.target.id !== 'coupang-login-modal') return;
   document.getElementById('coupang-login-modal')?.classList.remove('show');
@@ -2216,6 +2245,27 @@ function closeCoupangLoginModal(confirmed = false, event = null) {
 
 function confirmCoupangLoginBeforeFetch(fetchMode, market = currentMarket()) {
   if (!shouldWarnCoupangLogin(fetchMode, market)) return Promise.resolve(true);
+  const isStock = String(fetchMode || '').toLowerCase() === 'coupang_stock' || String(market || '').toLowerCase() === 'coupang_stock';
+  const title = document.getElementById('coupang-login-title');
+  const desc = document.getElementById('coupang-login-desc');
+  const foot = document.getElementById('coupang-login-foot');
+  const loginBtn = document.getElementById('coupang-login-link-btn');
+  const helperBtn = document.getElementById('coupang-helper-folder-btn');
+  const confirmBtn = document.getElementById('coupang-login-confirm-btn');
+  if (title) title.textContent = isStock ? '쿠팡 재고조회 도우미 실행 확인' : '쿠팡 로그인 확인이 필요합니다';
+  if (desc) {
+    desc.textContent = isStock
+      ? '쿠팡 재고조회는 로컬 도우미가 실행되어 있으면 상품 창을 반복해서 열고 닫지 않고 더 빠르게 조회합니다.'
+      : '쿠팡 판매가는 로그인, 와우, 쿠폰 세션에 따라 달라질 수 있습니다. 정확한 판매가와 매출 추정을 위해 같은 크롬에서 쿠팡 로그인 상태를 확인해 주세요.';
+  }
+  if (foot) {
+    foot.textContent = isStock
+      ? '도우미 폴더 열기를 눌러 run_coupang_stock_helper.bat를 실행한 뒤, 이 화면으로 돌아와 재고 조회를 시작하세요.'
+      : '로그인 바로가기를 누르면 새 탭에서 쿠팡 로그인 페이지가 열립니다. 로그인 완료 후 이 화면으로 돌아와 조회를 시작하면 됩니다.';
+  }
+  if (loginBtn) loginBtn.style.display = isStock ? 'none' : '';
+  if (helperBtn) helperBtn.style.display = isStock ? '' : 'none';
+  if (confirmBtn) confirmBtn.textContent = isStock ? '도우미 실행 완료 · 재고 조회 시작' : '로그인 완료 · 조회 시작';
   document.getElementById('coupang-login-modal')?.classList.add('show');
   return new Promise(resolve => {
     coupangLoginResolve = resolve;
@@ -2610,7 +2660,8 @@ function renderCompList(competitors) {
   });
   if (summary) {
     const searchText = search ? ` · 검색 "${escHtml(search)}"` : '';
-    summary.innerHTML = `${compFilterLabel(filter)} ${filtered.length}개 표시 / 전체 ${source.length}개${searchText}`;
+    const dragText = (!search && filter === 'all' && filtered.length > 1) ? ' · 손잡이를 드래그해 순서 변경' : '';
+    summary.innerHTML = `${compFilterLabel(filter)} ${filtered.length}개 표시 / 전체 ${source.length}개${searchText}${dragText}`;
   }
   if (!source.length) {
     el.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:12px 0">아직 등록된 경쟁사가 없습니다</div>';
@@ -2620,11 +2671,15 @@ function renderCompList(competitors) {
     el.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:16px 0">조건에 맞는 경쟁사가 없습니다</div>';
     return;
   }
+  const canReorder = !search && filter === 'all' && filtered.length > 1;
   el.innerHTML = filtered.map(c => {
     const canFetch = isCompetitorFetchAllowed(c.id);
     const marketName = COMPETITOR_MARKET_LABELS[competitorMarket(c)] || '네이버';
     return `
-    <div class="comp-list-item" id="cli-${c.id}">
+    <div class="comp-list-item" id="cli-${c.id}" data-cid="${c.id}" draggable="${canReorder ? 'true' : 'false'}">
+      <button class="comp-drag-handle" type="button" ${canReorder ? '' : 'disabled'} title="${canReorder ? '드래그해서 순서 변경' : '전체 보기에서 검색어가 없을 때 순서 변경 가능'}" aria-label="순서 변경">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="9" cy="5" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="19" r="1"/></svg>
+      </button>
       ${productThumb(c)}
       <div class="comp-list-name">${escHtml(c.name)} <span class="badge badge-gray">${marketName}</span>${canFetch ? '' : ' <span class="badge badge-gray">보존됨 · 조회 제한</span>'}</div>
       <div class="comp-list-url" title="${escHtml(c.url)}">${escHtml(c.url)}</div>
@@ -2634,6 +2689,89 @@ function renderCompList(competitors) {
       </div>
     </div>`;
   }).join('');
+  setupCompetitorDragSort(canReorder);
+}
+
+function setupCompetitorDragSort(enabled) {
+  const list = document.getElementById('comp-list');
+  if (!list || !enabled) return;
+  let dragged = null;
+  list.querySelectorAll('.comp-list-item').forEach(item => {
+    item.addEventListener('dragstart', event => {
+      if (!event.target.closest('.comp-drag-handle')) {
+        event.preventDefault();
+        return;
+      }
+      dragged = item;
+      item.classList.add('dragging');
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', item.dataset.cid || '');
+    });
+    item.addEventListener('dragend', () => {
+      item.classList.remove('dragging');
+      dragged = null;
+      saveCompetitorOrderFromDom();
+    });
+  });
+  list.addEventListener('dragover', event => {
+    if (!dragged) return;
+    event.preventDefault();
+    const after = getDragAfterElement(list, event.clientY);
+    if (!after) list.appendChild(dragged);
+    else list.insertBefore(dragged, after);
+  });
+}
+
+function getDragAfterElement(container, y) {
+  const items = [...container.querySelectorAll('.comp-list-item:not(.dragging)')];
+  return items.reduce((closest, child) => {
+    const box = child.getBoundingClientRect();
+    const offset = y - box.top - box.height / 2;
+    if (offset < 0 && offset > closest.offset) return {offset, element: child};
+    return closest;
+  }, {offset: Number.NEGATIVE_INFINITY, element: null}).element;
+}
+
+async function saveCompetitorOrderFromDom() {
+  const ids = [...document.querySelectorAll('#comp-list .comp-list-item')]
+    .map(item => item.dataset.cid)
+    .filter(Boolean);
+  if (ids.length < 2) return;
+  const currentIds = (appConfig.competitors || []).map(comp => comp.id);
+  if (ids.join('|') === currentIds.join('|')) return;
+  appConfig.competitors = orderItemsByIds(appConfig.competitors || [], ids);
+  if (historyData && historyData.competitors) {
+    historyData.competitors = orderItemsByIds(historyData.competitors, ids);
+    renderTable(historyData);
+  }
+  try {
+    const r = await fetch('/api/competitors/reorder', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ids})
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || '순서 저장 실패');
+    if (Array.isArray(data.ids)) {
+      appConfig.competitors = orderItemsByIds(appConfig.competitors || [], data.ids);
+      if (historyData && historyData.competitors) historyData.competitors = orderItemsByIds(historyData.competitors, data.ids);
+    }
+    renderCompetitorLimit(appConfig);
+    showToast('상품 순서가 저장되었습니다');
+  } catch (e) {
+    showToast(e.message || '순서 저장 실패');
+    await loadConfig();
+    await loadHistory(true);
+  }
+}
+
+function orderItemsByIds(items, ids) {
+  const order = new Map(ids.map((id, index) => [id, index]));
+  return [...(items || [])].sort((a, b) => {
+    const ai = order.has(a.id) ? order.get(a.id) : order.size;
+    const bi = order.has(b.id) ? order.get(b.id) : order.size;
+    return ai - bi;
+  });
 }
 
 async function addCompetitor() {
@@ -2738,7 +2876,7 @@ async function saveSchedule() {
       ? `⏰ 자동조회 저장됨: 매일 ${hour}시 ${minute}분 · ${marketLabels.join(', ')}`
       : '자동조회 사용 안 함으로 저장됨');
     if (enabled && markets.includes('coupang_stock')) {
-      showToast('쿠팡 재고조회 판매가는 크롬의 쿠팡 로그인 세션 기준으로 저장됩니다');
+      showToast('쿠팡 재고조회는 도우미를 미리 실행하면 가장 빠르게 저장됩니다');
     }
   } catch {
     showToast('저장 실패');

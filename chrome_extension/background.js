@@ -2309,17 +2309,32 @@ async function waitForCoupangStock(tabId, comp, parsed) {
 
 async function collectCoupangStockFromPage(comp, parsed, requestContext) {
   var tabId = null;
+  var reusableTab = !!(requestContext && requestContext.reuseCoupangStockTab);
   try {
-    tabId = await openPopupTabQuick(comp.url, {
-      popupWindow: true,
-      lightMode: true,
-      width: 430,
-      height: 720,
-      left: 0,
-      top: 0,
-      returnFocusTabId: requestContext && requestContext.dashboardTabId,
-      returnFocusWindowId: requestContext && requestContext.dashboardWindowId
-    });
+    if (reusableTab && requestContext.coupangStockTabId != null) {
+      try {
+        await chrome.tabs.get(requestContext.coupangStockTabId);
+        tabId = requestContext.coupangStockTabId;
+        currentFetchTabId = tabId;
+        await chrome.tabs.update(tabId, { url: comp.url, active: true });
+        scheduleFocusSourceTab(requestContext, 650);
+      } catch(e) {
+        requestContext.coupangStockTabId = null;
+      }
+    }
+    if (tabId == null) {
+      tabId = await openPopupTabQuick(comp.url, {
+        popupWindow: true,
+        lightMode: true,
+        width: 430,
+        height: 720,
+        left: 0,
+        top: 0,
+        returnFocusTabId: requestContext && requestContext.dashboardTabId,
+        returnFocusWindowId: requestContext && requestContext.dashboardWindowId
+      });
+      if (reusableTab) requestContext.coupangStockTabId = tabId;
+    }
     await waitForTabScriptReady(tabId, 7000);
     currentFetchTabId = tabId;
     var last = null;
@@ -2369,9 +2384,11 @@ async function collectCoupangStockFromPage(comp, parsed, requestContext) {
   } catch(e) {
     return { ok: false, error: String(e) };
   } finally {
-    await disableCoupangStockLightMode(tabId);
-    if (tabId !== null) chrome.tabs.remove(tabId, () => {});
-    if (currentFetchTabId === tabId) currentFetchTabId = null;
+    if (!reusableTab) {
+      await disableCoupangStockLightMode(tabId);
+      if (tabId !== null) chrome.tabs.remove(tabId, () => {});
+      if (currentFetchTabId === tabId) currentFetchTabId = null;
+    }
   }
 }
 
@@ -3291,6 +3308,9 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
   if (route && queuedMarkets.length && queuedMarkets.every(function(market) { return market !== 'coupang'; })) {
     route = '';
   }
+  if (route === 'coupang_stock') {
+    requestContext = Object.assign({}, requestContext || {}, { reuseCoupangStockTab: true, coupangStockTabId: null });
+  }
 
   try {
     for (var i = 0; i < competitors.length; i++) {
@@ -3462,6 +3482,13 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
       items: itemLogs
     });
   } finally {
+    if (requestContext && requestContext.coupangStockTabId != null) {
+      var closeTabId = requestContext.coupangStockTabId;
+      await disableCoupangStockLightMode(closeTabId);
+      try { await chrome.tabs.remove(closeTabId); } catch(e) {}
+      if (currentFetchTabId === closeTabId) currentFetchTabId = null;
+      requestContext.coupangStockTabId = null;
+    }
     fetchRunning = false;
     stopRequested = false;
     currentFetchTabId = null;
