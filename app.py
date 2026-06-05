@@ -509,8 +509,30 @@ def fetch_product_image(url: str) -> str:
     except Exception:
         return ''
 
+def db_get_competitor_order(user_id: str) -> list[str]:
+    rows = sb_select('app_settings', f'?user_id=eq.{user_id}&key=eq.competitor_order&limit=1')
+    if not rows:
+        return []
+    try:
+        value = json.loads(rows[0].get('value') or '[]')
+    except Exception:
+        return []
+    return [str(cid) for cid in value if cid]
+
+def db_save_competitor_order(user_id: str, ids: list[str]) -> None:
+    sb_upsert(
+        'app_settings',
+        {'user_id': user_id, 'key': 'competitor_order', 'value': json.dumps(ids, ensure_ascii=False)},
+        on_conflict='user_id,key',
+    )
+
 def db_get_competitors(user_id: str) -> list:
-    return sb_select('competitors', f'?user_id=eq.{user_id}&order=created_at')
+    competitors = sb_select('competitors', f'?user_id=eq.{user_id}&order=created_at')
+    ordered_ids = db_get_competitor_order(user_id)
+    if not ordered_ids:
+        return competitors
+    order_index = {cid: index for index, cid in enumerate(ordered_ids)}
+    return sorted(competitors, key=lambda comp: (order_index.get(comp.get('id'), len(order_index)), comp.get('created_at') or ''))
 
 def user_plan(user: dict) -> str:
     if _is_admin_user(user):
@@ -1266,6 +1288,28 @@ def api_add_competitor():
         'image_url': '',
     })
     return jsonify({'ok': True, 'id': cid})
+
+@app.route('/api/competitors/reorder', methods=['POST'])
+@login_required
+def api_reorder_competitors():
+    body = request.get_json() or {}
+    incoming = body.get('ids') or []
+    if not isinstance(incoming, list):
+        return jsonify({'error': '상품 순서 데이터가 올바르지 않습니다'}), 400
+
+    competitors = db_get_competitors(g.user_id)
+    valid_ids = [comp['id'] for comp in competitors]
+    valid_set = set(valid_ids)
+    seen = set()
+    ordered = []
+    for cid in incoming:
+        cid = str(cid or '').strip()
+        if cid in valid_set and cid not in seen:
+            ordered.append(cid)
+            seen.add(cid)
+    ordered.extend(cid for cid in valid_ids if cid not in seen)
+    db_save_competitor_order(g.user_id, ordered)
+    return jsonify({'ok': True, 'ids': ordered})
 
 @app.route('/api/competitors/<cid>', methods=['PUT'])
 @login_required
