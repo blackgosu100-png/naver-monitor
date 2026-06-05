@@ -3306,10 +3306,10 @@ async function collectCoupangStockMetricOnly(comp, parsed, index, total, results
       current: index + 1,
       total: total,
       name: comp.name,
-      msg: '\uCFE0\uD321 \uC7AC\uACE0\uC870\uD68C \uBE60\uB978 \uACBD\uB85C \uD655\uC778 \uC911...',
+      msg: '\uCFE0\uD321 \uB85C\uCEEC \uBE60\uB978 \uD5EC\uD37C \uD655\uC778 \uC911...',
       results
     });
-    stock = await estimateCoupangStockInBackground(comp, parsed);
+    stock = await estimateCoupangStockViaLocalHelper(comp, parsed);
   }
   if (!stock || !stock.ok) {
     await setStatus({
@@ -3317,10 +3317,10 @@ async function collectCoupangStockMetricOnly(comp, parsed, index, total, results
       current: index + 1,
       total: total,
       name: comp.name,
-      msg: '\uCFE0\uD321 \uB85C\uCEEC \uBE60\uB978 \uD5EC\uD37C \uD655\uC778 \uC911...',
+      msg: '\uCFE0\uD321 \uC7AC\uACE0\uC870\uD68C \uBE60\uB978 \uACBD\uB85C \uD655\uC778 \uC911...',
       results
     });
-    stock = await estimateCoupangStockViaLocalHelper(comp, parsed);
+    stock = await estimateCoupangStockInBackground(comp, parsed);
   }
   if (stock && stock.ok && stock.localHelper) {
     await setStatus({
