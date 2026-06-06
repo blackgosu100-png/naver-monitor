@@ -2772,8 +2772,9 @@ async function collectCoupangSalesMetricsFromWingApi(comp, parsed, index, total,
   var monthly = await getCachedCoupangMetric('monthly', salesCacheKey, COUPANG_MONTHLY_TTL);
   var viewsMetric = await getCachedCoupangMetric('views', salesCacheKey, COUPANG_VIEWS_TTL);
   var apiMetrics = null;
+  var monthlyLookup = monthly ? null : collectCoupangMonthlyFast(comp, parsed);
 
-  if (!monthly || !viewsMetric) {
+  if (!viewsMetric) {
     await setStatus({
       running: true,
       current: index + 1,
@@ -2783,7 +2784,11 @@ async function collectCoupangSalesMetricsFromWingApi(comp, parsed, index, total,
       results
     });
 
-    apiMetrics = await fetchCoupangWingPostMatchingMetrics(comp, parsed, requestContext);
+    apiMetrics = await withTimeout(
+      fetchCoupangWingPostMatchingMetrics(comp, parsed, requestContext),
+      6500,
+      'Wing post-matching lookup timed out'
+    );
     if (apiMetrics && apiMetrics.stopped) return apiMetrics;
     if (apiMetrics && apiMetrics.authRequired) {
       await setStatus({
@@ -2794,7 +2799,6 @@ async function collectCoupangSalesMetricsFromWingApi(comp, parsed, index, total,
         msg: apiMetrics.error,
         results
       });
-      return apiMetrics;
     }
     if (apiMetrics && apiMetrics.ok) {
       if (apiMetrics.monthlySales !== null && apiMetrics.monthlySales !== undefined) {
@@ -2820,6 +2824,11 @@ async function collectCoupangSalesMetricsFromWingApi(comp, parsed, index, total,
     }
   }
 
+  if (!monthly && monthlyLookup) {
+    monthly = await monthlyLookup;
+    if (monthly && monthly.ok) await setCachedCoupangMetric('monthly', salesCacheKey, monthly);
+  }
+
   if (!monthly && !viewsMetric) {
     return { ok: false, error: (apiMetrics && apiMetrics.error) || 'Coupang sales metrics not found' };
   }
@@ -2832,6 +2841,7 @@ async function collectCoupangSalesMetricsFromWingApi(comp, parsed, index, total,
   if (views !== null) options.push({ name: '\uC870\uD68C\uC218', qty: views });
   else if (apiMetrics && apiMetrics.error) options.push({ name: '\uC870\uD68C\uC218 \uC624\uB958', qty: null, text: apiMetrics.error });
   if (monthlySales !== null) options.push({ name: '\uC6D4\uD310\uB9E4\uC218\uB7C9', qty: monthlySales });
+  else if (monthly && monthly.error) options.push({ name: '\uC6D4\uD310\uB9E4\uC218\uB7C9 \uC624\uB958', qty: null, text: monthly.error });
   else if (apiMetrics && apiMetrics.error) options.push({ name: '\uC6D4\uD310\uB9E4\uC218\uB7C9 \uC624\uB958', qty: null, text: apiMetrics.error });
   if (conversionRate !== null) options.push({ name: '\uC804\uD658\uC728', qty: Number(conversionRate.toFixed(2)) });
   addCoupangProductMetricOptions(options, apiMetrics || viewsMetric);
@@ -2840,7 +2850,8 @@ async function collectCoupangSalesMetricsFromWingApi(comp, parsed, index, total,
     ok: true,
     total: monthlySales,
     options: options,
-    image_url: (monthly && monthly.image_url) || (viewsMetric && viewsMetric.image_url) || (apiMetrics && apiMetrics.image_url) || ''
+    image_url: (monthly && monthly.image_url) || (viewsMetric && viewsMetric.image_url) || (apiMetrics && apiMetrics.image_url) || '',
+    debugSource: (apiMetrics && apiMetrics.ok ? 'wing-post-matching' : '') + (monthly && monthly.source ? (apiMetrics && apiMetrics.ok ? '+' : '') + 'monthly-' + monthly.source : '')
   };
 }
 
@@ -2888,6 +2899,32 @@ async function collectCoupangMonthlySmart(comp, parsed) {
     page.error = page.error || (direct && direct.error) || (server && server.error) || 'Coupang monthly sales not found';
   }
   return page;
+}
+
+async function collectCoupangMonthlyFast(comp, parsed) {
+  var direct = await withTimeout(
+    fetchCoupangMonthlyDirect(comp, parsed),
+    4500,
+    'Coupang background monthly lookup timed out'
+  );
+  if (direct && direct.ok) {
+    direct.source = 'direct';
+    return direct;
+  }
+
+  if (direct && direct.skipServer) return direct;
+
+  var server = await withTimeout(
+    fetchCoupangMonthlyFromServer(comp),
+    4500,
+    'Coupang server monthly lookup timed out'
+  );
+  if (server && server.ok) {
+    server.source = 'server';
+    return server;
+  }
+
+  return server || direct || { ok: false, error: 'Coupang monthly sales not found' };
 }
 
 async function waitForCoupangWingViews(tabId, parsed, comp) {
@@ -3593,7 +3630,7 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
 
       if (shouldStop()) { stopped = true; break; }
       if (i < competitors.length - 1) {
-        await new Promise(r => setTimeout(r, market === 'naver' ? 3000 : 900));
+        await new Promise(r => setTimeout(r, route === 'coupang_sales' ? 200 : (market === 'naver' ? 3000 : 900)));
       }
     }
 
