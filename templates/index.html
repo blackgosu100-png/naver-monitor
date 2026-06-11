@@ -1587,7 +1587,7 @@ async function init() {
 
 function applyConfig(cfg) {
   appConfig = cfg || {};
-  document.getElementById('user-info').innerHTML = `<strong>${cfg.username}</strong>로 로그인됨`;
+  document.getElementById('user-info').innerHTML = `<strong>${escHtml(cfg.username)}</strong>로 로그인됨`;
   isAdminUser = !!cfg.is_admin;
   document.getElementById('nav-admin').style.display = isAdminUser ? '' : 'none';
   syncMarketUI();
@@ -1927,7 +1927,7 @@ function renderTable(data) {
       <button class="comp-drag-handle monitor-drag-handle" type="button" draggable="false" ${canReorderRows ? '' : 'disabled'} onclick="event.stopPropagation()" title="${canReorderRows ? '드래그해서 순서 변경' : '순서를 바꿀 상품이 2개 이상 필요합니다'}" aria-label="순서 변경">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="9" cy="5" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="19" r="1"/></svg>
       </button>
-      <button class="product-link-btn" type="button" onclick="event.stopPropagation(); window.open('${escHtml(comp.url)}','_blank')" title="${label} 상품 페이지 열기" aria-label="${label} 상품 페이지 열기">
+      <button class="product-link-btn" type="button" onclick="event.stopPropagation(); window.open('${escJsAttr(comp.url)}','_blank')" title="${label} 상품 페이지 열기" aria-label="${label} 상품 페이지 열기">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6.5 3H3.8A1.8 1.8 0 002 4.8v7.4A1.8 1.8 0 003.8 14h7.4a1.8 1.8 0 001.8-1.8V9.5"/><path d="M9 2h5v5"/><path d="M8 8l6-6"/></svg>
       </button>
       ${productThumb(comp)}<div class="biz-cell-main"><span class="biz-dot"></span>${escHtml(comp.name)}<span class="expand-arr">▾</span></div></div></div>`;
@@ -1973,7 +1973,7 @@ function renderTable(data) {
     const singleFetchMarket = singleFetchMode === 'coupang_stock' ? 'coupang_stock' : (singleFetchMode === 'coupang_sales' ? 'coupang' : currentMarket());
     const singleFetchLabel = isCoupangRow && singleFetchMode === 'coupang_stock' ? '재고조회' : '선택상품조회';
     html += `<div class="m-action" onclick="event.stopPropagation()">
-      <button class="btn btn-sm ${canFetch ? '' : 'btn-primary'}" onclick="fetchSingle('${comp.id}','${escHtml(comp.name)}','${singleFetchMode}','${singleFetchMarket}')" title="${canFetch ? '이 상품만 조회' : '현재 플랜 한도 밖 상품입니다'}">${canFetch ? singleFetchLabel : '연장/업그레이드'}</button>
+      <button class="btn btn-sm ${canFetch ? '' : 'btn-primary'}" onclick="fetchSingle('${escJsAttr(comp.id)}','${escJsAttr(comp.name)}','${singleFetchMode}','${singleFetchMarket}')" title="${canFetch ? '이 상품만 조회' : '현재 플랜 한도 밖 상품입니다'}">${canFetch ? singleFetchLabel : '연장/업그레이드'}</button>
     </div></div>`;
 
     html += `<div class="m-detail${isExpanded ? ' open' : ''}" id="opt-${comp.id}">${
@@ -2932,8 +2932,8 @@ function renderCompList(competitors) {
       <div class="comp-list-name">${escHtml(c.name)} <span class="badge badge-gray">${marketName}</span>${canFetch ? '' : ' <span class="badge badge-gray">보존됨 · 조회 제한</span>'}</div>
       <div class="comp-list-url" title="${escHtml(c.url)}">${escHtml(c.url)}</div>
       <div class="comp-list-actions">
-        <button class="btn btn-sm" onclick="editCompetitor('${c.id}','${escHtml(c.name)}','${escHtml(c.url)}')">수정</button>
-        <button class="btn btn-sm btn-danger" onclick="removeCompetitor('${c.id}','${escHtml(c.name)}')">삭제</button>
+        <button class="btn btn-sm" onclick="editCompetitor('${escJsAttr(c.id)}','${escJsAttr(c.name)}','${escJsAttr(c.url)}')">수정</button>
+        <button class="btn btn-sm btn-danger" onclick="removeCompetitor('${escJsAttr(c.id)}','${escJsAttr(c.name)}')">삭제</button>
       </div>
     </div>`;
   }).join('');
@@ -3286,7 +3286,7 @@ function renderFetchLogList() {
     const ok = Number(log.ok || 0);
     const total = Number(log.total || 0);
     return `
-      <button class="log-run-btn ${log.runId === selectedFetchLogId ? 'active' : ''}" type="button" onclick="selectFetchLog('${escHtml(log.runId || '')}')">
+      <button class="log-run-btn ${log.runId === selectedFetchLogId ? 'active' : ''}" type="button" onclick="selectFetchLog('${escJsAttr(log.runId || '')}')">
         <div class="log-run-title">${escHtml(fetchModeLabel(log))} · ${ok}/${total} 성공</div>
         <div class="log-run-meta">${formatLogDate(log.startedAt)} · 총 ${formatElapsed(log.elapsedMs)} · 실패 ${errors}</div>
       </button>
@@ -3555,7 +3555,18 @@ function showToast(msg) {
 }
 
 function escHtml(str) {
-  return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// onclick 등 HTML 속성 안의 JS 문자열 리터럴에 넣을 값용.
+// &#39;는 속성 디코딩 후 다시 '가 되어 escHtml만으로는 JS 문자열 탈출을 못 막는다.
+function escJsAttr(str) {
+  return escHtml(String(str || '')
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/"/g, '\\"')
+    .replace(/</g, '\\u003c')
+    .replace(/\r?\n/g, '\\n'));
 }
 
 function shortErrorMessage(error) {
