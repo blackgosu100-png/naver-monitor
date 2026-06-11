@@ -323,6 +323,17 @@ async function pollStatus() {
   var fill = document.getElementById('progress-fill');
   var stopBtn = document.getElementById('stop-btn');
 
+  // 워커 사망 등으로 갱신이 끊긴 stale running 상태는 에러로 전환
+  if (s.running && s.updatedAt && (Date.now() - Number(s.updatedAt)) > 3 * 60 * 1000) {
+    var fetchBtnStale = document.getElementById('fetch-btn');
+    if (fetchBtnStale) fetchBtnStale.disabled = false;
+    document.getElementById('stop-btn').style.display = 'none';
+    showMsg('fetch-msg', '이전 조회가 중단된 것으로 보입니다. 다시 조회해주세요.', 'err');
+    chrome.storage.local.remove('fetchStatus');
+    if (statusPoller) { clearInterval(statusPoller); statusPoller = null; }
+    return;
+  }
+
   if (s.running) {
     var fetchBtn = document.getElementById('fetch-btn');
     if (fetchBtn) fetchBtn.disabled = true;

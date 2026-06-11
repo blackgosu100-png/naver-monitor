@@ -12,6 +12,10 @@ const COUPANG_PB_BRANDS = ['코멧', '곰곰', '탐사', '비타할로', '홈플
 var stopRequested = false;
 var currentFetchTabId = null;
 var fetchRunning = false;
+var fetchStarting = false; // START_FETCH 수신~runFetchSeparated 진입 사이 이중 시작 방지
+// 워커가 죽으면 fetchStatus.running이 영원히 남는다 — updatedAt 기준으로 stale 판정
+const FETCH_STATUS_STALE_MS = 3 * 60 * 1000;
+const FETCH_KEEPALIVE_INTERVAL_MS = 20 * 1000;
 const COUPANG_LOCAL_HELPER_FAILURE_LIMIT = 2;
 const COUPANG_STOCK_BLOCK_RULE_BASE = 720000;
 const AUTO_FETCH_ALARM = 'naverMonitorAutoFetch';
@@ -691,7 +695,28 @@ async function readOhouseStock(pid) {
 }
 
 async function setStatus(status) {
+  if (status && typeof status === 'object') status.updatedAt = Date.now();
   await chrome.storage.local.set({ fetchStatus: status });
+}
+
+// 워커 재시작 시 남아있는 running 상태 정리 (조회는 이미 죽었는데 UI만 "조회 중"으로 남는 문제)
+async function cleanupStaleFetchStatus() {
+  try {
+    if (fetchRunning || fetchStarting) return;
+    var data = await chrome.storage.local.get('fetchStatus');
+    var s = data && data.fetchStatus;
+    if (!s || !s.running) return;
+    var age = Date.now() - (Number(s.updatedAt) || 0);
+    if (!s.updatedAt || age > FETCH_STATUS_STALE_MS) {
+      await setStatus({
+        running: false,
+        done: false,
+        stopped: true,
+        msg: '이전 조회가 중단된 상태로 발견되어 정리했습니다 (브라우저/확장 재시작). 다시 조회해주세요.',
+        results: (s && s.results) || []
+      });
+    }
+  } catch (e) {}
 }
 
 async function reportFetchStatus(requestContext, status, detail) {
@@ -706,6 +731,18 @@ function shouldStop() {
 }
 
 async function stopCurrentFetch() {
+  if (!fetchRunning) {
+    // 진행 중 조회 없음 — 잔여 상태만 정리
+    await setStatus({
+      running: false,
+      stopped: true,
+      msg: 'STOP 요청으로 조회를 중지했습니다.',
+      results: []
+    });
+    return;
+  }
+  // 최종 stopped 상태는 조회 루프의 종료 경로에서 한 번만 기록한다.
+  // (여기서 먼저 기록하면 진행 중 루프가 running 상태로 다시 덮어써 UI가 되돌아감)
   stopRequested = true;
   if (currentFetchTabId !== null) {
     try {
@@ -713,12 +750,6 @@ async function stopCurrentFetch() {
     } catch(e) {}
     currentFetchTabId = null;
   }
-  await setStatus({
-    running: false,
-    stopped: true,
-    msg: 'STOP 요청으로 조회를 중지했습니다.',
-    results: []
-  });
 }
 
 async function runScheduledAutoFetch() {
@@ -3458,10 +3489,23 @@ async function collectCoupangStockMetricOnly(comp, parsed, index, total, results
 }
 
 async function runFetchSeparated(competitors, fetchMode, requestedMarket, requestContext) {
-  if (fetchRunning) return;
+  if (fetchRunning) return false;
   fetchRunning = true;
+  fetchStarting = false;
   stopRequested = false;
   currentFetchTabId = null;
+
+  // MV3 워커 keep-alive 겸 상태 하트비트:
+  // 긴 await(로컬 헬퍼 90초 등) 중에도 워커 idle 종료를 막고 updatedAt을 갱신한다
+  var keepAliveTimer = setInterval(function() {
+    chrome.storage.local.get('fetchStatus', function(data) {
+      var s = data && data.fetchStatus;
+      if (s && s.running) {
+        s.updatedAt = Date.now();
+        chrome.storage.local.set({ fetchStatus: s });
+      }
+    });
+  }, FETCH_KEEPALIVE_INTERVAL_MS);
 
   var runStartedMs = Date.now();
   var runStartedAt = new Date(runStartedMs).toISOString();
@@ -3700,6 +3744,7 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
       events: eventLogs
     });
   } finally {
+    clearInterval(keepAliveTimer);
     if (requestContext && requestContext.coupangStockTabId != null) {
       var closeTabId = requestContext.coupangStockTabId;
       await disableCoupangStockLightMode(closeTabId);
@@ -3742,27 +3787,38 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg.type === 'START_FETCH') {
+    if (fetchRunning || fetchStarting) {
+      // 동기 구간에서 가드 — await 이후 체크는 거의 동시에 온 두 메시지를 둘 다 통과시킨다
+      sendResponse({ ok: false, error: '이미 조회가 진행 중입니다. 먼저 STOP을 눌러주세요.' });
+      return false;
+    }
+    fetchStarting = true;
     (async () => {
-      var competitors = msg.competitors || [];
-      if (!competitors.length) {
-        sendResponse({ ok: false, error: '조회할 상품이 없습니다.' });
-        return;
+      try {
+        var competitors = msg.competitors || [];
+        if (!competitors.length) {
+          fetchStarting = false;
+          sendResponse({ ok: false, error: '조회할 상품이 없습니다.' });
+          return;
+        }
+        var token = await ensureServiceToken(4000);
+        if (!token) {
+          fetchStarting = false;
+          sendResponse({ ok: false, error: '확장 프로그램에서 서비스 로그인이 필요합니다.' });
+          return;
+        }
+        setStatus({ running: true, current: 0, total: competitors.length, msg: '시작 중...', results: [] });
+        // runFetchSeparated는 진입 즉시 fetchRunning=true, fetchStarting=false로 전환한다
+        runFetchSeparated(competitors, msg.fetchMode || msg.coupangMode || msg.mode || '', msg.market || '', {
+          dashboardTabId: sender && sender.tab ? sender.tab.id : null,
+          dashboardWindowId: sender && sender.tab ? sender.tab.windowId : null,
+          queueIds: Array.isArray(msg.queueIds) ? msg.queueIds : []
+        });
+        sendResponse({ ok: true });
+      } catch (e) {
+        fetchStarting = false;
+        sendResponse({ ok: false, error: e && e.message ? e.message : String(e) });
       }
-      if (fetchRunning) {
-        sendResponse({ ok: false, error: '이미 조회가 진행 중입니다. 먼저 STOP을 눌러주세요.' });
-        return;
-      }
-      var token = await ensureServiceToken(4000);
-      if (!token) {
-        sendResponse({ ok: false, error: '확장 프로그램에서 서비스 로그인이 필요합니다.' });
-        return;
-      }
-      setStatus({ running: true, current: 0, total: competitors.length, msg: '시작 중...', results: [] });
-      runFetchSeparated(competitors, msg.fetchMode || msg.coupangMode || msg.mode || '', msg.market || '', {
-        dashboardTabId: sender && sender.tab ? sender.tab.id : null,
-        dashboardWindowId: sender && sender.tab ? sender.tab.windowId : null
-      });
-      sendResponse({ ok: true });
     })();
     return true;
   }
@@ -3793,4 +3849,8 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.runtime.onStartup.addListener(() => {
   chrome.alarms.create(AUTO_FETCH_SYNC_ALARM, { periodInMinutes: 60 });
   syncAutoFetchScheduleFromServer();
+  cleanupStaleFetchStatus();
 });
+
+// 워커가 (이벤트로) 깨어날 때마다 stale 상태 점검 — 죽은 조회의 "조회 중" 고착 해소
+cleanupStaleFetchStatus();
