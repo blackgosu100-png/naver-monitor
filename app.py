@@ -172,6 +172,14 @@ def sb_delete(table: str, col: str, val: str, extra_query: str = '') -> None:
     )
     r.raise_for_status()
 
+def sb_delete_where(table: str, filters: str) -> None:
+    # 임의 PostgREST 필터로 범위 삭제 (예: 오래된 기록 정리). filters 예: 'user_id=eq.x&fetch_date=lt.y'
+    r = httpx.delete(
+        f'{_sb_url(table)}?{filters}',
+        headers=_sb_headers('return=minimal'), timeout=SB_TIMEOUT,
+    )
+    r.raise_for_status()
+
 @app.errorhandler(httpx.HTTPStatusError)
 def handle_supabase_error(exc):
     response = exc.response
@@ -691,6 +699,19 @@ def db_save_stock(user_id: str, cid: str, fetch_date: str, result: dict, fetch_k
         'error':         result.get('error'),
         'fetched_at':    result.get('fetched_at', datetime.now().isoformat()),
     }, on_conflict='user_id,competitor_id,fetch_key')
+
+STOCK_HISTORY_RETENTION_DAYS = int(os.environ.get('STOCK_HISTORY_RETENTION_DAYS', '90'))
+
+def prune_old_stock_history(user_id: str, keep_days: int = STOCK_HISTORY_RETENTION_DAYS) -> None:
+    # 보관 기간(기본 90일)이 지난 조회 기록을 정리해 데이터가 무한정 쌓이는 것을 방지.
+    # 대시보드는 최대 30일만 표시하므로 90일 보관은 충분히 여유가 있다.
+    if not user_id:
+        return
+    cutoff = (_today_kst() - timedelta(days=max(31, keep_days))).isoformat()
+    try:
+        sb_delete_where('stock_history', f'user_id=eq.{_sb_quote(user_id)}&fetch_date=lt.{cutoff}')
+    except Exception as exc:
+        print(f'[prune_old_stock_history] user={user_id} failed: {exc}')
 
 def db_get_history(user_id: str, days: int = 14):
     # fetch_date는 KST 기준으로 저장되므로 조회 윈도우도 KST로 계산 (서버 UTC와 어긋남 방지)
@@ -1681,6 +1702,8 @@ def api_stock_data():
             'error':      r.get('error'),
             'fetched_at': r.get('fetched_at', datetime.now().isoformat()),
         }, fetch_key)
+    # 조회 결과 저장 시점에 오래된 기록 정리 (보관 기간 초과분 삭제)
+    prune_old_stock_history(g.user_id)
     return jsonify({'ok': True})
 
 # ─── 시작 ─────────────────────────────────────────────────────
