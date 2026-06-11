@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 import httpx
 from flask import Flask, request, jsonify, session, render_template, redirect, g, send_from_directory
 from apscheduler.schedulers.background import BackgroundScheduler
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, quote
 
 app = Flask(__name__)
 # SECRET_KEY 미설정 시 시작마다 무작위 키 생성 (고정 기본값은 세션 위조 위험)
@@ -97,6 +97,12 @@ def _parse_iso_date(value: str | None) -> date | None:
     except Exception:
         return None
 
+def _safe_int(value, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
 def _sb_headers(prefer: str = 'return=representation') -> dict:
     return {
         'apikey':        SUPABASE_KEY,
@@ -108,13 +114,19 @@ def _sb_headers(prefer: str = 'return=representation') -> dict:
 def _sb_url(table: str) -> str:
     return f'{SUPABASE_URL}/rest/v1/{table}'
 
+SB_TIMEOUT = httpx.Timeout(15.0)
+
+def _sb_quote(val) -> str:
+    # 경로/사용자 입력 값이 PostgREST 필터 구문(&, =, or= 등)으로 해석되지 않게 인코딩
+    return quote(str(val), safe='')
+
 def sb_select(table: str, query: str = '') -> list:
-    r = httpx.get(f'{_sb_url(table)}{query}', headers=_sb_headers())
+    r = httpx.get(f'{_sb_url(table)}{query}', headers=_sb_headers(), timeout=SB_TIMEOUT)
     r.raise_for_status()
     return r.json()
 
 def sb_insert(table: str, data: dict) -> dict:
-    r = httpx.post(_sb_url(table), json=data, headers=_sb_headers())
+    r = httpx.post(_sb_url(table), json=data, headers=_sb_headers(), timeout=SB_TIMEOUT)
     r.raise_for_status()
     body = r.json()
     return body[0] if isinstance(body, list) else body
@@ -123,21 +135,21 @@ def sb_upsert(table: str, data: dict, on_conflict: str) -> None:
     headers = _sb_headers(f'resolution=merge-duplicates,return=minimal')
     r = httpx.post(
         f'{_sb_url(table)}?on_conflict={on_conflict}',
-        json=data, headers=headers,
+        json=data, headers=headers, timeout=SB_TIMEOUT,
     )
     r.raise_for_status()
 
 def sb_update(table: str, data: dict, col: str, val: str, extra_query: str = '') -> None:
     r = httpx.patch(
-        f'{_sb_url(table)}?{col}=eq.{val}{extra_query}',
-        json=data, headers=_sb_headers('return=minimal'),
+        f'{_sb_url(table)}?{col}=eq.{_sb_quote(val)}{extra_query}',
+        json=data, headers=_sb_headers('return=minimal'), timeout=SB_TIMEOUT,
     )
     r.raise_for_status()
 
 def sb_delete(table: str, col: str, val: str, extra_query: str = '') -> None:
     r = httpx.delete(
-        f'{_sb_url(table)}?{col}=eq.{val}{extra_query}',
-        headers=_sb_headers('return=minimal'),
+        f'{_sb_url(table)}?{col}=eq.{_sb_quote(val)}{extra_query}',
+        headers=_sb_headers('return=minimal'), timeout=SB_TIMEOUT,
     )
     r.raise_for_status()
 
@@ -148,8 +160,10 @@ def handle_supabase_error(exc):
         data = response.json()
     except Exception:
         data = {}
-    message = data.get('message') or data.get('error') or response.text or 'Database request failed'
-    return jsonify({'error': message}), 500
+    detail = data.get('message') or data.get('error') or response.text or ''
+    # 내부 스키마 정보(테이블/컬럼명 등)는 서버 로그에만 남기고 클라이언트엔 일반화된 메시지
+    print(f'[supabase-error] status={response.status_code} detail={detail}')
+    return jsonify({'error': '데이터베이스 요청에 실패했습니다. 잠시 후 다시 시도해주세요.'}), 500
 
 # ─── Admin 계정 (Railway 환경변수로 설정) ──────────────────────
 ADMIN_USERNAME     = os.environ.get('ADMIN_USERNAME', 'admin')
@@ -640,7 +654,8 @@ def db_save_stock(user_id: str, cid: str, fetch_date: str, result: dict, fetch_k
     }, on_conflict='user_id,competitor_id,fetch_key')
 
 def db_get_history(user_id: str, days: int = 14):
-    start = (date.today() - timedelta(days=days)).isoformat()
+    # fetch_date는 KST 기준으로 저장되므로 조회 윈도우도 KST로 계산 (서버 UTC와 어긋남 방지)
+    start = (_today_kst() - timedelta(days=days)).isoformat()
     competitors = db_get_competitors(user_id)
     rows = sb_select(
         'stock_history',
@@ -685,8 +700,8 @@ def db_get_schedule(user_id: str) -> dict:
     s = {row['key']: row['value'] for row in rows}
     return {
         'enabled': s.get('schedule_enabled', 'false') == 'true',
-        'hour':    int(s.get('schedule_hour', 9)),
-        'minute':  int(s.get('schedule_minute', 0)),
+        'hour':    _safe_int(s.get('schedule_hour', 9), 9),
+        'minute':  _safe_int(s.get('schedule_minute', 0), 0),
         'markets': normalize_schedule_markets(s.get('schedule_markets')),
     }
 
@@ -1373,7 +1388,7 @@ def api_delete_competitor(cid):
 @app.route('/api/history')
 @login_required
 def api_history():
-    days = min(int(request.args.get('days', 14)), 60)
+    days = max(1, min(_safe_int(request.args.get('days'), 14), 60))
     competitors, rows = db_get_history(g.user_id, days)
 
     dates = sorted({row.get('fetch_key') or row['fetch_date'] for row in rows})
