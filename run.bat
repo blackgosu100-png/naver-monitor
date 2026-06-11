@@ -28,8 +28,15 @@ if errorlevel 1 (
     echo.
 )
 
-set SUPABASE_URL=https://itarmufbqvkmdkxhrkfy.supabase.co
-set SUPABASE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml0YXJtdWZicXZrbWRreGhya2Z5Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODE2NDgwOCwiZXhwIjoyMDkzNzQwODA4fQ.kvvCisVSHV7j1CSJzvwHxWEXfqjZqjK1hJZjobb7BCk
+REM Supabase 키 등 시크릿은 .env.bat에서 불러옵니다 (.env.bat은 git에 커밋되지 않음)
+if not exist ".env.bat" (
+    echo [오류] .env.bat 파일이 없습니다.
+    echo .env.bat.example 파일을 복사해서 .env.bat 을 만들고
+    echo Supabase 대시보드의 키 값을 채워 넣으세요.
+    pause
+    exit /b
+)
+call .env.bat
 
 echo 쿠팡 재고조회 도우미는 자동으로 시작하지 않습니다.
 echo 대시보드의 쿠팡 재고조회 화면에서 도우미 폴더 열기 버튼을 눌러 필요할 때 실행하세요.

@@ -1,4 +1,4 @@
-import json, re, hashlib, threading, time, random, os, uuid, html, calendar
+import json, re, hashlib, threading, time, random, os, uuid, html, calendar, secrets
 from datetime import datetime, date, timedelta
 from functools import wraps
 from zoneinfo import ZoneInfo
@@ -9,14 +9,26 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from urllib.parse import parse_qs, urlparse
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'naver-monitor-dev-secret-2024')
+# SECRET_KEY 미설정 시 시작마다 무작위 키 생성 (고정 기본값은 세션 위조 위험)
+app.secret_key = os.environ.get('SECRET_KEY') or secrets.token_hex(32)
 APP_VERSION = '5.81'
+
+# 웹 페이지(확장 외) Origin은 화이트리스트만 CORS 허용
+ALLOWED_WEB_ORIGINS = set(
+    o.strip() for o in os.environ.get(
+        'ALLOWED_WEB_ORIGINS',
+        'https://naver-monitor-production.up.railway.app,http://localhost:5001,http://127.0.0.1:5001'
+    ).split(',') if o.strip()
+)
+
+def _cors_origin_allowed(origin):
+    return origin.startswith('chrome-extension://') or origin in ALLOWED_WEB_ORIGINS
 
 @app.after_request
 def add_cors(response):
     origin = request.headers.get('Origin', '')
     if origin.startswith('chrome-extension://') or (
-        request.path == '/api/coupang-helper-folder' and origin.startswith(('http://', 'https://'))
+        request.path == '/api/coupang-helper-folder' and origin in ALLOWED_WEB_ORIGINS
     ):
         response.headers['Access-Control-Allow-Origin'] = origin
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, DELETE, OPTIONS'
@@ -30,9 +42,10 @@ def add_cors(response):
 def cors_preflight(p=''):
     origin = request.headers.get('Origin', '')
     resp = app.make_default_options_response()
-    resp.headers['Access-Control-Allow-Origin'] = origin
-    resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, DELETE, OPTIONS'
-    resp.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+    if _cors_origin_allowed(origin):
+        resp.headers['Access-Control-Allow-Origin'] = origin
+        resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, DELETE, OPTIONS'
+        resp.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
     return resp
 
 # ─── Supabase REST 클라이언트 (SDK 없이 httpx 직접 호출) ───────
