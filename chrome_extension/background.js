@@ -3014,6 +3014,7 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
   var eventLogs = [];
   var results = [];
   var stopped = false;
+  var blockSuspected = false;
   var authRequired = false;
   var authMessage = '';
   var route = normalizeSeparatedFetchMode(fetchMode, requestedMarket);
@@ -3174,6 +3175,15 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
             break;
           }
         }
+        // 쿠팡 일시 차단(Akamai Access Denied 등) 패턴 연속 감지 — 계속 두드리면 차단만 길어진다
+        if (route === 'coupang_stock' && requestContext) {
+          var blockErrText = latest && latest.error ? String(latest.error) : '';
+          if (blockErrText && /Access Denied|RET9999|HTTP 403|quantity=1 failed|vendorItemId not found/i.test(blockErrText)) {
+            requestContext.coupangBlockStreak = (requestContext.coupangBlockStreak || 0) + 1;
+          } else if (latest && !latest.error) {
+            requestContext.coupangBlockStreak = 0;
+          }
+        }
         itemLogs.push({
           name: comp.name,
           market: market,
@@ -3201,6 +3211,12 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
       }
 
       if (shouldStop()) { stopped = true; break; }
+      if (route === 'coupang_stock' && requestContext && (requestContext.coupangBlockStreak || 0) >= 3) {
+        // 연속 3개가 차단 패턴으로 실패 — 남은 상품을 계속 두드리면 차단이 길어지므로 중단
+        blockSuspected = true;
+        stopped = true;
+        break;
+      }
       if (i < competitors.length - 1) {
         await new Promise(r => setTimeout(r, route === 'coupang_sales' ? 200 : (market === 'naver' ? 3000 : 900)));
       }
@@ -3233,6 +3249,8 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
     var errItems = results.filter(r => r.error);
     var msg = authRequired
       ? authMessage
+      : blockSuspected
+      ? '⛔ 쿠팡 일시 차단 감지 — 연속 3개 상품이 차단 패턴(Access Denied 등)으로 실패해 조회를 중단했습니다. 30분~1시간 후 다시 시도하세요. 저장된 결과 ' + okCount + '/' + results.length
       : stopped
       ? `STOP\uC73C\uB85C \uC911\uB2E8\uB428. \uC800\uC7A5\uB41C \uACB0\uACFC ${okCount}/${results.length} \uC131\uACF5`
       : `\uC870\uD68C \uC644\uB8CC! ${okCount}/${results.length} \uC131\uACF5`;
