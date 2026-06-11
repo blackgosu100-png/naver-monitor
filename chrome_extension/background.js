@@ -12,6 +12,7 @@ const COUPANG_PB_BRANDS = ['코멧', '곰곰', '탐사', '비타할로', '홈플
 var stopRequested = false;
 var currentFetchTabId = null;
 var fetchRunning = false;
+const COUPANG_LOCAL_HELPER_FAILURE_LIMIT = 2;
 const COUPANG_STOCK_BLOCK_RULE_BASE = 720000;
 const AUTO_FETCH_ALARM = 'naverMonitorAutoFetch';
 const AUTO_FETCH_SYNC_ALARM = 'naverMonitorAutoFetchSync';
@@ -3342,9 +3343,19 @@ async function collectCoupangStockMetricOnly(comp, parsed, index, total, results
         + (stock.elapsedMs ? ' (' + (stock.elapsedMs / 1000).toFixed(1) + '\uCD08)' : ''),
       results
     }, { source: 'local-batch', stock: stock && stock.stock, apiCalls: stock && stock.apiCalls });
-    if (!stock.ok) stock = null;
+    if (stock.ok) {
+      if (requestContext) requestContext.coupangLocalHelperFailures = 0;
+    } else {
+      if (requestContext) {
+        requestContext.coupangLocalHelperFailures = (requestContext.coupangLocalHelperFailures || 0) + 1;
+        if (requestContext.coupangLocalHelperFailures >= COUPANG_LOCAL_HELPER_FAILURE_LIMIT) {
+          requestContext.coupangLocalHelperDisabled = true;
+        }
+      }
+      stock = null;
+    }
   }
-  if (!stock) {
+  if (!stock && !(requestContext && requestContext.coupangLocalHelperDisabled)) {
     await reportFetchStatus(requestContext, {
       running: true,
       current: index + 1,
@@ -3354,6 +3365,23 @@ async function collectCoupangStockMetricOnly(comp, parsed, index, total, results
       results
     }, { source: 'local-helper' });
     stock = await estimateCoupangStockViaLocalHelper(comp, parsed);
+    if (stock && stock.ok) {
+      if (requestContext) requestContext.coupangLocalHelperFailures = 0;
+    } else if (requestContext) {
+      requestContext.coupangLocalHelperFailures = (requestContext.coupangLocalHelperFailures || 0) + 1;
+      if (requestContext.coupangLocalHelperFailures >= COUPANG_LOCAL_HELPER_FAILURE_LIMIT) {
+        requestContext.coupangLocalHelperDisabled = true;
+      }
+    }
+  } else if (!stock && requestContext && requestContext.coupangLocalHelperDisabled) {
+    await reportFetchStatus(requestContext, {
+      running: true,
+      current: index + 1,
+      total: total,
+      name: comp.name,
+      msg: '\uCFE0\uD321 \uB85C\uCEEC \uD5EC\uD37C \uC5F0\uC18D \uC2E4\uD328\uB85C \uAC74\uB108\uB6F0\uACE0 \uBE0C\uB77C\uC6B0\uC800 \uACBD\uB85C\uB85C \uC804\uD658',
+      results
+    }, { source: 'local-helper-skip', error: 'local helper disabled after repeated failures' });
   }
   if (!stock || !stock.ok) {
     await reportFetchStatus(requestContext, {
