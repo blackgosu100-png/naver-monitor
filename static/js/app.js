@@ -857,10 +857,19 @@ function renderTable(data) {
         const total = displayValueForDay(comp, day);
         const metricDelta = metricDeltaForSortedDates(comp, sortedDates, dateIndex);
         const sales = metricDelta !== null ? metricDelta : day.sales;
-        const totalStr = total !== null ? total.toLocaleString() : '—';
         let deltaHtml = '';
         const isCoupangRow = competitorMarket(comp) === 'coupang';
         const isCoupangStock = isCoupangRow && isCoupangStockMarket();
+        let totalStr = total !== null ? total.toLocaleString() : '—';
+        let cellTitle = '';
+        if (total === null && isCoupangStock) {
+          // 조회는 성공했지만 추정 한계(5000+/경계 미발견)인 경우 빈칸 대신 라벨 표시
+          const limitText = coupangMetricError(day, 'stock');
+          if (limitText) {
+            totalStr = '5000+';
+            cellTitle = '재고 추정 한계 — 실제 재고가 5000개 이상이거나, 로켓배송 등으로 수량 경계가 노출되지 않는 상품입니다';
+          }
+        }
         if (isCoupangStock) {
           if (sales !== null && sales > 0) {
             deltaHtml = `<div class="d-delta" style="color:#2563EB">[+${sales.toLocaleString()}]</div>`;
@@ -876,7 +885,7 @@ function renderTable(data) {
         } else if (sales !== null && sales < 0) {
           deltaHtml = `<div class="d-delta" style="color:#2563EB">[+${Math.abs(sales).toLocaleString()}]</div>`;
         }
-        html += `<div class="date-cell"><div class="d-num">${totalStr}</div>${deltaHtml}</div>`;
+        html += `<div class="date-cell"><div class="d-num${cellTitle ? ' mute' : ''}"${cellTitle ? ` title="${escHtml(cellTitle)}"` : ''}>${totalStr}</div>${deltaHtml}</div>`;
       }
     });
 
