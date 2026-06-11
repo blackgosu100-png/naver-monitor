@@ -11,18 +11,17 @@
   },
   "permissions": ["tabs", "scripting", "storage", "declarativeNetRequest", "alarms", "notifications"],
   "host_permissions": [
-    "*://*.naver.com/*",
+    "*://smartstore.naver.com/*",
+    "*://m.smartstore.naver.com/*",
+    "*://brand.naver.com/*",
+    "*://m.brand.naver.com/*",
     "*://*.coupang.com/*",
     "*://*.ohou.se/*",
-    "*://*.ohouse.com/*",
-    "http://127.0.0.1:5000/*",
     "http://127.0.0.1:5001/*",
-    "http://localhost:5000/*",
     "http://localhost:5001/*",
     "http://127.0.0.1:8765/*",
     "http://localhost:8765/*",
-    "https://*.up.railway.app/*",
-    "https://*.railway.app/*"
+    "https://naver-monitor-production.up.railway.app/*"
   ],
   "content_scripts": [
     {
@@ -34,10 +33,7 @@
     {
       "matches": [
         "https://naver-monitor-production.up.railway.app/*",
-        "https://*.up.railway.app/*",
-        "http://127.0.0.1:5000/*",
         "http://127.0.0.1:5001/*",
-        "http://localhost:5000/*",
         "http://localhost:5001/*"
       ],
       "js": ["app_bridge.js"],
