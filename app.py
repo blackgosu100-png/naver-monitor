@@ -125,6 +125,25 @@ def sb_select(table: str, query: str = '') -> list:
     r.raise_for_status()
     return r.json()
 
+# Supabase REST는 응답을 최대 1000행으로 제한한다. 그 이상이면 오름차순 정렬 시
+# 최신 데이터가 잘려나가므로(예: 오늘 오후 조회 누락) offset 페이지네이션으로 전부 가져온다.
+def sb_select_all(table: str, query: str = '', page_size: int = 1000) -> list:
+    rows: list = []
+    offset = 0
+    while True:
+        sep = '&' if '?' in query else '?'
+        paged = f'{query}{sep}limit={page_size}&offset={offset}'
+        r = httpx.get(f'{_sb_url(table)}{paged}', headers=_sb_headers(), timeout=SB_TIMEOUT)
+        r.raise_for_status()
+        batch = r.json()
+        if not isinstance(batch, list):
+            return batch
+        rows.extend(batch)
+        if len(batch) < page_size:
+            break
+        offset += page_size
+    return rows
+
 def sb_insert(table: str, data: dict) -> dict:
     r = httpx.post(_sb_url(table), json=data, headers=_sb_headers(), timeout=SB_TIMEOUT)
     r.raise_for_status()
@@ -677,7 +696,9 @@ def db_get_history(user_id: str, days: int = 14):
     # fetch_date는 KST 기준으로 저장되므로 조회 윈도우도 KST로 계산 (서버 UTC와 어긋남 방지)
     start = (_today_kst() - timedelta(days=days)).isoformat()
     competitors = db_get_competitors(user_id)
-    rows = sb_select(
+    # 데이터가 많은 계정은 1000행을 넘으므로 페이지네이션으로 전부 가져온다
+    # (오름차순 + 1000행 제한 조합에서 최신 데이터가 잘리던 버그 방지)
+    rows = sb_select_all(
         'stock_history',
         f'?select=competitor_id,fetch_date,fetch_key,total,options,error,fetched_at'
         f'&user_id=eq.{user_id}&fetch_date=gte.{start}&order=fetch_date',
@@ -687,17 +708,20 @@ def db_get_history(user_id: str, days: int = 14):
 def latest_stock_by_competitor(user_id: str, days: int = 30) -> dict:
     # 폴링 API에서 호출되므로 무거운 options(json) 컬럼 없이 필요한 컬럼만 조회
     start = (_today_kst() - timedelta(days=days)).isoformat()
+    # 최신순(desc)으로 받아 competitor별 첫(=가장 최근) 유효값만 취한다.
+    # 이렇게 하면 1000행 제한에 걸려도 최신 데이터가 첫 페이지에 보장된다.
     rows = sb_select(
         'stock_history',
         f'?select=competitor_id,total,error,fetched_at'
-        f'&user_id=eq.{user_id}&fetch_date=gte.{start}&order=fetched_at',
+        f'&user_id=eq.{user_id}&fetch_date=gte.{start}&order=fetched_at.desc',
     )
     latest: dict = {}
     for row in rows:
-        if row.get('error') or row.get('total') is None:
+        cid = row.get('competitor_id')
+        if cid in latest or row.get('error') or row.get('total') is None:
             continue
         try:
-            latest[row['competitor_id']] = int(row.get('total'))
+            latest[cid] = int(row.get('total'))
         except (TypeError, ValueError):
             continue
     return latest
