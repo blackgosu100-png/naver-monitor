@@ -101,6 +101,62 @@ async function postFetchLog(log) {
   } catch(e) {}
 }
 
+var PENDING_STOCK_SAVES_KEY = 'pendingStockSaves';
+
+async function postStockResults(results, fetchMode) {
+  var res = await apiFetch('/api/stock-data', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ results: results, fetchMode: fetchMode || '' })
+  });
+  if (!res.ok) throw new Error('서버 응답 ' + res.status);
+}
+
+// 수집 결과 저장 실패 시 버리지 않고 재시도 → 최종 실패하면 로컬에 보관
+async function saveStockResultsWithRetry(results, fetchMode) {
+  var delays = [0, 2000, 5000];
+  var lastError = '';
+  for (var i = 0; i < delays.length; i++) {
+    if (delays[i]) await new Promise(function(r) { setTimeout(r, delays[i]); });
+    try {
+      await postStockResults(results, fetchMode);
+      return '';
+    } catch (e) {
+      lastError = e && e.message ? e.message : String(e);
+    }
+  }
+  try {
+    var data = await chrome.storage.local.get(PENDING_STOCK_SAVES_KEY);
+    var pending = Array.isArray(data[PENDING_STOCK_SAVES_KEY]) ? data[PENDING_STOCK_SAVES_KEY] : [];
+    pending.push({ savedAt: Date.now(), fetchMode: fetchMode || '', results: results });
+    if (pending.length > 10) pending = pending.slice(-10);
+    var update = {};
+    update[PENDING_STOCK_SAVES_KEY] = pending;
+    await chrome.storage.local.set(update);
+  } catch (e) {}
+  return lastError || '알 수 없는 오류';
+}
+
+// 이전에 저장 실패해 보관해 둔 결과를 재전송
+async function flushPendingStockSaves() {
+  try {
+    var data = await chrome.storage.local.get(PENDING_STOCK_SAVES_KEY);
+    var pending = Array.isArray(data[PENDING_STOCK_SAVES_KEY]) ? data[PENDING_STOCK_SAVES_KEY] : [];
+    if (!pending.length) return;
+    var remaining = [];
+    for (var i = 0; i < pending.length; i++) {
+      try {
+        await postStockResults(pending[i].results, pending[i].fetchMode);
+      } catch (e) {
+        remaining.push(pending[i]);
+      }
+    }
+    var update = {};
+    update[PENDING_STOCK_SAVES_KEY] = remaining;
+    await chrome.storage.local.set(update);
+  } catch (e) {}
+}
+
 function parseNaverUrl(url) {
   var m = url.match(/(?:smartstore|brand)\.naver\.com\/([^/?#]+)\/products\/(\d+)/);
   return m ? { slug: m[1], pid: m[2] } : null;
@@ -3707,14 +3763,26 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
     }
 
     var saveResults = results.filter(function(r) { return !r.skipSave; });
+    var saveError = '';
     if (saveResults.length) {
+      await flushPendingStockSaves();
+      saveError = await saveStockResultsWithRetry(saveResults, route);
+    }
+
+    // \uD050 \uAE30\uBC18 \uC870\uD68C\uB294 \uC2E4\uC81C \uCC98\uB9AC\uB41C \uD56D\uBAA9\uB9CC \uC11C\uBC84 \uB300\uAE30 \uD050\uC5D0\uC11C \uC81C\uAC70 (\uC870\uD68C \uC2E4\uD328/\uC911\uB2E8 \uC2DC \uD050 \uC720\uC2E4 \uBC29\uC9C0)
+    if (requestContext && Array.isArray(requestContext.queueIds) && requestContext.queueIds.length) {
       try {
-        await apiFetch('/api/stock-data', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ results: saveResults, fetchMode: route })
-        });
-      } catch(e) {}
+        var processedIds = {};
+        results.forEach(function(r) { if (r && r.id) processedIds[r.id] = true; });
+        var doneIds = requestContext.queueIds.filter(function(id) { return processedIds[id]; });
+        if (doneIds.length) {
+          await apiFetch('/api/public/queue', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids: doneIds })
+          });
+        }
+      } catch (e) {}
     }
 
     var okCount = results.filter(r => !r.error).length;
@@ -3725,8 +3793,9 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
       ? `STOP\uC73C\uB85C \uC911\uB2E8\uB428. \uC800\uC7A5\uB41C \uACB0\uACFC ${okCount}/${results.length} \uC131\uACF5`
       : `\uC870\uD68C \uC644\uB8CC! ${okCount}/${results.length} \uC131\uACF5`;
     if (errItems.length) msg += '\n\uC2E4\uD328: ' + errItems.map(r => r.name + '(' + r.error + ')').join(', ');
+    if (saveError) msg += '\n\u26A0\uFE0F \uC11C\uBC84 \uC800\uC7A5 \uC2E4\uD328(' + saveError + ') \u2014 \uACB0\uACFC\uB294 \uBCF4\uAD00\uB418\uC5B4 \uB2E4\uC74C \uC870\uD68C \uB54C \uC790\uB3D9 \uC7AC\uC804\uC1A1\uB429\uB2C8\uB2E4.';
 
-    await reportFetchStatus(requestContext, { running: false, done: !stopped, stopped, msg, results }, { level: stopped || errItems.length ? 'error' : 'ok', source: 'summary' });
+    await reportFetchStatus(requestContext, { running: false, done: !stopped, stopped, msg, results }, { level: stopped || errItems.length || saveError ? 'error' : 'ok', source: 'summary' });
     await postFetchLog({
       runId: runId,
       mode: route || 'default',

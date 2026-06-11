@@ -224,7 +224,12 @@ async function checkAndProcessQueue() {
       showMsg('queue-msg', '쿠팡 판매가는 현재 크롬의 쿠팡 로그인/와우/쿠폰 세션 기준으로 조회됩니다.', 'info');
     }
     await new Promise(function(resolve, reject) {
-      chrome.runtime.sendMessage({ type: 'START_FETCH', competitors: queue, fetchMode: fetchMode }, function(response) {
+      chrome.runtime.sendMessage({
+        type: 'START_FETCH',
+        competitors: queue,
+        fetchMode: fetchMode,
+        queueIds: queue.map(function(c) { return c.id; })
+      }, function(response) {
         var error = chrome.runtime.lastError ? chrome.runtime.lastError.message : '';
         if (error || !(response && response.ok)) {
           reject(new Error(error || (response && response.error) || '대기 조회 시작 실패'));
@@ -234,12 +239,7 @@ async function checkAndProcessQueue() {
       });
     });
 
-    await apiFetch('/api/public/queue', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids: queue.map(function(c) { return c.id; }) })
-    });
-
+    // 대기 큐 삭제는 background가 조회 완료 후 처리한다 (조회 실패 시 큐 유실 방지)
     qFill.style.width = '100%';
     showMsg('queue-msg', '백그라운드에서 대기 조회를 시작했습니다. 완료되면 대시보드가 새로고침됩니다.', 'ok');
     return;
