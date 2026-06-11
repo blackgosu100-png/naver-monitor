@@ -6,6 +6,7 @@ const MIN_COUPANG_HELPER_VERSION = '1.5.0';
 const COUPANG_MONTHLY_TTL = 12 * 60 * 60 * 1000;
 const COUPANG_VIEWS_TTL = 24 * 60 * 60 * 1000;
 const COUPANG_STOCK_TTL = 3 * 60 * 60 * 1000;
+const COUPANG_HELPER_SKIP_TTL = 24 * 60 * 60 * 1000;
 const COUPANG_PB_TTL = 30 * 24 * 60 * 60 * 1000;
 const COUPANG_VIEW_FAILURE_TTL = 7 * 24 * 60 * 60 * 1000;
 const COUPANG_PB_BRANDS = ['코멧', '곰곰', '탐사', '비타할로', '홈플래닛', '캐럿', '베이스알파', '줌베이직', '줌 베이직'];
@@ -318,6 +319,23 @@ async function setCachedCoupangMetric(kind, key, data) {
     }
   };
   await saveCoupangCache(cache);
+}
+
+// 헬퍼로 조회 불가가 확인된 상품(일반배송/품절 등)은 24시간 동안 헬퍼를 건너뛴다
+// — 매 조회마다 10초씩 헬퍼 실패를 기다리는 낭비 방지
+async function markCoupangHelperSkip(key, reason) {
+  if (!key) return;
+  var cache = await getCoupangCache();
+  cache.helperSkip = cache.helperSkip || {};
+  cache.helperSkip[key] = { ts: Date.now(), reason: reason || '' };
+  await saveCoupangCache(cache);
+}
+
+async function getCoupangHelperSkip(key) {
+  if (!key) return null;
+  var cache = await getCoupangCache();
+  var entry = cache.helperSkip && cache.helperSkip[key];
+  return isFreshCache(entry, COUPANG_HELPER_SKIP_TTL) ? entry : null;
 }
 
 async function markCoupangPb(key, reason) {
@@ -2845,7 +2863,19 @@ async function collectCoupangStockMetricOnly(comp, parsed, index, total, results
   }
 
   var stock = null;
-  if (!stock && !(requestContext && requestContext.coupangLocalHelperDisabled)) {
+  var helperSkipKey = coupangStockCacheKey(parsed);
+  var helperSkipEntry = null;
+  try { helperSkipEntry = await getCoupangHelperSkip(helperSkipKey); } catch(e) {}
+  if (!stock && helperSkipEntry) {
+    await reportFetchStatus(requestContext, {
+      running: true,
+      current: index + 1,
+      total: total,
+      name: comp.name,
+      msg: '헬퍼 미지원 상품으로 기록됨 - 바로 브라우저 조회',
+      results
+    }, { source: 'local-helper-skip-product', error: helperSkipEntry.reason || '' });
+  } else if (!stock && !(requestContext && requestContext.coupangLocalHelperDisabled)) {
     await reportFetchStatus(requestContext, {
       running: true,
       current: index + 1,
@@ -2857,11 +2887,14 @@ async function collectCoupangStockMetricOnly(comp, parsed, index, total, results
     stock = await estimateCoupangStockViaLocalHelper(comp, parsed);
     if (stock && stock.ok) {
       if (requestContext) requestContext.coupangLocalHelperFailures = 0;
-    } else if (requestContext) {
+    } else {
       // 상품 자체 문제(품절 등으로 인한 RET9999/quantity 오류)는 헬퍼 장애가 아니므로
       // 연속 실패 카운트에서 제외 — 품절 상품 몇 개 때문에 헬퍼 전체가 꺼지는 것 방지
       var helperErr = String((stock && stock.error) || '');
-      if (!/RET9999|quantity|시스템 오류/i.test(helperErr)) {
+      if (/RET9999|quantity|시스템 오류/i.test(helperErr)) {
+        // 이 상품은 헬퍼로 조회 불가가 확인됨 — 24시간 동안 헬퍼를 건너뛰어 매번 10초 낭비 방지
+        try { await markCoupangHelperSkip(helperSkipKey, helperErr.slice(0, 200)); } catch(e) {}
+      } else if (requestContext) {
         requestContext.coupangLocalHelperFailures = (requestContext.coupangLocalHelperFailures || 0) + 1;
         if (requestContext.coupangLocalHelperFailures >= COUPANG_LOCAL_HELPER_FAILURE_LIMIT) {
           requestContext.coupangLocalHelperDisabled = true;
