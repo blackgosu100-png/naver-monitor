@@ -4,3 +4,10 @@ __pycache__/
 .coupang-stock-helper-profile/
 data.json
 dist/
+naver-monitor-extension-v*.zip
+naver-monitor-extension-v*/
+.bkit/
+AGENTS.local-before-pull.md
+.env
+.env.bat
+run.local.bat
