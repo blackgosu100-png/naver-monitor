@@ -2122,6 +2122,26 @@ async function probeCoupangDeliveryByNavigation(tabId, identity, quantity) {
   );
 }
 
+// 수량 1 조회조차 RET9999로 거부된 경우 — 상품 페이지로 돌아가 품절 여부를 확인
+async function checkCoupangPageSoldOut(tabId, productUrl) {
+  try {
+    await navigateTabAndWait(tabId, productUrl, 20000);
+    await delay(800);
+    var res = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: function() {
+        var text = document.body ? (document.body.innerText || '') : '';
+        var head = text.slice(0, 30000);
+        return { soldOut: /(품절|일시\s*품절|판매\s*중지|판매가\s*중지|재입고\s*알림)/.test(head) };
+      }
+    });
+    return !!(res && res[0] && res[0].result && res[0].result.soldOut);
+  } catch (e) {
+    return false;
+  }
+}
+
 async function waitForCoupangStock(tabId, comp, parsed) {
   try {
     await ensureProductTabReady(tabId, (comp && comp.url) || '', parsed);
@@ -2142,7 +2162,32 @@ async function waitForCoupangStock(tabId, comp, parsed) {
       return { ok: false, error: (identity && identity.error) || 'productId or vendorItemId not found' };
     }
 
-    var baseline = await probeCoupangDeliveryByNavigation(tabId, identity, 1);
+    var baseline;
+    try {
+      baseline = await probeCoupangDeliveryByNavigation(tabId, identity, 1);
+    } catch (baseErr) {
+      var baseMsg = baseErr && baseErr.message ? baseErr.message : String(baseErr);
+      if (/RET9999|시스템 오류|system error/i.test(baseMsg)) {
+        // 품절/판매중지 상품은 수량 1 조회도 RET9999로 거부됨 — 페이지에서 확인 후 재고 0으로 기록
+        var soldOut = await checkCoupangPageSoldOut(tabId, (comp && comp.url) || '');
+        if (soldOut) {
+          return {
+            ok: true,
+            stock: 0,
+            soldOut: true,
+            options: [{ name: '품절', qty: 0 }],
+            image_url: identity.image_url || '',
+            productId: identity.productId,
+            itemId: identity.itemId,
+            vendorItemId: identity.vendorItemId,
+            salePrice: identity.salePrice,
+            ratingCount: identity.ratingCount
+          };
+        }
+        return { ok: false, error: '쿠팡 수량 API 거부(RET9999) — 페이지에 품절 표시는 없음. 일시 차단 가능성, 잠시 후 재시도 필요' };
+      }
+      throw baseErr;
+    }
     var low = 1;
     var high = null;
     var probes = [100, 1000, 5000];
@@ -2808,9 +2853,14 @@ async function collectCoupangStockMetricOnly(comp, parsed, index, total, results
     if (stock && stock.ok) {
       if (requestContext) requestContext.coupangLocalHelperFailures = 0;
     } else if (requestContext) {
-      requestContext.coupangLocalHelperFailures = (requestContext.coupangLocalHelperFailures || 0) + 1;
-      if (requestContext.coupangLocalHelperFailures >= COUPANG_LOCAL_HELPER_FAILURE_LIMIT) {
-        requestContext.coupangLocalHelperDisabled = true;
+      // 상품 자체 문제(품절 등으로 인한 RET9999/quantity 오류)는 헬퍼 장애가 아니므로
+      // 연속 실패 카운트에서 제외 — 품절 상품 몇 개 때문에 헬퍼 전체가 꺼지는 것 방지
+      var helperErr = String((stock && stock.error) || '');
+      if (!/RET9999|quantity|시스템 오류/i.test(helperErr)) {
+        requestContext.coupangLocalHelperFailures = (requestContext.coupangLocalHelperFailures || 0) + 1;
+        if (requestContext.coupangLocalHelperFailures >= COUPANG_LOCAL_HELPER_FAILURE_LIMIT) {
+          requestContext.coupangLocalHelperDisabled = true;
+        }
       }
     }
   } else if (!stock && requestContext && requestContext.coupangLocalHelperDisabled) {
@@ -2866,7 +2916,7 @@ async function collectCoupangStockMetricOnly(comp, parsed, index, total, results
   var value = stock.stock != null ? Number(stock.stock) : null;
   var options = [];
   if (value !== null && Number.isFinite(value)) {
-    options.push({ name: '\uC7AC\uACE0 \uCD94\uC815', qty: value });
+    options.push({ name: stock.soldOut ? '\uD488\uC808' : '\uC7AC\uACE0 \uCD94\uC815', qty: value });
     addCoupangProductMetricOptions(options, stock);
     await setCachedCoupangMetric('stock', coupangStockCacheKey(parsed), {
       ok: true,
