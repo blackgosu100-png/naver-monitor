@@ -935,6 +935,8 @@ async function openTab(url, active, options) {
       done = true;
       chrome.tabs.onUpdated.removeListener(onUpdated);
       chrome.tabs.onRemoved.removeListener(onRemoved);
+      // 타임아웃으로 실패해도 이미 만들어진 탭은 닫는다 (탭 누수 방지)
+      if (tid !== null) chrome.tabs.remove(tid, () => { void chrome.runtime.lastError; });
       reject(new Error('탭 로딩 타임아웃'));
     }, 30000);
 
@@ -1077,11 +1079,13 @@ async function waitForTabScriptReady(tabId, timeoutMs) {
   throw new Error('Coupang page script readiness timeout: ' + lastError);
 }
 
-async function waitForCache(tabId, pid, onStatus) {
+async function waitForCache(tabId, pid, onStatus, opts) {
+  opts = opts || {};
   var elapsed = 0;
   var verifying = false;
   var maxWait = 120000;
   var authWaitStartedAt = 0;
+  var nonProductSinceMs = 0;
 
   while (elapsed < maxWait) {
     if (shouldStop()) return { ok: false, stopped: true, error: '사용자 중지' };
@@ -1091,6 +1095,7 @@ async function waitForCache(tabId, pid, onStatus) {
     }
     var currentUrl = tab.url || '';
 
+    var state = null;
     try {
       var pageState = await chrome.scripting.executeScript({
         target: { tabId },
@@ -1102,21 +1107,38 @@ async function waitForCache(tabId, pid, onStatus) {
             serviceUnavailable:
               text.indexOf('현재 서비스 접속이 불가합니다') >= 0 ||
               text.indexOf('동시에 접속하는 이용자 수가 많거나') >= 0 ||
-              text.indexOf('잠시 후 다시 접속해') >= 0
+              text.indexOf('잠시 후 다시 접속해') >= 0,
+            authLike:
+              text.indexOf('전화번호') >= 0 ||
+              text.indexOf('본인확인') >= 0 ||
+              text.indexOf('인증') >= 0
           };
         }
       });
-      var state = pageState && pageState[0] && pageState[0].result;
+      state = pageState && pageState[0] && pageState[0].result;
       if (state && state.serviceUnavailable) {
         return { ok: false, retryDesktop: true, skipSave: true, error: '네이버 모바일 접속 불가' };
       }
     } catch(e) {}
 
     if (!currentUrl.includes('/products/')) {
+      // 실제 인증 페이지인지 판별 — 상품 삭제로 404/메인 리다이렉트된 경우까지
+      // 인증 대기로 오인해 최대 10분 멈추던 문제 방지
+      var authLike = /nid\.naver\.com|captcha|login|auth|verify/i.test(currentUrl) || !!(state && state.authLike);
+      if (!authLike && !verifying) {
+        if (!nonProductSinceMs) nonProductSinceMs = Date.now();
+        if (Date.now() - nonProductSinceMs > 15000) {
+          return { ok: false, error: '상품 페이지가 아닙니다 (삭제되었거나 다른 페이지로 이동됨)' };
+        }
+        await new Promise(r => setTimeout(r, 1000));
+        continue;
+      }
+      nonProductSinceMs = 0;
       if (!verifying) {
         verifying = true;
         authWaitStartedAt = Date.now();
-        chrome.tabs.update(tabId, { active: true });
+        // 자동조회(무인) 중에는 사용자 포커스를 빼앗지 않는다
+        if (!opts.scheduled) chrome.tabs.update(tabId, { active: true });
         if (onStatus) onStatus('⚠️ 인증 필요 — 전화번호 입력 후 자동 재개');
         await notifyUser('네이버 모니터링 인증 필요', '열린 네이버 탭에서 전화번호 인증을 완료하면 조회가 이어집니다.');
       } else if (authWaitStartedAt && Date.now() - authWaitStartedAt > AUTO_FETCH_AUTH_WAIT_MS) {
@@ -1125,6 +1147,7 @@ async function waitForCache(tabId, pid, onStatus) {
       await new Promise(r => setTimeout(r, 1000));
       continue;
     }
+    nonProductSinceMs = 0;
 
     if (verifying) {
       verifying = false;
@@ -1160,7 +1183,7 @@ async function waitForCoupangMonthly(tabId, pid) {
   var elapsed = 0;
   var maxWait = 45000;
   while (elapsed < maxWait) {
-    if (shouldStop()) return { ok: false, stopped: true, error: '?ъ슜??以묒?' };
+    if (shouldStop()) return { ok: false, stopped: true, error: '사용자 중지' };
     try {
       var res = await chrome.scripting.executeScript({
         target: { tabId },
@@ -3066,7 +3089,7 @@ async function waitForOhouseStock(tabId, pid) {
   var elapsed = 0;
   var maxWait = 45000;
   while (elapsed < maxWait) {
-    if (shouldStop()) return { ok: false, stopped: true, error: '?ъ슜??以묒?' };
+    if (shouldStop()) return { ok: false, stopped: true, error: '사용자 중지' };
     try {
       var res = await chrome.scripting.executeScript({
         target: { tabId },
@@ -3685,7 +3708,7 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
           currentFetchTabId = tabId;
           cr = await waitForCache(tabId, parsed.pid, async (msg) => {
             await reportFetchStatus(requestContext, { running: true, current: i + 1, total: competitors.length, name: comp.name, msg, results }, { source: 'browser-tab' });
-          });
+          }, { scheduled: !!(requestContext && requestContext.scheduled) });
           if (cr && cr.retryDesktop) {
             try { await chrome.tabs.remove(tabId); } catch(e) {}
             if (currentFetchTabId === tabId) currentFetchTabId = null;
@@ -3693,7 +3716,7 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
             currentFetchTabId = tabId;
             cr = await waitForCache(tabId, parsed.pid, async (msg) => {
               await reportFetchStatus(requestContext, { running: true, current: i + 1, total: competitors.length, name: comp.name, msg: 'PC URL 재시도 - ' + msg, results }, { source: 'browser-tab' });
-            });
+            }, { scheduled: !!(requestContext && requestContext.scheduled) });
           }
         }
 
