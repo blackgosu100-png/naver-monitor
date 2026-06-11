@@ -2027,7 +2027,12 @@ async function estimateCoupangStockViaLocalHelper(comp, parsed) {
         signal: controller ? controller.signal : undefined
       });
       if (!res.ok) {
-        lastError = 'local helper HTTP ' + res.status;
+        // 헬퍼는 실패 시 500 + JSON으로 실제 원인(RET9999 등)을 보내준다 — 버리지 말고 보존
+        var errBody = null;
+        try { errBody = await res.json(); } catch (jsonErr) {}
+        lastError = errBody && errBody.error
+          ? 'local helper: ' + String(errBody.error)
+          : 'local helper HTTP ' + res.status;
         continue;
       }
       var data = await res.json();
@@ -2873,7 +2878,10 @@ async function collectCoupangStockMetricOnly(comp, parsed, index, total, results
       results
     }, { source: 'local-helper-skip', error: 'local helper disabled after repeated failures' });
   }
-  if (!stock || !stock.ok) {
+  // \uD5EC\uD37C \uC2E4\uD328\uAC00 \uC0C1\uD488 \uC6D0\uC778(\uD488\uC808 RET9999 \uB4F1)\uC774\uBA74 \uBE60\uB978\uACBD\uB85C\uB3C4 \uAC19\uC740 \uC774\uC720\uB85C \uC2E4\uD328\uD558\uBBC0\uB85C
+  // \uAC74\uB108\uB6F0\uACE0 \uBC14\uB85C \uBE0C\uB77C\uC6B0\uC800 \uACBD\uB85C(\uD488\uC808 \uD310\uBCC4 \uAC00\uB2A5)\uB85C \uBCF4\uB0B8\uB2E4
+  var helperProductLevelFail = !!(stock && !stock.ok && /RET9999|quantity|\uC2DC\uC2A4\uD15C \uC624\uB958/i.test(String(stock.error || '')));
+  if ((!stock || !stock.ok) && !helperProductLevelFail) {
     await reportFetchStatus(requestContext, {
       running: true,
       current: index + 1,
