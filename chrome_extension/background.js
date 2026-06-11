@@ -2213,19 +2213,56 @@ async function waitForCoupangStock(tabId, comp, parsed) {
     }
     var low = 1;
     var high = null;
-    var probes = [100, 1000, 5000];
 
-    for (var i = 0; i < probes.length; i++) {
-      if (shouldStop()) return { ok: false, stopped: true, error: 'stopped by user' };
-      var q = probes[i];
-      var state = await probeCoupangDeliveryByNavigation(tabId, identity, q);
-      if (sameCoupangDeliveryState(baseline, state)) {
-        low = q;
+    // 어제 재고값(expectedStock)이 있으면 그 주변만 좁게 탐색해 페이지 네비게이션(=쿠팡 호출) 횟수를 줄인다.
+    // 재고가 하루 새 크게 안 변하므로 대부분 2~3회 안에 경계가 잡혀 차단 위험이 낮아진다.
+    var expected = Number(comp && comp.expectedStock);
+    if (Number.isFinite(expected) && expected > 1) {
+      expected = Math.min(5000, Math.max(2, Math.floor(expected)));
+      // expected 가 재고 이하(=baseline 동일)면 low를 끌어올리고, 위쪽 경계만 찾는다
+      var expState = await probeCoupangDeliveryByNavigation(tabId, identity, expected);
+      if (sameCoupangDeliveryState(baseline, expState)) {
+        low = expected;
+        await new Promise(r => setTimeout(r, 500));
+        // expected 위쪽으로 점증 탐색하며 high 경계 확보
+        var upSteps = [expected + 20, expected + 80, expected + 300, 5000].filter(function(s){ return s > low && s <= 5000; });
+        for (var ui = 0; ui < upSteps.length; ui++) {
+          if (shouldStop()) return { ok: false, stopped: true, error: 'stopped by user' };
+          var upState = await probeCoupangDeliveryByNavigation(tabId, identity, upSteps[ui]);
+          if (sameCoupangDeliveryState(baseline, upState)) { low = upSteps[ui]; }
+          else { high = upSteps[ui]; break; }
+          await new Promise(r => setTimeout(r, 500));
+        }
       } else {
-        high = q;
-        break;
+        // 재고가 줄어 expected 가 이미 재고 초과 → expected 아래쪽으로 내려가며 low 경계 확보
+        high = expected;
+        await new Promise(r => setTimeout(r, 500));
+        var downSteps = [expected - 20, expected - 80, expected - 300, 1].filter(function(s){ return s >= 1 && s < high; });
+        for (var di = 0; di < downSteps.length; di++) {
+          if (shouldStop()) return { ok: false, stopped: true, error: 'stopped by user' };
+          var downState = await probeCoupangDeliveryByNavigation(tabId, identity, downSteps[di]);
+          if (sameCoupangDeliveryState(baseline, downState)) { low = downSteps[di]; break; }
+          else { high = downSteps[di]; }
+          await new Promise(r => setTimeout(r, 500));
+        }
       }
-      await new Promise(r => setTimeout(r, 500));
+    }
+
+    // 캐시 힌트가 없거나 경계를 못 잡았으면 기존 광역 탐색으로 폴백
+    if (high == null && low === 1) {
+      var probes = [100, 1000, 5000];
+      for (var i = 0; i < probes.length; i++) {
+        if (shouldStop()) return { ok: false, stopped: true, error: 'stopped by user' };
+        var q = probes[i];
+        var state = await probeCoupangDeliveryByNavigation(tabId, identity, q);
+        if (sameCoupangDeliveryState(baseline, state)) {
+          low = q;
+        } else {
+          high = q;
+          break;
+        }
+        await new Promise(r => setTimeout(r, 500));
+      }
     }
 
     if (high == null) {
