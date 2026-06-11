@@ -1830,12 +1830,15 @@ window.addEventListener('message', event => {
 
 function startHistoryAutoRefresh(expectedCount = 1) {
   if (historyAutoRefreshTimer) {
-    clearInterval(historyAutoRefreshTimer);
+    clearTimeout(historyAutoRefreshTimer);
     historyAutoRefreshTimer = null;
   }
 
   const maxMs = Math.min(10 * 60 * 1000, Math.max(90 * 1000, expectedCount * 55 * 1000 + 20 * 1000));
   const endAt = Date.now() + maxMs;
+  // 확장이 HISTORY_UPDATED 이벤트를 보내주므로 폴링은 안전망 역할만 한다.
+  // 고정 5초 대신 5→10→20→30초로 점증시켜 서버 부하를 줄임
+  let intervalMs = 5000;
 
   async function refreshOnce() {
     if (historyAutoRefreshInFlight) return;
@@ -1844,15 +1847,16 @@ function startHistoryAutoRefresh(expectedCount = 1) {
       await loadHistory(true);
     } finally {
       historyAutoRefreshInFlight = false;
-      if (Date.now() >= endAt && historyAutoRefreshTimer) {
-        clearInterval(historyAutoRefreshTimer);
+      if (Date.now() < endAt) {
+        intervalMs = Math.min(intervalMs * 2, 30000);
+        historyAutoRefreshTimer = setTimeout(refreshOnce, intervalMs);
+      } else {
         historyAutoRefreshTimer = null;
       }
     }
   }
 
-  setTimeout(refreshOnce, 3500);
-  historyAutoRefreshTimer = setInterval(refreshOnce, 5000);
+  historyAutoRefreshTimer = setTimeout(refreshOnce, 3500);
 }
 
 function renderTable(data) {

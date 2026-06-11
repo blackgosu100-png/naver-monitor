@@ -557,13 +557,32 @@ def db_save_competitor_order(user_id: str, ids: list[str]) -> None:
         on_conflict='user_id,key',
     )
 
+def _competitors_request_cache():
+    # 같은 요청 안에서 db_get_competitors가 2~3회 호출돼 Supabase 중복 조회되던 것 방지
+    try:
+        if not hasattr(g, '_competitors_by_user'):
+            g._competitors_by_user = {}
+        return g._competitors_by_user
+    except RuntimeError:  # 요청 컨텍스트 밖 (스케줄러 등)
+        return None
+
+def _invalidate_competitors_cache(user_id: str) -> None:
+    cache = _competitors_request_cache()
+    if cache is not None:
+        cache.pop(user_id, None)
+
 def db_get_competitors(user_id: str) -> list:
+    cache = _competitors_request_cache()
+    if cache is not None and user_id in cache:
+        return cache[user_id]
     competitors = sb_select('competitors', f'?user_id=eq.{user_id}&order=created_at')
     ordered_ids = db_get_competitor_order(user_id)
-    if not ordered_ids:
-        return competitors
-    order_index = {cid: index for index, cid in enumerate(ordered_ids)}
-    return sorted(competitors, key=lambda comp: (order_index.get(comp.get('id'), len(order_index)), comp.get('created_at') or ''))
+    if ordered_ids:
+        order_index = {cid: index for index, cid in enumerate(ordered_ids)}
+        competitors = sorted(competitors, key=lambda comp: (order_index.get(comp.get('id'), len(order_index)), comp.get('created_at') or ''))
+    if cache is not None:
+        cache[user_id] = competitors
+    return competitors
 
 def user_plan(user: dict) -> str:
     if _is_admin_user(user):
@@ -642,6 +661,7 @@ def db_save_stock(user_id: str, cid: str, fetch_date: str, result: dict, fetch_k
     image_url = (result.get('image_url') or '').strip()
     if image_url:
         sb_update('competitors', {'image_url': image_url}, 'id', cid, f'&user_id=eq.{user_id}')
+        _invalidate_competitors_cache(user_id)
     sb_upsert('stock_history', {
         'user_id':       user_id,
         'competitor_id': cid,
@@ -665,9 +685,15 @@ def db_get_history(user_id: str, days: int = 14):
     return competitors, rows
 
 def latest_stock_by_competitor(user_id: str, days: int = 30) -> dict:
-    _, rows = db_get_history(user_id, days)
+    # 폴링 API에서 호출되므로 무거운 options(json) 컬럼 없이 필요한 컬럼만 조회
+    start = (_today_kst() - timedelta(days=days)).isoformat()
+    rows = sb_select(
+        'stock_history',
+        f'?select=competitor_id,total,error,fetched_at'
+        f'&user_id=eq.{user_id}&fetch_date=gte.{start}&order=fetched_at',
+    )
     latest: dict = {}
-    for row in sorted(rows, key=lambda item: item.get('fetched_at') or ''):
+    for row in rows:
         if row.get('error') or row.get('total') is None:
             continue
         try:
@@ -1341,6 +1367,7 @@ def api_add_competitor():
         'url': url,
         'image_url': '',
     })
+    _invalidate_competitors_cache(g.user_id)
     return jsonify({'ok': True, 'id': cid})
 
 @app.route('/api/competitors/reorder', methods=['POST'])
@@ -1377,12 +1404,14 @@ def api_update_competitor(cid):
         update['image_url'] = ''
     if update:
         sb_update('competitors', update, 'id', cid, f'&user_id=eq.{g.user_id}')
+        _invalidate_competitors_cache(g.user_id)
     return jsonify({'ok': True})
 
 @app.route('/api/competitors/<cid>', methods=['DELETE'])
 @login_required
 def api_delete_competitor(cid):
     sb_delete('competitors', 'id', cid, f'&user_id=eq.{g.user_id}')
+    _invalidate_competitors_cache(g.user_id)
     return jsonify({'ok': True})
 
 @app.route('/api/history')
@@ -1616,6 +1645,7 @@ def api_stock_data():
         image_url = (r.get('image_url') or '').strip()
         if image_url:
             sb_update('competitors', {'image_url': image_url}, 'id', cid, f'&user_id=eq.{g.user_id}')
+            _invalidate_competitors_cache(g.user_id)
         options = r.get('options') or []
         comp = competitors_by_id.get(cid) or {}
         if fetch_mode and competitor_market(comp.get('url') or '') == 'coupang':
