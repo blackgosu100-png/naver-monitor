@@ -11,7 +11,7 @@ from urllib.parse import parse_qs, urlparse, quote
 app = Flask(__name__)
 # SECRET_KEY 미설정 시 시작마다 무작위 키 생성 (고정 기본값은 세션 위조 위험)
 app.secret_key = os.environ.get('SECRET_KEY') or secrets.token_hex(32)
-APP_VERSION = '5.94'
+APP_VERSION = '5.95'
 
 # 웹 페이지(확장 외) Origin은 화이트리스트만 CORS 허용
 ALLOWED_WEB_ORIGINS = set(
