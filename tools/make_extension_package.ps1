@@ -37,4 +37,6 @@ Write-Host 'Created package:'
 Write-Host "  $zipPath"
 Write-Host ''
 Write-Host 'Send this zip to users. They should unzip it, load the chrome_extension folder in Chrome,'
-Write-Host 'and run chrome_extension\run_coupang_stock_helper.bat before fast Coupang stock lookup.'
+Write-Host 'and run the Coupang helper before fast Coupang stock lookup:'
+Write-Host '  Windows: chrome_extension\run_coupang_stock_helper.bat'
+Write-Host '  macOS:   chrome_extension/run_coupang_stock_helper.command'

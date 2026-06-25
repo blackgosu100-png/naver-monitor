@@ -10,4 +10,5 @@ naver-monitor-extension-v*/
 AGENTS.local-before-pull.md
 .env
 .env.bat
+.env.sh
 run.local.bat

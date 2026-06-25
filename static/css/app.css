@@ -226,6 +226,34 @@ body { overflow-x: hidden; }
 .m-row.m-head > :first-child { z-index: 7; }
 .m-row.m-head:hover { background: #fafbfc; }
 .m-row.m-expanded { background: #f6fff9; }
+.monitor-head-product {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.monitor-head-product span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dashboard-select-wrap {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+.dashboard-row-check,
+#dashboard-select-all {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
 
 /* 날짜 셀: 숫자(1fr) + 델타(48px) */
 .date-cell {
@@ -560,7 +588,17 @@ body { overflow-x: hidden; }
 .log-items { margin-top:12px; border:1px solid var(--border); border-radius:8px; overflow:hidden; }
 .log-item-row { display:grid; grid-template-columns:1fr 86px 86px 72px; gap:10px; padding:9px 12px; border-top:1px solid #f1f3f5; font-size:12px; align-items:center; }
 .log-item-row:first-child { border-top:0; background:#fcfcfd; color:var(--text3); font-size:11px; font-weight:700; }
-.log-item-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.log-item-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:flex; align-items:center; }
+.log-item-name span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.log-item-failed { background:#fff7ed; }
+.log-item-failed .log-item-name { color:#991b1b; }
+.failed-log-check-wrap { display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; margin-right:7px; flex:0 0 auto; }
+.failed-log-check { width:14px; height:14px; accent-color:var(--accent); }
+.failed-log-check-spacer { width:25px; flex:0 0 auto; }
+.log-retry-panel { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 0 12px; padding:10px 12px; border:1px solid #bbf7d0; border-radius:8px; background:#f0fdf4; font-size:12px; color:#14532d; flex-wrap:wrap; }
+.log-retry-panel strong { display:block; color:var(--text); font-size:13px; }
+.log-retry-panel span { color:#15803d; font-size:11px; }
+.log-retry-actions { display:flex; gap:6px; flex-wrap:wrap; }
 @keyframes consoleBlink { 50% { opacity:0; } }
 @keyframes consoleLineIn { from { opacity:0; transform:translateY(3px); } to { opacity:1; transform:translateY(0); } }
 @keyframes progressIn { to { transform: translate(-50%, -50%) scale(1); } }

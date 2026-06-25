@@ -14,6 +14,9 @@ var stopRequested = false;
 var currentFetchTabId = null;
 var fetchRunning = false;
 var fetchStarting = false; // START_FETCH 수신~runFetchSeparated 진입 사이 이중 시작 방지
+var coupangWingLoginTabId = null;
+var coupangWingLoginOpeningPromise = null;
+var coupangWingLoginPromptedAt = 0;
 // 워커가 죽으면 fetchStatus.running이 영원히 남는다 — updatedAt 기준으로 stale 판정
 const FETCH_STATUS_STALE_MS = 3 * 60 * 1000;
 const FETCH_KEEPALIVE_INTERVAL_MS = 20 * 1000;
@@ -480,6 +483,26 @@ function readCoupangMonthlyPurchase(pid) {
     };
   }
 
+  function socialFromVisibleText(text) {
+    if (!text) return null;
+    var normalized = String(text).replace(/\s+/g, ' ');
+    var patterns = [
+      /한\s*달(?:간)?\s*([0-9,]+)\s*명\s*이상\s*구매/,
+      /한\s*달(?:간)?\s*([0-9,]+)\s*명\s*구매/,
+      /월\s*([0-9,]+)\s*명\s*이상\s*구매/
+    ];
+    for (var i = 0; i < patterns.length; i++) {
+      var m = normalized.match(patterns[i]);
+      if (m && m[1]) {
+        return {
+          socialProofNumUsers: Number(String(m[1]).replace(/,/g, '')),
+          highlightText: m[0]
+        };
+      }
+    }
+    return null;
+  }
+
   var data = window.__coupangQuantityCache && window.__coupangQuantityCache[pid];
   var social = data ? findSocial(data) : null;
   if (!social) {
@@ -489,6 +512,7 @@ function readCoupangMonthlyPurchase(pid) {
     }
   }
   if (!social) social = socialFromText(document.documentElement.innerHTML || '');
+  if (!social) social = socialFromVisibleText(document.body ? (document.body.innerText || '') : '');
   if (!social || social.socialProofNumUsers == null) {
     return { ok: false, error: '쿠팡 월간 구매 데이터가 노출되지 않는 상품입니다' };
   }
@@ -650,8 +674,8 @@ async function runScheduledAutoFetch() {
       await runFetchSeparated(ohouse, '', 'ohouse', { scheduled: true, schedulePhase: 'ohouse' });
     }
     if (coupang.length) {
-      await notifyUser('쿠팡 재고조회 자동조회', '판매가는 현재 크롬의 쿠팡 로그인/와우/쿠폰 세션 기준으로 저장됩니다.');
-      await setStatus({ running: true, current: 0, total: coupang.length, msg: '쿠팡 재고조회 시작: 판매가는 크롬 쿠팡 로그인 세션 기준입니다.', results: [] });
+      await notifyUser('쿠팡 재고조회 자동조회', '재고 수량만 빠르게 조회합니다.');
+      await setStatus({ running: true, current: 0, total: coupang.length, msg: '쿠팡 재고조회 시작: 재고 수량만 빠르게 조회합니다.', results: [] });
       await runFetchSeparated(coupang, 'coupang_stock', 'coupang_stock', { scheduled: true, schedulePhase: 'coupang_stock' });
     }
   } catch(e) {
@@ -997,10 +1021,10 @@ async function waitForCoupangMonthly(tabId, pid) {
   return { ok: false, error: '쿠팡 월간 구매 데이터 대기 시간 초과' };
 }
 
-async function collectCoupangMonthlyFromPage(comp, parsed) {
+async function collectCoupangMonthlyFromPage(comp, parsed, active) {
   var tabId = null;
   try {
-    tabId = await openTab(comp.url, true);
+    tabId = await openTab(comp.url, active !== false);
     currentFetchTabId = tabId;
     return await waitForCoupangMonthly(tabId, parsed.pid);
   } catch(e) {
@@ -1076,10 +1100,55 @@ async function fetchCoupangMonthlyDirect(comp, parsed) {
     return '';
   }
 
+  function socialFromText(text) {
+    if (!text) return null;
+    var normalized = String(text)
+      .replace(/\\"/g, '"')
+      .replace(/\\u([0-9a-fA-F]{4})/g, function(_, hex) {
+        return String.fromCharCode(parseInt(hex, 16));
+      });
+    var jsonPatterns = [
+      /"viewType"\s*:\s*"PRODUCT_DETAIL_SOCIAL_PROOF_NUDGE"[\s\S]{0,2500}?"type"\s*:\s*"purchase"[\s\S]{0,2500}?"socialProofNumUsers"\s*:\s*(\d+)/,
+      /"type"\s*:\s*"purchase"[\s\S]{0,2500}?"viewType"\s*:\s*"PRODUCT_DETAIL_SOCIAL_PROOF_NUDGE"[\s\S]{0,2500}?"socialProofNumUsers"\s*:\s*(\d+)/,
+      /PRODUCT_DETAIL_SOCIAL_PROOF_NUDGE[\s\S]{0,2500}?socialProofNumUsers\s*["']?\s*:\s*(\d+)/
+    ];
+    var countMatch = null;
+    for (var i = 0; i < jsonPatterns.length && !countMatch; i++) {
+      countMatch = normalized.match(jsonPatterns[i]);
+    }
+    if (countMatch && countMatch[1]) {
+      var idx = normalized.indexOf(countMatch[0]);
+      var chunk = normalized.slice(Math.max(0, idx - 500), Math.min(normalized.length, idx + countMatch[0].length + 800));
+      var highlightMatch = chunk.match(/"highlightText"\s*:\s*"([^"]*)"/);
+      return {
+        socialProofNumUsers: Number(countMatch[1]),
+        highlightText: highlightMatch ? highlightMatch[1] : ''
+      };
+    }
+
+    var visible = normalized.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+    var textPatterns = [
+      /한\s*달(?:간)?\s*([0-9,]+)\s*명\s*이상\s*구매/,
+      /한\s*달(?:간)?\s*([0-9,]+)\s*명\s*구매/,
+      /월\s*([0-9,]+)\s*명\s*이상\s*구매/
+    ];
+    for (var j = 0; j < textPatterns.length; j++) {
+      var m = visible.match(textPatterns[j]);
+      if (m && m[1]) {
+        return {
+          socialProofNumUsers: Number(String(m[1]).replace(/,/g, '')),
+          highlightText: m[0]
+        };
+      }
+    }
+    return null;
+  }
+
   var productId = parsed && parsed.pid;
   var itemId = parsed && parsed.itemId;
   var vendorItemId = parsed && parsed.vendorItemId;
   var imageUrl = '';
+  var pageHtml = '';
 
   try {
     if (!vendorItemId) {
@@ -1088,6 +1157,7 @@ async function fetchCoupangMonthlyDirect(comp, parsed) {
         cache: 'no-store'
       });
       var html = await pageRes.text();
+      pageHtml = html;
       var decoded = html;
       try { decoded = decodeURIComponent(html); } catch(e) {}
       var joined = html + '\n' + decoded;
@@ -1135,6 +1205,22 @@ async function fetchCoupangMonthlyDirect(comp, parsed) {
       return { ok: false, skipServer: true, error: 'Coupang monthly API ' + errorMessage };
     }
     var social = findSocial(data);
+    if (!social) {
+      if (!pageHtml) {
+        try {
+          var fallbackPageRes = await fetch(comp.url, {
+            credentials: 'include',
+            cache: 'no-store',
+            headers: {
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+              'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7'
+            }
+          });
+          pageHtml = await fallbackPageRes.text();
+        } catch(e) {}
+      }
+      social = socialFromText(pageHtml);
+    }
     if (!social) return { ok: false, error: 'Coupang monthly sales not found' };
     var count = social.socialProofNumUsers;
     if (count == null) {
@@ -1466,7 +1552,6 @@ async function readCoupangStockEstimate(productUrl, productId, itemId, vendorIte
     }
 
     if (high == null) {
-      var overLimitMetrics = getProductMetrics();
       return {
         ok: true,
         stock: null,
@@ -1475,9 +1560,7 @@ async function readCoupangStockEstimate(productUrl, productId, itemId, vendorIte
         image_url: getImageUrl(),
         productId: productId,
         itemId: itemId,
-        vendorItemId: vendorItemId,
-        salePrice: overLimitMetrics.salePrice,
-        ratingCount: overLimitMetrics.ratingCount
+        vendorItemId: vendorItemId
       };
     }
 
@@ -1491,7 +1574,6 @@ async function readCoupangStockEstimate(productUrl, productId, itemId, vendorIte
       }
     }
 
-    var metrics = getProductMetrics();
     return {
       ok: true,
       stock: low,
@@ -1499,9 +1581,7 @@ async function readCoupangStockEstimate(productUrl, productId, itemId, vendorIte
       image_url: getImageUrl(),
       productId: productId,
       itemId: itemId,
-      vendorItemId: vendorItemId,
-      salePrice: metrics.salePrice,
-      ratingCount: metrics.ratingCount
+      vendorItemId: vendorItemId
     };
   } catch(e) {
     return { ok: false, error: e && e.message ? e.message : String(e), image_url: getImageUrl() };
@@ -1644,15 +1724,12 @@ function readCoupangProductIdentity(productUrl, fallbackProductId, fallbackItemI
     ]);
   }
 
-  var metrics = getProductMetrics();
   return {
     ok: !!productId && !!vendorItemId,
     productId: productId,
     itemId: itemId || '',
     vendorItemId: vendorItemId || '',
     image_url: getImageUrl(),
-    salePrice: metrics.salePrice,
-    ratingCount: metrics.ratingCount,
     url: location.href,
     error: productId
       ? (vendorItemId ? '' : 'vendorItemId not found in URL or product HTML')
@@ -1936,9 +2013,6 @@ async function estimateCoupangStockInBackground(comp, parsed) {
   try {
     var baseline = await probeState(1, false);
     if (!baseline) return { ok: false, error: 'background delivery state not found' };
-    var baselineData = probeCache['1'] && probeCache['1'].data ? probeCache['1'].data : null;
-    var salePrice = baselineData ? extractCoupangPriceFromQuantityInfo(baselineData, 1) : null;
-
     var low = 1;
     var high = null;
     var maxQuantity = 50000;
@@ -1990,8 +2064,6 @@ async function estimateCoupangStockInBackground(comp, parsed) {
         image_url: '',
         productId: productId,
         vendorItemId: vendorItemId,
-        salePrice: salePrice,
-        priceSource: salePrice !== null ? 'quantity-info:1' : '',
         backgroundDirect: true
       };
     }
@@ -2010,8 +2082,6 @@ async function estimateCoupangStockInBackground(comp, parsed) {
       image_url: '',
       productId: productId,
       vendorItemId: vendorItemId,
-      salePrice: salePrice,
-      priceSource: salePrice !== null ? 'quantity-info:1' : '',
       backgroundDirect: true
     };
   } catch(e) {
@@ -2414,9 +2484,11 @@ function collectCoupangWingMetricItems(node, out, depth) {
     node.productName != null;
   if (hasMetric) out.push(node);
 
-  Object.keys(node).forEach(function(key) {
-    collectCoupangWingMetricItems(node[key], out, depth + 1);
-  });
+  try {
+    Object.keys(node).forEach(function(key) {
+      collectCoupangWingMetricItems(node[key], out, depth + 1);
+    });
+  } catch(e) {}
   return out;
 }
 
@@ -2427,6 +2499,17 @@ function numOrNull(value) {
   if (!cleaned) return null;
   var n = Number(cleaned);
   return Number.isFinite(n) ? n : null;
+}
+
+function normalizeCoupangPublicMonthly(value) {
+  if (value == null || value === '') return { total: null, lowerBound: false };
+  if (typeof value === 'object' && !Array.isArray(value)) {
+    return {
+      total: numOrNull(value.total),
+      lowerBound: !!value.lowerBound
+    };
+  }
+  return { total: numOrNull(value), lowerBound: false };
 }
 
 function addCoupangProductMetricOptions(options, source) {
@@ -2452,7 +2535,13 @@ function pickCoupangWingMetricItem(data, parsed, comp) {
   var expectedName = String((comp && comp.name) || '').replace(/\s+/g, '');
 
   function score(item) {
-    var text = JSON.stringify(item);
+    if (!item || typeof item !== 'object') return 0;
+    var text = '';
+    try {
+      text = JSON.stringify(item) || '';
+    } catch(e) {
+      text = '';
+    }
     var value = 0;
     if (pid && String(item.productId || item.productID || item.coupangProductId || '').indexOf(pid) >= 0) value += 200;
     if (pid && text.indexOf(pid) >= 0) value += 120;
@@ -2460,22 +2549,51 @@ function pickCoupangWingMetricItem(data, parsed, comp) {
     if (vendorItemId && text.indexOf(vendorItemId) >= 0) value += 120;
     var name = String(item.productName || item.itemName || item.name || '').replace(/\s+/g, '');
     if (expectedName && name && name.indexOf(expectedName.slice(0, Math.min(8, expectedName.length))) >= 0) value += 20;
+    if (expectedName && name) {
+      var baseExpected = expectedName.replace(/,.*$/, '');
+      if (baseExpected.length >= 8 && name.indexOf(baseExpected.slice(0, Math.min(14, baseExpected.length))) >= 0) value += 60;
+    }
     if (item.pvLast28Day != null) value += 10;
     if (item.salesLast28d != null) value += 10;
     return value;
   }
 
-  items.sort(function(a, b) { return score(b) - score(a); });
-  return items[0] || null;
+  var scored = items.map(function(item) {
+    return { item: item, score: score(item) };
+  }).sort(function(a, b) { return b.score - a.score; });
+  if (!scored.length || scored[0].score <= 0) return null;
+  return scored[0].item || null;
 }
 
 function coupangWingMetricKeywords(comp, parsed) {
   var name = String((comp && comp.name) || '').trim();
+  var baseName = name
+    .replace(/\s*,\s*[^,]*(?:\d+\s*(?:개|p|P|입|매|세트)|그레이|화이트|블랙|아이보리|혼합색상|색상|단품).*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  var compactName = name.replace(/\s*,\s*/g, ' ').replace(/\s+/g, ' ').trim();
+  var coreName = baseName
+    .replace(/\[[^\]]+\]|\([^)]+\)/g, ' ')
+    .replace(/\b(?:NEW|BEST|AWARDS)\b/ig, ' ')
+    .replace(/(?:쿠팡추천|타임할인|와우할인|쿠폰할인|무료배송|로켓배송|판매자로켓)/g, ' ')
+    .replace(/\s+(?:화이트|블랙|그레이|아이보리|크림|은색|실버|혼합색상|색상|단품)\b.*$/i, '')
+    .replace(/\s+\d+\s*(?:개|p|P|입|매|세트)\b.*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  var shortCoreName = coreName
+    .split(/\s+/)
+    .filter(function(part) { return part && !/^(NEW|BEST|AWARDS)$/i.test(part); })
+    .slice(0, 5)
+    .join(' ');
   return [
     (parsed && parsed.pid) || '',
     (parsed && parsed.itemId) || '',
     (parsed && parsed.vendorItemId) || '',
     name,
+    baseName,
+    coreName,
+    shortCoreName,
+    compactName,
     (comp && comp.url) || ''
   ].map(function(value) {
     return String(value || '').trim();
@@ -2521,22 +2639,57 @@ async function openCoupangWingLoginOnce(requestContext) {
   if (requestContext.wingLoginPrompted) return null;
   requestContext.wingLoginPrompted = true;
 
-  var tabs = [];
-  try {
-    tabs = await chrome.tabs.query({ url: 'https://wing.coupang.com/*' });
-  } catch(e) {}
+  if (coupangWingLoginOpeningPromise) return coupangWingLoginOpeningPromise;
 
-  var tab = (tabs || []).find(function(item) { return item && item.id != null; });
-  if (tab) {
+  coupangWingLoginOpeningPromise = (async function() {
+    if (coupangWingLoginTabId != null && Date.now() - coupangWingLoginPromptedAt < 60000) {
+      try {
+        var recent = await chrome.tabs.get(coupangWingLoginTabId);
+        if (recent && recent.id != null) return recent;
+      } catch(e) {
+        coupangWingLoginTabId = null;
+      }
+    }
+
+    var tabs = [];
     try {
-      await chrome.tabs.update(tab.id, { active: true });
-      if (tab.windowId != null) await chrome.windows.update(tab.windowId, { focused: true });
+      tabs = await chrome.tabs.query({ url: 'https://wing.coupang.com/*' });
     } catch(e) {}
-    return tab;
-  }
+
+    var tab = (tabs || []).find(function(item) { return item && item.id != null; });
+    if (tab) {
+      coupangWingLoginTabId = tab.id;
+      coupangWingLoginPromptedAt = Date.now();
+      try {
+        await chrome.tabs.update(tab.id, { active: true });
+        if (tab.windowId != null) await chrome.windows.update(tab.windowId, { focused: true });
+      } catch(e) {}
+      return tab;
+    }
+
+    if (coupangWingLoginTabId != null && Date.now() - coupangWingLoginPromptedAt < 60000) {
+      try {
+        var existing = await chrome.tabs.get(coupangWingLoginTabId);
+        if (existing && existing.id != null) return existing;
+      } catch(e) {
+        coupangWingLoginTabId = null;
+      }
+    }
+
+    var created = await chrome.tabs.create({ url: 'https://wing.coupang.com/', active: true });
+    if (created && created.id != null) {
+      coupangWingLoginTabId = created && created.id != null ? created.id : null;
+      coupangWingLoginPromptedAt = Date.now();
+    }
+    return created;
+  })().catch(function() {
+    return null;
+  }).finally(function() {
+    coupangWingLoginOpeningPromise = null;
+  });
 
   try {
-    return await chrome.tabs.create({ url: 'https://wing.coupang.com/', active: true });
+    return await coupangWingLoginOpeningPromise;
   } catch(e) {
     return null;
   }
@@ -2653,9 +2806,14 @@ async function fetchCoupangWingPostMatchingMetrics(comp, parsed, requestContext)
         continue;
       }
       var data = JSON.parse(text);
+      var metricItems = collectCoupangWingMetricItems(data, [], 0);
+      if (!metricItems.length) {
+        lastError = 'Wing 검색 결과 없음';
+        continue;
+      }
       var item = pickCoupangWingMetricItem(data, parsed, comp);
       if (!item) {
-        lastError = '쿠팡 Wing에서 해당 상품을 찾지 못했습니다. Wing 검색에서 상품명 또는 쿠팡 URL이 검색되는지 확인해 주세요.';
+        lastError = 'Wing 상품 매칭 실패';
         continue;
       }
       var views = numOrNull(item.pvLast28Day);
@@ -2684,6 +2842,11 @@ async function fetchCoupangWingPostMatchingMetrics(comp, parsed, requestContext)
     if (tabResult && (tabResult.ok || tabResult.stopped)) return tabResult;
     if (tabResult && tabResult.authRequired) return tabResult;
     lastError = tabResult && tabResult.error ? tabResult.error : lastError;
+  } else if (/Wing|post-matching|metrics/i.test(lastError)) {
+    var fallbackTabResult = await fetchCoupangWingPostMatchingMetricsViaExistingTab(comp, parsed, requestContext);
+    if (fallbackTabResult && (fallbackTabResult.ok || fallbackTabResult.stopped)) return fallbackTabResult;
+    if (fallbackTabResult && fallbackTabResult.authRequired) return fallbackTabResult;
+    lastError = fallbackTabResult && fallbackTabResult.error ? fallbackTabResult.error : lastError;
   }
   return { ok: false, error: lastError };
 }
@@ -2776,6 +2939,170 @@ async function collectCoupangSalesMetricsFromWingApi(comp, parsed, index, total,
   };
 }
 
+async function collectCoupangOverlayMetric(product) {
+  var url = String((product && product.url) || '');
+  var parsed = parseCoupangUrl(url);
+  if (!parsed) return { ok: false, url: url, error: 'Coupang product URL not found' };
+
+  var comp = {
+    id: 'overlay:' + (parsed.pid || ''),
+    name: String((product && product.name) || '').trim() || 'Coupang product',
+    url: url
+  };
+  var cacheKey = coupangStockCacheKey(parsed) || coupangCacheKey(parsed);
+  var apiMetrics = null;
+  var monthly = null;
+  var publicMonthly = null;
+  var viewsMetric = null;
+  var normalizedPublicMonthly = normalizeCoupangPublicMonthly(product && product.publicMonthly);
+  var overlayPublicMonthly = normalizedPublicMonthly.total;
+  var monthlySalesLowerBound = normalizedPublicMonthly.lowerBound;
+
+  try { monthly = await getCachedCoupangMetric('monthly', cacheKey, COUPANG_MONTHLY_TTL); } catch(e) {}
+  try { viewsMetric = await getCachedCoupangMetric('views', cacheKey, COUPANG_VIEWS_TTL); } catch(e) {}
+  if (monthly && monthly.ok && /public|page/i.test(String(monthly.source || ''))) {
+    monthly.lowerBound = true;
+    monthlySalesLowerBound = true;
+  }
+
+  if (overlayPublicMonthly !== null && overlayPublicMonthly > 0) {
+    monthly = {
+      ok: true,
+      total: overlayPublicMonthly,
+      options: [{ name: '\uC6D4\uD310\uB9E4\uC218\uB7C9', qty: overlayPublicMonthly }],
+      image_url: '',
+      source: 'overlay-public-page',
+      lowerBound: monthlySalesLowerBound
+    };
+  }
+
+  var needsWingExactMonthly = !monthly || !monthly.ok || !!monthly.lowerBound || /public|page/i.test(String(monthly.source || ''));
+  if (!viewsMetric || needsWingExactMonthly) {
+    apiMetrics = await withTimeout(
+      fetchCoupangWingPostMatchingMetrics(comp, parsed, { overlayLookup: true }),
+      7000,
+      'Wing post-matching lookup timed out'
+    );
+    if (apiMetrics && apiMetrics.ok) {
+      if (apiMetrics.views28 !== null && apiMetrics.views28 !== undefined) {
+        viewsMetric = {
+          ok: true,
+          views28: Number(apiMetrics.views28),
+          name: apiMetrics.productName || '',
+          salePrice: apiMetrics.salePrice,
+          ratingCount: apiMetrics.ratingCount,
+          image_url: apiMetrics.image_url || ''
+        };
+        await setCachedCoupangMetric('views', cacheKey, viewsMetric);
+      }
+      if (apiMetrics.monthlySales !== null && apiMetrics.monthlySales !== undefined && Number(apiMetrics.monthlySales) > 0) {
+        monthly = {
+          ok: true,
+          total: Number(apiMetrics.monthlySales),
+          options: [{ name: '\uC6D4\uD310\uB9E4\uC218\uB7C9', qty: Number(apiMetrics.monthlySales) }],
+          image_url: apiMetrics.image_url || '',
+          source: 'wing-post-matching',
+          lowerBound: false
+        };
+        monthlySalesLowerBound = false;
+        await setCachedCoupangMetric('monthly', cacheKey, monthly);
+      }
+    }
+  }
+
+  if (!monthly || !monthly.ok) {
+    try {
+      publicMonthly = await withTimeout(
+        collectCoupangMonthlyFast(comp, parsed),
+        7000,
+        'Coupang monthly lookup timed out'
+      );
+      if (publicMonthly && publicMonthly.ok) {
+        publicMonthly.source = publicMonthly.source || 'public-social-proof';
+        monthly = publicMonthly;
+        monthlySalesLowerBound = !!publicMonthly.lowerBound;
+        if (!monthly.lowerBound) await setCachedCoupangMetric('monthly', cacheKey, monthly);
+      }
+    } catch(e) {
+      publicMonthly = { ok: false, error: e && e.message ? e.message : String(e) };
+    }
+  }
+
+  if (monthly && monthly.ok && Number(monthly.total || 0) <= 0) {
+    monthly = null;
+  }
+
+  if ((!monthly || !monthly.ok || monthly.lowerBound) && apiMetrics && apiMetrics.monthlySales !== null && apiMetrics.monthlySales !== undefined && Number(apiMetrics.monthlySales) > 0) {
+    monthly = {
+      ok: true,
+      total: Number(apiMetrics.monthlySales),
+      options: [{ name: '\uC6D4\uD310\uB9E4\uC218\uB7C9', qty: Number(apiMetrics.monthlySales) }],
+      image_url: apiMetrics.image_url || '',
+      source: 'wing-post-matching',
+      lowerBound: false
+    };
+    monthlySalesLowerBound = false;
+  }
+
+  var monthlySales = monthly && monthly.ok && monthly.total != null ? Number(monthly.total) : null;
+  if (monthly && monthly.ok && monthly.lowerBound) monthlySalesLowerBound = true;
+  var views28 = viewsMetric && viewsMetric.ok && viewsMetric.views28 != null ? Number(viewsMetric.views28) : null;
+  if (monthlySales === null && apiMetrics && apiMetrics.monthlySales != null && Number(apiMetrics.monthlySales) > 0) {
+    monthlySales = Number(apiMetrics.monthlySales);
+    monthlySalesLowerBound = false;
+  }
+  if (views28 === null && apiMetrics && apiMetrics.views28 != null) views28 = Number(apiMetrics.views28);
+
+  var salePrice = numOrNull(product && product.price);
+  if (salePrice == null) salePrice = numOrNull(apiMetrics && apiMetrics.salePrice);
+  if (salePrice == null) salePrice = numOrNull(viewsMetric && viewsMetric.salePrice);
+
+  if (monthlySales === null && views28 === null && salePrice === null) {
+    return {
+      ok: false,
+      url: url,
+      error: (apiMetrics && apiMetrics.error) || (monthly && monthly.error) || 'Coupang metrics not found'
+    };
+  }
+
+  var monthlyRevenue = monthlySales !== null && salePrice !== null ? monthlySales * salePrice : null;
+  var cvr = views28 && monthlySales !== null ? (monthlySales / views28) * 100 : null;
+
+  return {
+    ok: true,
+    url: url,
+    pid: parsed.pid,
+    name: comp.name,
+    salePrice: salePrice,
+    monthlySales: monthlySales,
+    monthlySalesLowerBound: monthlySalesLowerBound,
+    monthlyRevenue: monthlyRevenue,
+    views28: views28,
+    cvr: cvr,
+    partial: monthlySales === null || views28 === null,
+    error: apiMetrics && apiMetrics.error ? apiMetrics.error : '',
+    source: apiMetrics && apiMetrics.ok ? 'wing-post-matching' : 'monthly'
+  };
+}
+
+async function analyzeCoupangOverlayProducts(products) {
+  var source = Array.isArray(products) ? products.slice(0, 12) : [];
+  var results = [];
+  for (var i = 0; i < source.length; i++) {
+    try {
+      results.push(await collectCoupangOverlayMetric(source[i]));
+    } catch(e) {
+      results.push({
+        ok: false,
+        url: String((source[i] && source[i].url) || ''),
+        error: e && e.message ? e.message : String(e)
+      });
+    }
+    if (source.length > 1) await new Promise(function(resolve) { setTimeout(resolve, 250); });
+  }
+  return results;
+}
+
 async function withTimeout(promise, ms, message) {
   var timer = null;
   try {
@@ -2845,7 +3172,17 @@ async function collectCoupangMonthlyFast(comp, parsed) {
     return server;
   }
 
-  return server || direct || { ok: false, error: 'Coupang monthly sales not found' };
+  var page = await withTimeout(
+    collectCoupangMonthlyFromPage(comp, parsed, false),
+    9000,
+    'Coupang monthly page lookup timed out'
+  );
+  if (page && page.ok) {
+    page.source = 'page';
+    return page;
+  }
+
+  return page || server || direct || { ok: false, error: 'Coupang monthly sales not found' };
 }
 
 async function waitForOhouseStock(tabId, pid) {
@@ -2995,14 +3332,10 @@ async function collectCoupangStockMetricOnly(comp, parsed, index, total, results
   var options = [];
   if (value !== null && Number.isFinite(value)) {
     options.push({ name: stock.soldOut ? '\uD488\uC808' : '\uC7AC\uACE0 \uCD94\uC815', qty: value });
-    addCoupangProductMetricOptions(options, stock);
     await setCachedCoupangMetric('stock', coupangStockCacheKey(parsed), {
       ok: true,
       stock: value,
       options: options,
-      salePrice: stock.priceSource === 'quantity-info:1' && (stock.localHelper || stock.backgroundDirect) ? stock.salePrice : null,
-      priceSource: stock.priceSource || '',
-      ratingCount: stock.ratingCount,
       image_url: stock.image_url || ''
     });
   } else if (stock.overLimit) {
@@ -3011,7 +3344,6 @@ async function collectCoupangStockMetricOnly(comp, parsed, index, total, results
       qty: null,
       text: stock.reason || '5000\uAC1C \uC774\uC0C1 \uB610\uB294 \uBC30\uC1A1 \uACBD\uACC4 \uBBF8\uBC1C\uACAC'
     });
-    addCoupangProductMetricOptions(options, stock);
   }
 
   return {
@@ -3222,6 +3554,7 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
           }
         }
         itemLogs.push({
+          id: comp.id,
           name: comp.name,
           market: market,
           status: latest && !latest.error ? 'ok' : 'error',
@@ -3351,6 +3684,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       var hasAuth = !!(state.accessToken || state.refreshToken);
       if (hasAuth) runScheduledAutoFetch();
       sendResponse({ ok: true, hasAuth: hasAuth });
+    })();
+    return true;
+  }
+  if (msg.type === 'COUPANG_OVERLAY_ANALYZE') {
+    (async () => {
+      try {
+        var products = Array.isArray(msg.products) ? msg.products : [];
+        var results = await analyzeCoupangOverlayProducts(products);
+        sendResponse({ ok: true, results: results });
+      } catch (e) {
+        sendResponse({ ok: false, error: e && e.message ? e.message : String(e), results: [] });
+      }
     })();
     return true;
   }

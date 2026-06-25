@@ -1,6 +1,6 @@
 const nativeFetch = window.fetch.bind(window);
 const COUPANG_LOGIN_URL = 'https://login.coupang.com/login/login.pang?rtnUrl=https%3A%2F%2Fwww.coupang.com%2Fnp%2Fpost%2Flogin%3Fr%3Dhttp%253A%252F%252Fwww.coupang.com%252F';
-const CONFIG_CACHE_KEY = 'naverMonitorConfigCache:v1';
+const CONFIG_CACHE_KEY = 'naverMonitorConfigCache:v2';
 const HISTORY_CACHE_KEY = 'naverMonitorHistoryCache:v1';
 const HISTORY_MODE_KEY = 'naverMonitorHistoryMode:v1';
 const TIME_RANGE_KEY = 'naverMonitorTimeRange:v1';
@@ -20,6 +20,7 @@ let accessToken = '';
 let appConfig = {};
 let fetchLogData = [];
 let selectedFetchLogId = '';
+let selectedDashboardCompetitorIds = new Set();
 
 async function initAuth() {
   accessToken = localStorage.getItem('naverMonitorAccessToken') || '';
@@ -352,7 +353,7 @@ function renderKPIs(data) {
   const isCoupangStock = isCoupangStockMarket();
 
   const displayDates = sortedDates.slice().reverse();
-  let totalSales = 0, restockCount = 0, errorCount = 0, successCount = 0, totalRevenue = 0, reviewIncrease = 0;
+  let totalSales = 0, restockCount = 0, errorCount = 0, successCount = 0;
   competitors.forEach(comp => {
     const day = comp.days[latestDate];
     if (!day) return;
@@ -371,12 +372,6 @@ function renderKPIs(data) {
         if (delta > 0) totalSales += delta;
         else if (delta < 0) restockCount++;
       }
-    }
-    if (isCoupangStock) {
-      const revenue = coupangMetricValueForCell(comp, displayDates, 0, 'revenueEstimate');
-      const reviews = coupangMetricValueForCell(comp, displayDates, 0, 'reviewDelta');
-      if (revenue !== null) totalRevenue += revenue;
-      if (reviews !== null && reviews > 0) reviewIncrease += reviews;
     }
   });
   const successRate = competitors.length > 0 ? Math.round(successCount / competitors.length * 100) : 0;
@@ -399,17 +394,6 @@ function renderKPIs(data) {
       <div class="kpi-value amber">${restockCount}<span style="font-size:14px;font-weight:500;margin-left:3px">건</span></div>
       <div class="kpi-sub">${isCoupangStock ? '전회 대비 재고 추정이 증가한 상품 수' : isCoupang ? '전회 대비 월판매수량이 낮아진 상품 수' : '재고 증가 경쟁사 수'}</div>
     </div>
-    ${isCoupangStock ? `
-    <div class="kpi-card kpi-accent-blue">
-      <div class="kpi-label">추정 매출 (${dateLabel})</div>
-      <div class="kpi-value blue">${totalRevenue.toLocaleString()}<span style="font-size:14px;font-weight:500;margin-left:3px">원</span></div>
-      <div class="kpi-sub">재고 감소 추정 수량 × 판매가</div>
-    </div>
-    <div class="kpi-card kpi-accent-green">
-      <div class="kpi-label">리뷰 증가 (${dateLabel})</div>
-      <div class="kpi-value green">${reviewIncrease.toLocaleString()}<span style="font-size:14px;font-weight:500;margin-left:3px">개</span></div>
-      <div class="kpi-sub">전회 대비 리뷰수 증가 합산</div>
-    </div>` : ''}
     <div class="kpi-card ${successRate >= 80 ? 'kpi-accent-green' : 'kpi-accent-red'}">
       <div class="kpi-label">조회 성공률</div>
       <div class="kpi-value ${successRate >= 80 ? 'green' : 'red'}">${successRate}<span style="font-size:14px;font-weight:500;margin-left:2px">%</span></div>
@@ -518,7 +502,7 @@ function applyConfig(cfg) {
 
 async function loadConfig() {
   try {
-    const r = await fetch('/api/config');
+    const r = await fetch('/api/config', { cache: 'no-store' });
     if (r.status === 401) { location.href = '/login'; return; }
     const cfg = await r.json();
     applyConfig(cfg);
@@ -788,6 +772,8 @@ function renderTable(data) {
     isCoupangMarket()
       ? `${isCoupangStockMarket() ? '재고 조회' : '판매 지표'} · ${historyModeLabel()}`
       : historyModeLabel();
+  pruneDashboardSelection();
+  updateSelectedStockFetchButton();
   renderKPIs(data);
 
   if (competitors.length === 0) {
@@ -824,7 +810,13 @@ function renderTable(data) {
 
   // Header row
   html += `<div class="m-row m-head" style="grid-template-columns:${colTpl}">`;
-  html += `<div>URL 바로가기 / ${label} 상품명</div>`;
+  const selectionEnabled = dashboardSelectionEnabled();
+  const selectableIds = visibleSelectableDashboardCompetitors().map(comp => comp.id);
+  const selectedVisibleCount = selectableIds.filter(id => selectedDashboardCompetitorIds.has(id)).length;
+  const selectAllHtml = selectionEnabled
+    ? `<label class="dashboard-select-wrap" onclick="event.stopPropagation()" title="보이는 상품 전체 선택"><input id="dashboard-select-all" type="checkbox" ${selectableIds.length && selectedVisibleCount === selectableIds.length ? 'checked' : ''} onchange="setDashboardSelectionForVisible(this.checked)"></label>`
+    : '';
+  html += `<div class="monitor-head-product">${selectAllHtml}<span>URL 바로가기 / ${label} 상품명</span></div>`;
   sortedDates.forEach(d => {
     const dt = new Date(snapshotDate(d));
     const dow = ['일','월','화','수','목','금','토'][dt.getDay()];
@@ -835,8 +827,12 @@ function renderTable(data) {
   // Data rows
   competitors.forEach(comp => {
     const isExpanded = expandedRows.has(comp.id);
+    const rowCheckHtml = selectionEnabled && competitorMarket(comp) === 'coupang' && isCompetitorFetchAllowed(comp.id)
+      ? `<label class="dashboard-select-wrap" onclick="event.stopPropagation()" title="선택 재고조회 대상"><input class="dashboard-row-check" type="checkbox" data-cid="${escHtml(comp.id)}" ${selectedDashboardCompetitorIds.has(comp.id) ? 'checked' : ''} onchange="toggleDashboardSelection('${escJsAttr(comp.id)}', this.checked)"></label>`
+      : '';
     html += `<div class="m-row monitor-product-row${isExpanded ? ' m-expanded' : ''}" data-cid="${comp.id}" draggable="false" style="grid-template-columns:${colTpl}" onclick="toggleExpand('${comp.id}')">`;
     html += `<div class="biz-name"><div class="biz-cell">
+      ${rowCheckHtml}
       <button class="comp-drag-handle monitor-drag-handle" type="button" draggable="false" ${canReorderRows ? '' : 'disabled'} onclick="event.stopPropagation()" title="${canReorderRows ? '드래그해서 순서 변경' : '순서를 바꿀 상품이 2개 이상 필요합니다'}" aria-label="순서 변경">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="9" cy="5" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="19" r="1"/></svg>
       </button>
@@ -908,6 +904,7 @@ function renderTable(data) {
   html += `</div>`;
   wrap.innerHTML = html;
   setupMonitorDragSort(canReorderRows);
+  updateSelectedStockFetchButton();
 }
 
 function renderOptionsDetailGrid(comp, sortedDates, colTpl) {
@@ -1084,11 +1081,9 @@ function formatCoupangMetric(value, metric) {
 function renderCoupangMetricsDetailGrid(comp, sortedDates, colTpl) {
   const rows = isCoupangStockMarket()
     ? [
-      { key: 'stock', label: '재고 추정' },
       { key: 'price', label: '판매가' },
       { key: 'reviews', label: '리뷰수' },
       { key: 'reviewDelta', label: '리뷰 증가' },
-      { key: 'soldEstimate', label: '판매 추정' },
       { key: 'revenueEstimate', label: '추정 매출' },
     ]
     : [
@@ -1201,6 +1196,7 @@ function syncMarketUI() {
   if (fetchBtnLabel) {
     fetchBtnLabel.textContent = isCoupangStockMarket(market) ? '재고 조회' : '전체 조회';
   }
+  updateSelectedStockFetchButton();
   const urlInput = document.getElementById('new-comp-url');
   if (urlInput) {
     urlInput.placeholder = market === 'ohouse'
@@ -1297,6 +1293,62 @@ function isCompetitorFetchAllowed(cid) {
 function getFetchableDashboardCompetitors() {
   const activeIds = getActiveCompetitorIdSet();
   return getDashboardCompetitors().filter(comp => activeIds.size === 0 || activeIds.has(comp.id));
+}
+
+function dashboardSelectionEnabled() {
+  return isCoupangStockMarket();
+}
+
+function visibleSelectableDashboardCompetitors() {
+  if (!dashboardSelectionEnabled()) return [];
+  return getFetchableDashboardCompetitors().filter(comp => competitorMarket(comp) === 'coupang');
+}
+
+function pruneDashboardSelection() {
+  const valid = new Set(visibleSelectableDashboardCompetitors().map(comp => comp.id));
+  selectedDashboardCompetitorIds = new Set([...selectedDashboardCompetitorIds].filter(id => valid.has(id)));
+}
+
+function updateSelectedStockFetchButton() {
+  const btn = document.getElementById('selected-stock-fetch-btn');
+  if (!btn) return;
+  const enabled = dashboardSelectionEnabled();
+  btn.style.display = enabled ? '' : 'none';
+  if (!enabled) {
+    selectedDashboardCompetitorIds.clear();
+    btn.disabled = true;
+    btn.textContent = '선택 재고조회';
+    return;
+  }
+  pruneDashboardSelection();
+  const count = selectedDashboardCompetitorIds.size;
+  btn.disabled = count === 0;
+  btn.textContent = count ? `선택 ${count}개 재고조회` : '선택 재고조회';
+
+  const visibleIds = visibleSelectableDashboardCompetitors().map(comp => comp.id);
+  const allBox = document.getElementById('dashboard-select-all');
+  if (allBox) {
+    const checkedCount = visibleIds.filter(id => selectedDashboardCompetitorIds.has(id)).length;
+    allBox.checked = visibleIds.length > 0 && checkedCount === visibleIds.length;
+    allBox.indeterminate = checkedCount > 0 && checkedCount < visibleIds.length;
+  }
+}
+
+function toggleDashboardSelection(cid, checked) {
+  if (checked) selectedDashboardCompetitorIds.add(cid);
+  else selectedDashboardCompetitorIds.delete(cid);
+  updateSelectedStockFetchButton();
+}
+
+function setDashboardSelectionForVisible(checked) {
+  visibleSelectableDashboardCompetitors().forEach(comp => {
+    if (checked) selectedDashboardCompetitorIds.add(comp.id);
+    else selectedDashboardCompetitorIds.delete(comp.id);
+  });
+  document.querySelectorAll('.dashboard-row-check').forEach(input => {
+    input.checked = checked && selectedDashboardCompetitorIds.has(input.dataset.cid);
+  });
+  updateSelectedStockFetchButton();
 }
 
 function requestExtensionFetch(competitors, fetchMode = currentFetchMode(), market = currentMarket()) {
@@ -1636,6 +1688,20 @@ async function queueFetchForExtension(id = null, fetchMode = currentFetchMode(),
   return data;
 }
 
+async function queueFetchIdsForExtension(ids, fetchMode = currentFetchMode(), market = currentMarket()) {
+  const body = {ids: Array.isArray(ids) ? ids.filter(Boolean) : []};
+  if (fetchMode) body.fetchMode = fetchMode;
+  body.market = market;
+  const r = await fetch('/api/ext/queue', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || '대기 등록 실패');
+  return data;
+}
+
 async function stopFetch() {
   try {
     await requestExtensionStop();
@@ -1680,6 +1746,47 @@ async function fetchAll() {
   } finally {
     hideLoading();
     btn.disabled = false;
+  }
+}
+
+async function fetchSelectedStock() {
+  const fetchMode = 'coupang_stock';
+  const fetchMarket = 'coupang_stock';
+  const competitors = visibleSelectableDashboardCompetitors()
+    .filter(comp => selectedDashboardCompetitorIds.has(comp.id));
+
+  if (!competitors.length) {
+    showToast('재고조회할 상품을 먼저 선택해주세요');
+    updateSelectedStockFetchButton();
+    return;
+  }
+  if (!(await confirmCoupangLoginBeforeFetch(fetchMode, fetchMarket))) return;
+
+  const btn = document.getElementById('selected-stock-fetch-btn');
+  showLoading(`선택한 ${competitors.length}개 상품 재고조회 요청 중...`);
+  if (btn) btn.disabled = true;
+  try {
+    await ensureCoupangExtensionVersion(fetchMode);
+    try {
+      resetFetchConsole();
+      beginPendingFetch(competitors, fetchMode, fetchMarket);
+      await requestExtensionFetch(competitors, fetchMode, fetchMarket);
+      startHistoryAutoRefresh(competitors.length);
+      showToast(`선택한 ${competitors.length}개 상품 재고조회를 시작했습니다`);
+    } catch (e) {
+      clearPendingFetch();
+      if (e.noQueue) {
+        showToast(e.message);
+        return;
+      }
+      const data = await queueFetchIdsForExtension(competitors.map(comp => comp.id), fetchMode, fetchMarket);
+      showToast(`확장 프로그램 확인 필요 · ${data.count || competitors.length}개 대기 등록`);
+    }
+  } catch (e) {
+    showToast(e.message || '선택 상품 재고조회 요청 실패');
+  } finally {
+    hideLoading();
+    updateSelectedStockFetchButton();
   }
 }
 
@@ -2102,7 +2209,7 @@ async function saveSchedule() {
 async function runScheduleNow() {
   try {
     await runExtensionScheduleNow();
-    showToast('자동조회 테스트를 시작했습니다. 쿠팡 판매가는 크롬 로그인 세션 기준입니다');
+    showToast('자동조회 테스트를 시작했습니다');
   } catch (e) {
     showToast(e.message || '자동조회 테스트 시작 실패');
   }
@@ -2222,6 +2329,112 @@ function selectFetchLog(runId) {
   renderFetchLogDetail(fetchLogData.find(log => log.runId === runId) || null);
 }
 
+function failedFetchLogItems(log) {
+  const items = Array.isArray(log && log.items) ? log.items : [];
+  return items.filter(item => item && (item.error || item.status === 'error'));
+}
+
+function competitorForLogItem(item) {
+  const competitors = appConfig.competitors || [];
+  if (!item) return null;
+  if (item.id) {
+    const byId = competitors.find(comp => comp.id === item.id);
+    if (byId) return byId;
+  }
+  const itemName = String(item.name || '').trim();
+  if (!itemName) return null;
+  return competitors.find(comp => String(comp.name || '').trim() === itemName) || null;
+}
+
+function retryModeFromLog(log, items) {
+  const mode = String((log && (log.mode || log.phase)) || '').toLowerCase();
+  if (mode === 'coupang_stock' || mode === 'stock') return {fetchMode: 'coupang_stock', market: 'coupang_stock'};
+  if (mode === 'coupang_sales' || mode === 'sales' || mode === 'coupang') return {fetchMode: 'coupang_sales', market: 'coupang'};
+  const firstMarket = String((items && items[0] && items[0].market) || currentMarket()).toLowerCase();
+  if (firstMarket === 'coupang') return {fetchMode: 'coupang_stock', market: 'coupang_stock'};
+  return {fetchMode: '', market: firstMarket || currentMarket()};
+}
+
+function selectedFailedLogItems(runId) {
+  return [...document.querySelectorAll('.failed-log-check')]
+    .filter(input => input.dataset.runId === runId && input.checked)
+    .map(input => Number(input.dataset.itemIndex))
+    .filter(index => Number.isInteger(index));
+}
+
+function setFailedLogSelection(runId, checked) {
+  document.querySelectorAll('.failed-log-check').forEach(input => {
+    if (input.dataset.runId === runId) input.checked = checked;
+  });
+}
+
+async function retryFailedLogItems(runId, selectedOnly = true) {
+  const log = fetchLogData.find(item => item.runId === runId);
+  if (!log) {
+    showToast('조회 로그를 찾을 수 없습니다');
+    return;
+  }
+  const failedItems = failedFetchLogItems(log);
+  const selectedIndexes = selectedOnly ? new Set(selectedFailedLogItems(runId)) : null;
+  const chosenItems = failedItems.filter((item, index) => !selectedIndexes || selectedIndexes.has(index));
+  const competitors = [];
+  const seen = new Set();
+  chosenItems.forEach(item => {
+    const comp = competitorForLogItem(item);
+    if (!comp || seen.has(comp.id)) return;
+    if (!isCompetitorFetchAllowed(comp.id)) return;
+    competitors.push(comp);
+    seen.add(comp.id);
+  });
+  if (!competitors.length) {
+    showToast('다시 조회할 수 있는 실패 상품이 없습니다');
+    return;
+  }
+
+  const retryMode = retryModeFromLog(log, chosenItems);
+  if (!(await confirmCoupangLoginBeforeFetch(retryMode.fetchMode, retryMode.market))) return;
+
+  showLoading(`${competitors.length}개 실패 상품 다시조회 요청 중...`);
+  try {
+    await ensureCoupangExtensionVersion(retryMode.fetchMode);
+    try {
+      resetFetchConsole();
+      beginPendingFetch(competitors, retryMode.fetchMode, retryMode.market);
+      await requestExtensionFetch(competitors, retryMode.fetchMode, retryMode.market);
+      startHistoryAutoRefresh(competitors.length);
+      showToast(`${competitors.length}개 실패 상품 다시조회를 시작했습니다`);
+    } catch (e) {
+      clearPendingFetch();
+      if (e.noQueue) {
+        showToast(e.message);
+        return;
+      }
+      const data = await queueFetchIdsForExtension(competitors.map(comp => comp.id), retryMode.fetchMode, retryMode.market);
+      showToast(`확장 프로그램 확인 필요 · ${data.count || competitors.length}개 대기 등록`);
+    }
+  } catch (e) {
+    showToast(e.message || '실패 상품 다시조회 요청 실패');
+  } finally {
+    hideLoading();
+  }
+}
+
+function renderLogItemRow(log, item, index) {
+  const failed = !!(item && (item.error || item.status === 'error'));
+  const retryable = failed && !!competitorForLogItem(item);
+  const retryControl = retryable
+    ? `<label class="failed-log-check-wrap" title="다시 조회 대상 선택"><input class="failed-log-check" type="checkbox" data-run-id="${escHtml(log.runId || '')}" data-item-index="${index}" checked></label>`
+    : '<span class="failed-log-check-spacer"></span>';
+  return `
+      <div class="log-item-row ${failed ? 'log-item-failed' : ''}" title="${escHtml(item.error || '')}">
+        <div class="log-item-name">${retryControl}<span>${escHtml(item.name || '-')}</span></div>
+        <div>${formatElapsed(item.elapsedMs)}</div>
+        <div>${escHtml(logSourceLabel(item.source))}${item.apiCalls ? ` · ${Number(item.apiCalls)}회` : ''}</div>
+        <div>${item.total === null || item.total === undefined ? '-' : Number(item.total).toLocaleString()}</div>
+      </div>
+  `;
+}
+
 function renderFetchLogDetail(log) {
   const title = document.getElementById('fetch-log-detail-title');
   const meta = document.getElementById('fetch-log-detail-meta');
@@ -2235,6 +2448,8 @@ function renderFetchLogDetail(log) {
   }
   const events = Array.isArray(log.events) ? log.events : [];
   const items = Array.isArray(log.items) ? log.items : [];
+  const failedItems = failedFetchLogItems(log);
+  const retryableCount = failedItems.filter(item => competitorForLogItem(item)).length;
   const slowest = [...items].sort((a, b) => Number(b.elapsedMs || 0) - Number(a.elapsedMs || 0))[0];
   if (title) title.textContent = fetchModeLabel(log);
   if (meta) meta.textContent = `${formatLogDate(log.startedAt)} 시작 · ${formatLogDate(log.finishedAt)} 종료`;
@@ -2245,20 +2460,26 @@ function renderFetchLogDetail(log) {
       <div class="log-metric"><div class="log-metric-label">실패</div><div class="log-metric-value">${Number(log.errors || 0)}</div></div>
       <div class="log-metric"><div class="log-metric-label">최장 상품</div><div class="log-metric-value" title="${escHtml(slowest && slowest.name || '-')}">${slowest ? formatElapsed(slowest.elapsedMs) : '-'}</div></div>
     </div>
+    ${failedItems.length ? `
+      <div class="log-retry-panel">
+        <div>
+          <strong>실패 상품 ${failedItems.length}개</strong>
+          <span>${retryableCount ? `${retryableCount}개를 바로 다시 조회할 수 있습니다` : '현재 목록과 연결되는 상품이 없습니다'}</span>
+        </div>
+        <div class="log-retry-actions">
+          <button class="mini-btn" type="button" onclick="setFailedLogSelection('${escJsAttr(log.runId || '')}', true)">전체 선택</button>
+          <button class="mini-btn" type="button" onclick="setFailedLogSelection('${escJsAttr(log.runId || '')}', false)">해제</button>
+          <button class="mini-btn primary" type="button" onclick="retryFailedLogItems('${escJsAttr(log.runId || '')}', true)">선택 실패상품 다시조회</button>
+        </div>
+      </div>
+    ` : ''}
     <div class="fetch-console log-detail-console">
       ${events.length ? events.map(event => renderFetchLogEvent(event)).join('') : '<span class="fetch-console-line muted">저장된 상세 이벤트가 없습니다. 다음 조회부터 단계별 로그가 기록됩니다.</span>'}
       <span class="fetch-console-line muted">&gt; <span class="fetch-console-cursor"></span></span>
     </div>
     <div class="log-items">
       <div class="log-item-row"><div>상품</div><div>소요</div><div>경로</div><div>재고</div></div>
-      ${items.map(item => `
-        <div class="log-item-row" title="${escHtml(item.error || '')}">
-          <div class="log-item-name">${escHtml(item.name || '-')}</div>
-          <div>${formatElapsed(item.elapsedMs)}</div>
-          <div>${escHtml(logSourceLabel(item.source))}${item.apiCalls ? ` · ${Number(item.apiCalls)}회` : ''}</div>
-          <div>${item.total === null || item.total === undefined ? '-' : Number(item.total).toLocaleString()}</div>
-        </div>
-      `).join('') || '<div class="log-item-row"><div class="log-item-name">상품별 로그 없음</div><div>-</div><div>-</div><div>-</div></div>'}
+      ${items.map(item => renderLogItemRow(log, item, failedItems.indexOf(item))).join('') || '<div class="log-item-row"><div class="log-item-name">상품별 로그 없음</div><div>-</div><div>-</div><div>-</div></div>'}
     </div>
   `;
   const consoleEl = detail.querySelector('.log-detail-console');

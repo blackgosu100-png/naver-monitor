@@ -11,7 +11,7 @@ from urllib.parse import parse_qs, urlparse, quote
 app = Flask(__name__)
 # SECRET_KEY 미설정 시 시작마다 무작위 키 생성 (고정 기본값은 세션 위조 위험)
 app.secret_key = os.environ.get('SECRET_KEY') or secrets.token_hex(32)
-APP_VERSION = '5.82'
+APP_VERSION = '5.94'
 
 # 웹 페이지(확장 외) Origin은 화이트리스트만 CORS 허용
 ALLOWED_WEB_ORIGINS = set(
@@ -889,6 +889,7 @@ def db_append_fetch_log(user_id: str, log: dict):
         if not isinstance(item, dict):
             continue
         slim_items.append({
+            'id': str(item.get('id') or '')[:80],
             'name': str(item.get('name') or '')[:160],
             'market': str(item.get('market') or '')[:30],
             'status': str(item.get('status') or '')[:30],
@@ -1027,7 +1028,7 @@ def admin_required(f):
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return render_template('index.html', app_version=APP_VERSION)
 
 @app.route('/login')
 def login_page():
@@ -1145,7 +1146,7 @@ def api_config():
     competitor_limit = competitor_limit_for_user(g.user)
     plan = user_plan(g.user)
     plan_dates = user_plan_dates(g.user)
-    return jsonify({
+    resp = jsonify({
         'username':    email,
         'app_version': APP_VERSION,
         'user_id':     g.user_id,
@@ -1164,6 +1165,8 @@ def api_config():
         'active_competitor_ids': list(active_competitor_ids_for_user(g.user, competitors)),
         'schedule':    db_get_schedule(g.user_id),
     })
+    resp.headers['Cache-Control'] = 'no-store, max-age=0'
+    return resp
 
 @app.route('/api/coupang-helper-folder', methods=['POST'])
 @login_required
