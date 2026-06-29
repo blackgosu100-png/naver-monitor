@@ -29,10 +29,12 @@ namespace CoupangStockLauncher
 
         readonly string appDir;
         readonly string dataPath;
+        readonly string profileDir;
         readonly JavaScriptSerializer json = new JavaScriptSerializer();
         readonly List<ProductRow> products = new List<ProductRow>();
 
         Process helperProcess;
+        int helperDebugPort = 19333;
         DataGridView grid;
         TextBox nameInput;
         TextBox urlInput;
@@ -50,6 +52,7 @@ namespace CoupangStockLauncher
         {
             appDir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
             dataPath = Path.Combine(appDir, "coupang_products.tsv");
+            profileDir = Path.Combine(Path.GetTempPath(), "CoupangStockLookupChrome-" + Process.GetCurrentProcess().Id);
             BuildUi();
             LoadProducts();
             StartHealthTimer();
@@ -332,7 +335,7 @@ namespace CoupangStockLauncher
             try
             {
                 stopping = false;
-                StartHelper();
+                RestartHelperForFetch();
                 Thread.Sleep(1200);
                 for (int pos = 0; pos < indexes.Count; pos++)
                 {
@@ -345,7 +348,7 @@ namespace CoupangStockLauncher
                     {
                         var result = PostJson(HelperUrl + "/stock", new Dictionary<string, object> {
                             { "productUrl", product.Url },
-                            { "fastStockOnly", true }
+                            { "fastStockOnly", false }
                         }, 180000);
                         ApplyResult(index, result);
                     }
@@ -411,17 +414,67 @@ namespace CoupangStockLauncher
             req.ReadWriteTimeout = timeoutMs;
             req.ContentLength = bytes.Length;
             using (var stream = req.GetRequestStream()) stream.Write(bytes, 0, bytes.Length);
-            using (var response = (HttpWebResponse)req.GetResponse())
-            using (var reader = new StreamReader(response.GetResponseStream(), Encoding.UTF8))
+            try
             {
-                var text = reader.ReadToEnd();
-                return json.Deserialize<Dictionary<string, object>>(text);
+                using (var response = (HttpWebResponse)req.GetResponse())
+                using (var reader = new StreamReader(response.GetResponseStream(), Encoding.UTF8))
+                {
+                    var text = reader.ReadToEnd();
+                    return json.Deserialize<Dictionary<string, object>>(text);
+                }
             }
+            catch (WebException ex)
+            {
+                var errorBody = ReadWebExceptionBody(ex);
+                if (errorBody.Length > 0)
+                {
+                    try
+                    {
+                        var parsed = json.Deserialize<Dictionary<string, object>>(errorBody);
+                        if (parsed.ContainsKey("error")) throw new Exception(Convert.ToString(parsed["error"]));
+                    }
+                    catch (Exception inner)
+                    {
+                        if (!(inner is ArgumentException)) throw;
+                    }
+                    throw new Exception(errorBody);
+                }
+                throw;
+            }
+        }
+
+        string ReadWebExceptionBody(WebException ex)
+        {
+            try
+            {
+                if (ex.Response == null) return "";
+                using (var reader = new StreamReader(ex.Response.GetResponseStream(), Encoding.UTF8))
+                {
+                    return reader.ReadToEnd();
+                }
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
+        void RestartHelperForFetch()
+        {
+            TryHttpPost(HelperUrl + "/shutdown", 900);
+            if (IsProcessAlive(helperProcess))
+            {
+                try { helperProcess.Kill(); helperProcess.WaitForExit(2000); }
+                catch {}
+            }
+            helperProcess = null;
+            Thread.Sleep(900);
+            helperDebugPort = FindFreePort(19333);
+            StartHelper();
         }
 
         void StartHelper()
         {
-            if (HttpOk(HelperUrl + "/health", 700)) return;
             if (IsProcessAlive(helperProcess)) return;
             var node = FindOnPath("node.exe");
             if (node == null) throw new Exception("Node.js was not found.");
@@ -436,6 +489,9 @@ namespace CoupangStockLauncher
             psi.RedirectStandardOutput = true;
             psi.RedirectStandardError = true;
             psi.CreateNoWindow = true;
+            psi.EnvironmentVariables["COUPANG_STOCK_DEBUG_PORT"] = helperDebugPort.ToString();
+            psi.EnvironmentVariables["COUPANG_STOCK_PROFILE_DIR"] = profileDir;
+            psi.EnvironmentVariables["COUPANG_STOCK_AUTO_CLOSE_CHROME"] = "0";
 
             helperProcess = new Process();
             helperProcess.StartInfo = psi;
@@ -446,8 +502,24 @@ namespace CoupangStockLauncher
             helperProcess.Start();
             helperProcess.BeginOutputReadLine();
             helperProcess.BeginErrorReadLine();
-            Log("Helper started. PID " + helperProcess.Id);
+            Log("Helper started. PID " + helperProcess.Id + ", debug port " + helperDebugPort);
             BeginInvoke(new Action(RefreshHealth));
+        }
+
+        int FindFreePort(int preferred)
+        {
+            for (int port = preferred; port < preferred + 80; port++)
+            {
+                try
+                {
+                    var listener = new System.Net.Sockets.TcpListener(IPAddress.Loopback, port);
+                    listener.Start();
+                    listener.Stop();
+                    return port;
+                }
+                catch {}
+            }
+            return preferred;
         }
 
         void StopHelper()

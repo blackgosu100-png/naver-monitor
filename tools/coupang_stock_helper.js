@@ -7,7 +7,7 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 
 const PORT = Number(process.env.COUPANG_STOCK_HELPER_PORT || 8765);
-const DEBUG_PORT = Number(process.env.COUPANG_STOCK_DEBUG_PORT || 9333);
+const DEBUG_PORT = Number(process.env.COUPANG_STOCK_DEBUG_PORT || 19333);
 const DEBUG_HOST = '127.0.0.1';
 const PROFILE_DIR = process.env.COUPANG_STOCK_PROFILE_DIR ||
   path.resolve(__dirname, '..', '.coupang-stock-helper-profile');
@@ -103,8 +103,15 @@ async function ensureChrome() {
   const args = [
     `--remote-debugging-address=${DEBUG_HOST}`,
     `--remote-debugging-port=${DEBUG_PORT}`,
+    '--remote-allow-origins=*',
     `--user-data-dir=${PROFILE_DIR}`,
-    '--disable-features=PrivacySandboxSettings4',
+    '--disable-features=PrivacySandboxSettings4,Vulkan,CanvasOopRasterization',
+    '--disable-gpu',
+    '--use-angle=swiftshader',
+    '--use-gl=swiftshader',
+    '--disable-accelerated-2d-canvas',
+    '--disable-dev-shm-usage',
+    '--no-sandbox',
     '--disable-popup-blocking',
     '--no-first-run',
     '--no-default-browser-check',
@@ -118,10 +125,17 @@ async function ensureChrome() {
   ];
 
   chromeProcess = spawn(chrome, args, {
-    stdio: 'ignore',
+    stdio: ['ignore', 'ignore', 'pipe'],
     detached: false,
     windowsHide: false,
   });
+  if (process.env.COUPANG_STOCK_CHROME_LOG === '1' && chromeProcess.stderr) {
+    chromeProcess.stderr.on('data', chunk => {
+      String(chunk).split(/\r?\n/).filter(Boolean).forEach(line => {
+        console.error(`[chrome] ${line}`);
+      });
+    });
+  }
   helperStartedChrome = true;
   chromeProcess.on('exit', () => {
     chromeProcess = null;
@@ -776,8 +790,42 @@ async function fetchQuantityInfo(cdp, productId, vendorItemId, quantity) {
     }
     break;
   }
-  if (!lastResult || !lastResult.text) throw new Error(`empty quantity-info response (${quantity})`);
+  let navigationError = null;
+  try {
+    return await fetchQuantityInfoByNavigation(cdp, requestUrl, quantity);
+  } catch (navError) {
+    navigationError = navError;
+    if (lastResult && lastResult.text) throw navError;
+  }
+  if (!lastResult || !lastResult.text) {
+    const status = lastResult && lastResult.status != null ? lastResult.status : 'no-status';
+    const error = lastResult && lastResult.error ? ` ${lastResult.error}` : '';
+    const nav = navigationError && navigationError.message ? `; navigation: ${navigationError.message}` : '';
+    throw new Error(`empty quantity-info response HTTP ${status}${error} (${quantity})${nav}`);
+  }
   throw new Error(lastResult.error || `quantity-info HTTP ${lastResult.status} (${quantity})`);
+}
+
+async function fetchQuantityInfoByNavigation(cdp, requestUrl, quantity) {
+  const loadPromise = Promise.race([
+    cdp.waitFor('Page.loadEventFired', 8000).catch(() => null),
+    cdp.waitFor('Page.domContentEventFired', 5000).catch(() => null),
+  ]);
+  await cdp.send('Page.navigate', { url: requestUrl });
+  await loadPromise;
+  await sleep(80);
+  const text = await cdp.evaluate(`(() => {
+    const pre = document.querySelector('pre');
+    const body = document.body;
+    return (pre && pre.innerText) || (body && body.innerText) || '';
+  })()`, 3000);
+  const raw = String(text || '').trim();
+  if (!raw) throw new Error(`quantity-info navigation empty (${quantity})`);
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new Error(`quantity-info navigation JSON parse failed (${quantity}): ${raw.slice(0, 160).replace(/\s+/g, ' ')}`);
+  }
 }
 
 async function fetchQuantityInfoBatch(cdp, productId, vendorItemId, quantities) {
@@ -1246,6 +1294,7 @@ const server = http.createServer(async (req, res) => {
     }
     jsonResponse(res, 404, { ok: false, error: 'not found' });
   } catch (error) {
+    console.error('[coupang-stock-helper] request failed:', error && error.stack ? error.stack : error);
     jsonResponse(res, 500, {
       ok: false,
       error: error && error.message ? error.message : String(error),
