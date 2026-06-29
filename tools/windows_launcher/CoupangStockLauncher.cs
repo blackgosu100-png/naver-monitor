@@ -25,8 +25,6 @@ namespace CoupangStockLauncher
 
     public class MainForm : Form
     {
-        const string HelperUrl = "http://127.0.0.1:8765";
-
         readonly string appDir;
         readonly string dataPath;
         readonly string profileDir;
@@ -34,6 +32,7 @@ namespace CoupangStockLauncher
         readonly List<ProductRow> products = new List<ProductRow>();
 
         Process helperProcess;
+        int helperPort = 18765;
         int helperDebugPort = 19333;
         DataGridView grid;
         TextBox nameInput;
@@ -346,7 +345,7 @@ namespace CoupangStockLauncher
                     Log("Fetching: " + DisplayName(product));
                     try
                     {
-                        var result = PostJson(HelperUrl + "/stock", new Dictionary<string, object> {
+                        var result = PostJson(HelperUrl() + "/stock", new Dictionary<string, object> {
                             { "productUrl", product.Url },
                             { "fastStockOnly", false }
                         }, 180000);
@@ -461,7 +460,7 @@ namespace CoupangStockLauncher
 
         void RestartHelperForFetch()
         {
-            TryHttpPost(HelperUrl + "/shutdown", 900);
+            TryHttpPost(HelperUrl() + "/shutdown", 900);
             if (IsProcessAlive(helperProcess))
             {
                 try { helperProcess.Kill(); helperProcess.WaitForExit(2000); }
@@ -469,6 +468,7 @@ namespace CoupangStockLauncher
             }
             helperProcess = null;
             Thread.Sleep(900);
+            helperPort = FindFreePort(18765);
             helperDebugPort = FindFreePort(19333);
             StartHelper();
         }
@@ -489,6 +489,7 @@ namespace CoupangStockLauncher
             psi.RedirectStandardOutput = true;
             psi.RedirectStandardError = true;
             psi.CreateNoWindow = true;
+            psi.EnvironmentVariables["COUPANG_STOCK_HELPER_PORT"] = helperPort.ToString();
             psi.EnvironmentVariables["COUPANG_STOCK_DEBUG_PORT"] = helperDebugPort.ToString();
             psi.EnvironmentVariables["COUPANG_STOCK_PROFILE_DIR"] = profileDir;
             psi.EnvironmentVariables["COUPANG_STOCK_AUTO_CLOSE_CHROME"] = "0";
@@ -502,7 +503,7 @@ namespace CoupangStockLauncher
             helperProcess.Start();
             helperProcess.BeginOutputReadLine();
             helperProcess.BeginErrorReadLine();
-            Log("Helper started. PID " + helperProcess.Id + ", debug port " + helperDebugPort);
+            Log("Helper started. PID " + helperProcess.Id + ", port " + helperPort + ", debug port " + helperDebugPort);
             BeginInvoke(new Action(RefreshHealth));
         }
 
@@ -525,7 +526,7 @@ namespace CoupangStockLauncher
         void StopHelper()
         {
             stopping = true;
-            TryHttpPost(HelperUrl + "/shutdown", 900);
+            TryHttpPost(HelperUrl() + "/shutdown", 900);
             if (IsProcessAlive(helperProcess))
             {
                 try { helperProcess.Kill(); helperProcess.WaitForExit(2000); }
@@ -537,7 +538,12 @@ namespace CoupangStockLauncher
 
         void RefreshHealth()
         {
-            helperStatus.Text = "Helper: " + (HttpOk(HelperUrl + "/health", 700) ? "running" : IsProcessAlive(helperProcess) ? "starting" : "stopped");
+            helperStatus.Text = "Helper: " + (HttpOk(HelperUrl() + "/health", 700) ? "running" : IsProcessAlive(helperProcess) ? "starting" : "stopped") + " :" + helperPort;
+        }
+
+        string HelperUrl()
+        {
+            return "http://127.0.0.1:" + helperPort;
         }
 
         bool HttpOk(string url, int timeoutMs)
