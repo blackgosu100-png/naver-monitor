@@ -472,23 +472,10 @@ function renderChart(data, sortedDates) {
 // ─── Init ────────────────────────────────────────────────────
 async function init() {
   await initAuth();
-  applyInitialRoute();
   syncHistoryModeButtons();
   syncMarketUI();
   hydrateFromCache();
   await Promise.all([loadHistory(), loadConfig()]);
-}
-
-function applyInitialRoute() {
-  try {
-    const params = new URLSearchParams(window.location.search || '');
-    const market = params.get('market');
-    if (MARKETS.includes(market)) localStorage.setItem(MARKET_KEY, market);
-    const view = params.get('view');
-    if (view === 'settings' || view === 'logs') showView(view);
-  } catch (e) {
-    console.warn('Failed to apply initial route', e);
-  }
 }
 
 function applyConfig(cfg) {

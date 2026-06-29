@@ -24,7 +24,6 @@ if (Test-Path $appDir) { Remove-Item -LiteralPath $appDir -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $appDir | Out-Null
 
 $itemsToCopy = @(
-  'chrome_extension',
   'tools\coupang_stock_helper.js'
 )
 
@@ -37,7 +36,7 @@ foreach ($item in $itemsToCopy) {
   Copy-Item -LiteralPath $src -Destination $destParent -Recurse -Force
 }
 
-& $csc /nologo /target:winexe /out:$launcherExe /r:System.Windows.Forms.dll /r:System.Drawing.dll $launcherSource
+& $csc /nologo /target:winexe /out:$launcherExe /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Web.Extensions.dll $launcherSource
 if (!(Test-Path $launcherExe)) { throw 'Launcher build failed.' }
 
 if (Test-Path $setupPayload) { Remove-Item -LiteralPath $setupPayload -Recurse -Force }

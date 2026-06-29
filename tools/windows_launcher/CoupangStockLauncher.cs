@@ -1,9 +1,13 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Net;
+using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
+using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
 namespace CoupangStockLauncher
@@ -15,43 +19,49 @@ namespace CoupangStockLauncher
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new LauncherForm());
+            Application.Run(new MainForm());
         }
     }
 
-    public class LauncherForm : Form
+    public class MainForm : Form
     {
-        const string DashboardUrl = "https://naver-monitor-production.up.railway.app/?market=coupang_stock";
         const string HelperUrl = "http://127.0.0.1:8765";
 
         readonly string appDir;
+        readonly string dataPath;
+        readonly JavaScriptSerializer json = new JavaScriptSerializer();
+        readonly List<ProductRow> products = new List<ProductRow>();
+
         Process helperProcess;
-        Button startButton;
-        Button stopButton;
-        Button restartHelperButton;
-        Button openDashboardButton;
-        Button openExtensionButton;
-        CheckBox autoRestartHelper;
-        Label helperStatus;
+        DataGridView grid;
+        TextBox nameInput;
+        TextBox urlInput;
         TextBox logBox;
+        Label helperStatus;
+        Label summaryLabel;
+        Button fetchAllButton;
+        Button fetchSelectedButton;
+        Button stopButton;
         System.Windows.Forms.Timer healthTimer;
         bool stopping;
+        bool fetchRunning;
 
-        public LauncherForm()
+        public MainForm()
         {
             appDir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
+            dataPath = Path.Combine(appDir, "coupang_products.tsv");
             BuildUi();
+            LoadProducts();
             StartHealthTimer();
-            Log("Coupang stock lookup launcher ready.");
-            Log("App folder: " + appDir);
+            Log("Coupang stock lookup ready.");
         }
 
         void BuildUi()
         {
             Text = "Coupang Stock Lookup";
-            Width = 760;
-            Height = 500;
-            MinimumSize = new Size(680, 420);
+            Width = 1080;
+            Height = 680;
+            MinimumSize = new Size(900, 560);
             StartPosition = FormStartPosition.CenterScreen;
 
             var root = new TableLayoutPanel();
@@ -61,49 +71,84 @@ namespace CoupangStockLauncher
             root.Padding = new Padding(12);
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 130));
             Controls.Add(root);
 
             var title = new Label();
-            title.Text = "Coupang stock lookup";
-            title.Font = new Font(Font.FontFamily, 14, FontStyle.Bold);
+            title.Text = "Coupang Stock Lookup";
+            title.Font = new Font(Font.FontFamily, 16, FontStyle.Bold);
             title.AutoSize = true;
             root.Controls.Add(title, 0, 0);
 
-            var subtitle = new Label();
-            subtitle.Text = "Starts the local Coupang helper, then opens the stock lookup tab.";
-            subtitle.AutoSize = true;
-            subtitle.ForeColor = Color.DimGray;
-            subtitle.Padding = new Padding(0, 4, 0, 8);
-            root.Controls.Add(subtitle, 0, 1);
+            var addPanel = new TableLayoutPanel();
+            addPanel.Dock = DockStyle.Top;
+            addPanel.ColumnCount = 5;
+            addPanel.RowCount = 2;
+            addPanel.Padding = new Padding(0, 10, 0, 8);
+            addPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 180));
+            addPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            addPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 86));
+            addPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 96));
+            addPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 116));
 
+            nameInput = new TextBox();
+            nameInput.Dock = DockStyle.Fill;
+            urlInput = new TextBox();
+            urlInput.Dock = DockStyle.Fill;
+            addPanel.Controls.Add(nameInput, 0, 0);
+            addPanel.Controls.Add(urlInput, 1, 0);
+            addPanel.Controls.Add(MakeButton("Add", AddProduct), 2, 0);
+            addPanel.Controls.Add(MakeButton("Delete", DeleteSelected), 3, 0);
+            addPanel.Controls.Add(MakeButton("Save", SaveProducts), 4, 0);
+
+            helperStatus = new Label();
+            helperStatus.Text = "Helper: stopped";
+            helperStatus.AutoSize = true;
+            helperStatus.Padding = new Padding(0, 8, 16, 0);
+            summaryLabel = new Label();
+            summaryLabel.Text = "0 products";
+            summaryLabel.AutoSize = true;
+            summaryLabel.Padding = new Padding(0, 8, 0, 0);
             var statusPanel = new FlowLayoutPanel();
-            statusPanel.AutoSize = true;
-            statusPanel.Dock = DockStyle.Top;
-            statusPanel.Padding = new Padding(0, 4, 0, 6);
-            helperStatus = new Label { Text = "Coupang helper: stopped", AutoSize = true, Width = 240 };
-            autoRestartHelper = new CheckBox { Text = "Auto restart helper", Checked = true, AutoSize = true };
+            statusPanel.Dock = DockStyle.Fill;
             statusPanel.Controls.Add(helperStatus);
-            statusPanel.Controls.Add(autoRestartHelper);
-            root.Controls.Add(statusPanel, 0, 2);
+            statusPanel.Controls.Add(summaryLabel);
+            addPanel.SetColumnSpan(statusPanel, 2);
+            addPanel.Controls.Add(statusPanel, 0, 1);
 
-            var buttons = new FlowLayoutPanel();
-            buttons.AutoSize = true;
-            buttons.Dock = DockStyle.Top;
-            buttons.Padding = new Padding(0, 0, 0, 8);
-            startButton = MakeButton("Start and open", StartAll);
-            stopButton = MakeButton("Stop", StopAll);
-            restartHelperButton = MakeButton("Restart helper", RestartHelper);
-            openDashboardButton = MakeButton("Open stock tab", OpenDashboard);
-            openExtensionButton = MakeButton("Open extension folder", OpenExtensionFolder);
-            buttons.Controls.Add(startButton);
-            buttons.Controls.Add(stopButton);
-            buttons.Controls.Add(restartHelperButton);
-            buttons.Controls.Add(openDashboardButton);
-            buttons.Controls.Add(openExtensionButton);
-            root.Controls.Add(buttons, 0, 3);
+            fetchAllButton = MakeButton("Fetch all", FetchAll);
+            fetchSelectedButton = MakeButton("Fetch selected", FetchSelected);
+            stopButton = MakeButton("Stop helper", StopHelper);
+            addPanel.Controls.Add(fetchAllButton, 2, 1);
+            addPanel.Controls.Add(fetchSelectedButton, 3, 1);
+            addPanel.Controls.Add(stopButton, 4, 1);
+            root.Controls.Add(addPanel, 0, 1);
+
+            grid = new DataGridView();
+            grid.Dock = DockStyle.Fill;
+            grid.AllowUserToAddRows = false;
+            grid.AllowUserToDeleteRows = false;
+            grid.MultiSelect = true;
+            grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+            grid.AutoGenerateColumns = false;
+            grid.RowHeadersVisible = false;
+            grid.Columns.Add(MakeTextColumn("Name", "Name", 180));
+            grid.Columns.Add(MakeTextColumn("Url", "Url", 420));
+            grid.Columns.Add(MakeTextColumn("Stock", "Stock", 90));
+            grid.Columns.Add(MakeTextColumn("Status", "Status", 190));
+            grid.Columns.Add(MakeTextColumn("Elapsed", "Elapsed", 80));
+            grid.Columns.Add(MakeTextColumn("UpdatedAt", "Updated", 130));
+            grid.CellEndEdit += (sender, args) => SaveProducts();
+            root.Controls.Add(grid, 0, 2);
+
+            var hint = new Label();
+            hint.Text = "Tip: paste one Coupang product per row. The app stores the list locally next to the EXE and does not use the Naver dashboard.";
+            hint.ForeColor = Color.DimGray;
+            hint.AutoSize = true;
+            hint.Padding = new Padding(0, 8, 0, 8);
+            root.Controls.Add(hint, 0, 3);
 
             logBox = new TextBox();
             logBox.Dock = DockStyle.Fill;
@@ -113,77 +158,276 @@ namespace CoupangStockLauncher
             logBox.Font = new Font("Consolas", 9);
             root.Controls.Add(logBox, 0, 4);
 
-            FormClosing += (sender, args) => StopAll();
+            FormClosing += (sender, args) => StopHelper();
+        }
+
+        DataGridViewTextBoxColumn MakeTextColumn(string name, string property, int width)
+        {
+            return new DataGridViewTextBoxColumn
+            {
+                Name = name,
+                HeaderText = name,
+                DataPropertyName = property,
+                Width = width,
+                AutoSizeMode = name == "Url" ? DataGridViewAutoSizeColumnMode.Fill : DataGridViewAutoSizeColumnMode.None
+            };
         }
 
         Button MakeButton(string text, Action action)
         {
             var button = new Button();
             button.Text = text;
-            button.AutoSize = true;
-            button.Margin = new Padding(0, 0, 8, 0);
+            button.Dock = DockStyle.Fill;
+            button.Margin = new Padding(6, 0, 0, 6);
             button.Click += (sender, args) => action();
             return button;
+        }
+
+        void AddProduct()
+        {
+            var url = (urlInput.Text ?? "").Trim();
+            if (url.Length == 0)
+            {
+                MessageBox.Show("Paste a Coupang product URL first.", "Coupang Stock Lookup", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            products.Add(new ProductRow
+            {
+                Name = (nameInput.Text ?? "").Trim(),
+                Url = url,
+                Stock = "",
+                Status = "ready",
+                Elapsed = "",
+                UpdatedAt = ""
+            });
+            nameInput.Text = "";
+            urlInput.Text = "";
+            SaveProducts();
+            RefreshGrid();
+        }
+
+        void DeleteSelected()
+        {
+            var indexes = new List<int>();
+            foreach (DataGridViewRow row in grid.SelectedRows)
+            {
+                if (row.Index >= 0 && row.Index < products.Count) indexes.Add(row.Index);
+            }
+            indexes.Sort();
+            indexes.Reverse();
+            foreach (var index in indexes) products.RemoveAt(index);
+            SaveProducts();
+            RefreshGrid();
+        }
+
+        void LoadProducts()
+        {
+            products.Clear();
+            if (File.Exists(dataPath))
+            {
+                foreach (var line in File.ReadAllLines(dataPath, Encoding.UTF8))
+                {
+                    if (String.IsNullOrWhiteSpace(line)) continue;
+                    var parts = line.Split('\t');
+                    products.Add(new ProductRow
+                    {
+                        Name = Unescape(parts, 0),
+                        Url = Unescape(parts, 1),
+                        Stock = Unescape(parts, 2),
+                        Status = Unescape(parts, 3),
+                        Elapsed = Unescape(parts, 4),
+                        UpdatedAt = Unescape(parts, 5)
+                    });
+                }
+            }
+            RefreshGrid();
+        }
+
+        void SaveProducts()
+        {
+            try
+            {
+                var lines = new List<string>();
+                foreach (var item in products)
+                {
+                    lines.Add(String.Join("\t", new string[] {
+                        Escape(item.Name),
+                        Escape(item.Url),
+                        Escape(item.Stock),
+                        Escape(item.Status),
+                        Escape(item.Elapsed),
+                        Escape(item.UpdatedAt)
+                    }));
+                }
+                File.WriteAllLines(dataPath, lines.ToArray(), Encoding.UTF8);
+                summaryLabel.Text = products.Count + " products";
+            }
+            catch (Exception ex)
+            {
+                Log("Save failed: " + ex.Message);
+            }
+        }
+
+        string Escape(string value)
+        {
+            return (value ?? "").Replace("\\", "\\\\").Replace("\t", "\\t").Replace("\r", "\\r").Replace("\n", "\\n");
+        }
+
+        string Unescape(string[] parts, int index)
+        {
+            if (index >= parts.Length) return "";
+            return parts[index].Replace("\\n", "\n").Replace("\\r", "\r").Replace("\\t", "\t").Replace("\\\\", "\\");
+        }
+
+        void RefreshGrid()
+        {
+            grid.DataSource = null;
+            grid.DataSource = products;
+            summaryLabel.Text = products.Count + " products";
         }
 
         void StartHealthTimer()
         {
             healthTimer = new System.Windows.Forms.Timer();
-            healthTimer.Interval = 5000;
+            healthTimer.Interval = 3000;
             healthTimer.Tick += (sender, args) => RefreshHealth();
             healthTimer.Start();
             RefreshHealth();
         }
 
-        void StartAll()
+        void FetchAll()
         {
-            stopping = false;
-            StartHelper();
-            ThreadPool.QueueUserWorkItem(_ =>
-            {
-                Thread.Sleep(1500);
-                BeginInvoke(new Action(OpenDashboard));
-            });
+            var indexes = new List<int>();
+            for (int i = 0; i < products.Count; i++) indexes.Add(i);
+            StartFetch(indexes);
         }
 
-        void StopAll()
+        void FetchSelected()
         {
-            stopping = true;
-            StopHelper();
-            RefreshHealth();
+            var indexes = new List<int>();
+            foreach (DataGridViewRow row in grid.SelectedRows)
+            {
+                if (row.Index >= 0 && row.Index < products.Count) indexes.Add(row.Index);
+            }
+            indexes.Sort();
+            StartFetch(indexes);
         }
 
-        void RestartHelper()
+        void StartFetch(List<int> indexes)
         {
-            stopping = false;
-            StopHelper();
-            ThreadPool.QueueUserWorkItem(_ =>
+            if (fetchRunning) return;
+            if (indexes.Count == 0)
             {
-                Thread.Sleep(800);
-                BeginInvoke(new Action(StartHelper));
-            });
+                MessageBox.Show("No products selected.", "Coupang Stock Lookup", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            fetchRunning = true;
+            fetchAllButton.Enabled = false;
+            fetchSelectedButton.Enabled = false;
+            Task.Run(() => FetchLoop(indexes));
+        }
+
+        void FetchLoop(List<int> indexes)
+        {
+            try
+            {
+                stopping = false;
+                StartHelper();
+                Thread.Sleep(1200);
+                for (int pos = 0; pos < indexes.Count; pos++)
+                {
+                    var index = indexes[pos];
+                    if (index < 0 || index >= products.Count) continue;
+                    var product = products[index];
+                    UpdateProduct(index, "", "fetching " + (pos + 1) + "/" + indexes.Count, "", "");
+                    Log("Fetching: " + DisplayName(product));
+                    try
+                    {
+                        var result = PostJson(HelperUrl + "/stock", new Dictionary<string, object> {
+                            { "productUrl", product.Url },
+                            { "fastStockOnly", true }
+                        }, 180000);
+                        ApplyResult(index, result);
+                    }
+                    catch (Exception ex)
+                    {
+                        UpdateProduct(index, "", "failed: " + ex.Message, "", DateTime.Now.ToString("yyyy-MM-dd HH:mm"));
+                        Log("Failed: " + DisplayName(product) + " - " + ex.Message);
+                    }
+                    BeginInvoke(new Action(SaveProducts));
+                }
+            }
+            finally
+            {
+                BeginInvoke(new Action(() =>
+                {
+                    fetchRunning = false;
+                    fetchAllButton.Enabled = true;
+                    fetchSelectedButton.Enabled = true;
+                    RefreshGrid();
+                }));
+            }
+        }
+
+        void ApplyResult(int index, Dictionary<string, object> result)
+        {
+            var ok = result.ContainsKey("ok") && Convert.ToBoolean(result["ok"]);
+            if (!ok)
+            {
+                var error = result.ContainsKey("error") ? Convert.ToString(result["error"]) : "unknown error";
+                UpdateProduct(index, "", "failed: " + error, "", DateTime.Now.ToString("yyyy-MM-dd HH:mm"));
+                return;
+            }
+            var stock = result.ContainsKey("stock") && result["stock"] != null ? Convert.ToString(result["stock"]) : "5000+";
+            var elapsed = result.ContainsKey("elapsedMs") ? (Convert.ToInt32(result["elapsedMs"]) / 1000.0).ToString("0.0") + "s" : "";
+            var apiCalls = result.ContainsKey("apiCalls") ? Convert.ToString(result["apiCalls"]) : "";
+            var status = result.ContainsKey("overLimit") && Convert.ToBoolean(result["overLimit"]) ? "over limit" : "ok";
+            if (apiCalls.Length > 0) status += " (" + apiCalls + " calls)";
+            UpdateProduct(index, stock, status, elapsed, DateTime.Now.ToString("yyyy-MM-dd HH:mm"));
+            Log("Done: " + DisplayName(products[index]) + " stock=" + stock);
+        }
+
+        void UpdateProduct(int index, string stock, string status, string elapsed, string updatedAt)
+        {
+            BeginInvoke(new Action(() =>
+            {
+                if (index < 0 || index >= products.Count) return;
+                if (stock.Length > 0) products[index].Stock = stock;
+                products[index].Status = status;
+                if (elapsed.Length > 0) products[index].Elapsed = elapsed;
+                if (updatedAt.Length > 0) products[index].UpdatedAt = updatedAt;
+                RefreshGrid();
+            }));
+        }
+
+        Dictionary<string, object> PostJson(string url, Dictionary<string, object> payload, int timeoutMs)
+        {
+            var body = json.Serialize(payload);
+            var bytes = Encoding.UTF8.GetBytes(body);
+            var req = (HttpWebRequest)WebRequest.Create(url);
+            req.Method = "POST";
+            req.ContentType = "application/json";
+            req.Timeout = timeoutMs;
+            req.ReadWriteTimeout = timeoutMs;
+            req.ContentLength = bytes.Length;
+            using (var stream = req.GetRequestStream()) stream.Write(bytes, 0, bytes.Length);
+            using (var response = (HttpWebResponse)req.GetResponse())
+            using (var reader = new StreamReader(response.GetResponseStream(), Encoding.UTF8))
+            {
+                var text = reader.ReadToEnd();
+                return json.Deserialize<Dictionary<string, object>>(text);
+            }
         }
 
         void StartHelper()
         {
-            if (IsProcessAlive(helperProcess))
-            {
-                Log("Coupang helper already running.");
-                return;
-            }
+            if (HttpOk(HelperUrl + "/health", 700)) return;
+            if (IsProcessAlive(helperProcess)) return;
             var node = FindOnPath("node.exe");
-            if (node == null)
-            {
-                Log("Node.js was not found. Install Node.js, then restart this app.");
-                return;
-            }
+            if (node == null) throw new Exception("Node.js was not found.");
             var helper = Path.Combine(appDir, "tools\\coupang_stock_helper.js");
-            if (!File.Exists(helper))
-            {
-                Log("Coupang helper script not found: " + helper);
-                return;
-            }
-            TryHttpPost(HelperUrl + "/shutdown", 900);
+            if (!File.Exists(helper)) throw new Exception("Helper script not found: " + helper);
+
             var psi = new ProcessStartInfo();
             psi.FileName = node;
             psi.Arguments = "tools\\coupang_stock_helper.js";
@@ -192,84 +436,36 @@ namespace CoupangStockLauncher
             psi.RedirectStandardOutput = true;
             psi.RedirectStandardError = true;
             psi.CreateNoWindow = true;
-            helperProcess = StartProcess(psi, "helper");
-            helperStatus.Text = "Coupang helper: starting";
-        }
 
-        Process StartProcess(ProcessStartInfo psi, string name)
-        {
-            var process = new Process();
-            process.StartInfo = psi;
-            process.EnableRaisingEvents = true;
-            process.OutputDataReceived += (sender, args) => { if (args.Data != null) Log("[" + name + "] " + args.Data); };
-            process.ErrorDataReceived += (sender, args) => { if (args.Data != null) Log("[" + name + "] " + args.Data); };
-            process.Exited += (sender, args) =>
-            {
-                Log(name + " exited.");
-                if (name == "helper" && !stopping && autoRestartHelper.Checked)
-                {
-                    Log("Restarting Coupang helper...");
-                    ThreadPool.QueueUserWorkItem(_ =>
-                    {
-                        Thread.Sleep(1500);
-                        BeginInvoke(new Action(StartHelper));
-                    });
-                }
-            };
-            process.Start();
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-            Log(name + " started. PID " + process.Id);
-            return process;
+            helperProcess = new Process();
+            helperProcess.StartInfo = psi;
+            helperProcess.EnableRaisingEvents = true;
+            helperProcess.OutputDataReceived += (sender, args) => { if (args.Data != null) Log("[helper] " + args.Data); };
+            helperProcess.ErrorDataReceived += (sender, args) => { if (args.Data != null) Log("[helper] " + args.Data); };
+            helperProcess.Exited += (sender, args) => Log("Helper exited.");
+            helperProcess.Start();
+            helperProcess.BeginOutputReadLine();
+            helperProcess.BeginErrorReadLine();
+            Log("Helper started. PID " + helperProcess.Id);
+            BeginInvoke(new Action(RefreshHealth));
         }
 
         void StopHelper()
         {
+            stopping = true;
             TryHttpPost(HelperUrl + "/shutdown", 900);
-            if (IsProcessAlive(helperProcess)) TryKill(helperProcess, "helper");
+            if (IsProcessAlive(helperProcess))
+            {
+                try { helperProcess.Kill(); helperProcess.WaitForExit(2000); }
+                catch {}
+            }
             helperProcess = null;
-        }
-
-        void TryKill(Process process, string name)
-        {
-            try
-            {
-                process.Kill();
-                process.WaitForExit(2500);
-                Log(name + " stopped.");
-            }
-            catch (Exception ex)
-            {
-                Log("Failed to stop " + name + ": " + ex.Message);
-            }
-        }
-
-        void OpenDashboard()
-        {
-            try
-            {
-                Process.Start(new ProcessStartInfo(DashboardUrl) { UseShellExecute = true });
-            }
-            catch (Exception ex)
-            {
-                Log("Failed to open stock tab: " + ex.Message);
-            }
-        }
-
-        void OpenExtensionFolder()
-        {
-            var folder = Path.Combine(appDir, "chrome_extension");
-            if (!Directory.Exists(folder))
-            {
-                Log("Extension folder not found: " + folder);
-                return;
-            }
-            Process.Start(new ProcessStartInfo(folder) { UseShellExecute = true });
+            RefreshHealth();
         }
 
         void RefreshHealth()
         {
-            helperStatus.Text = "Coupang helper: " + (HttpOk(HelperUrl + "/health", 900) ? "running" : IsProcessAlive(helperProcess) ? "starting" : "stopped");
+            helperStatus.Text = "Helper: " + (HttpOk(HelperUrl + "/health", 700) ? "running" : IsProcessAlive(helperProcess) ? "starting" : "stopped");
         }
 
         bool HttpOk(string url, int timeoutMs)
@@ -299,9 +495,7 @@ namespace CoupangStockLauncher
                 request.ContentLength = 0;
                 using (request.GetResponse()) { }
             }
-            catch
-            {
-            }
+            catch {}
         }
 
         bool IsProcessAlive(Process process)
@@ -320,15 +514,19 @@ namespace CoupangStockLauncher
                     var full = Path.Combine(dir.Trim(), file);
                     if (File.Exists(full)) return full;
                 }
-                catch
-                {
-                }
+                catch {}
             }
             return null;
         }
 
+        string DisplayName(ProductRow product)
+        {
+            return String.IsNullOrWhiteSpace(product.Name) ? product.Url : product.Name;
+        }
+
         void Log(string message)
         {
+            if (logBox == null) return;
             if (InvokeRequired)
             {
                 BeginInvoke(new Action<string>(Log), message);
@@ -336,5 +534,15 @@ namespace CoupangStockLauncher
             }
             logBox.AppendText("[" + DateTime.Now.ToString("HH:mm:ss") + "] " + message + Environment.NewLine);
         }
+    }
+
+    public class ProductRow
+    {
+        public string Name { get; set; }
+        public string Url { get; set; }
+        public string Stock { get; set; }
+        public string Status { get; set; }
+        public string Elapsed { get; set; }
+        public string UpdatedAt { get; set; }
     }
 }
