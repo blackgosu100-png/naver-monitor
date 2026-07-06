@@ -12,13 +12,15 @@ const DEBUG_HOST = '127.0.0.1';
 const PROFILE_DIR = process.env.COUPANG_STOCK_PROFILE_DIR ||
   path.resolve(__dirname, '..', '.coupang-stock-helper-profile');
 const PAGE_WARMUP_MS = Number(process.env.COUPANG_STOCK_PAGE_WARMUP_MS || 350);
-const PROBE_DELAY_MS = Number(process.env.COUPANG_STOCK_PROBE_DELAY_MS || 80);
+// 80ms는 쿠팡 봇 차단(RET9999/Access Denied)을 자주 유발 — 호출 간격을 넉넉히
+const PROBE_DELAY_MS = Number(process.env.COUPANG_STOCK_PROBE_DELAY_MS || 250);
 const MAX_QUANTITY = Number(process.env.COUPANG_STOCK_MAX_QUANTITY || 99999);
 const QUANTITY_FETCH_TIMEOUT_MS = Number(process.env.COUPANG_STOCK_QUANTITY_FETCH_TIMEOUT_MS || 4500);
-const STOCK_ITEM_TIMEOUT_MS = Number(process.env.COUPANG_STOCK_ITEM_TIMEOUT_MS || 25000);
+// 프로브 간격 확대(250ms)에 맞춰 상품당 타임아웃도 여유 확보 (확장 쪽 대기는 90초)
+const STOCK_ITEM_TIMEOUT_MS = Number(process.env.COUPANG_STOCK_ITEM_TIMEOUT_MS || 35000);
 const AUTO_CLOSE_CHROME = process.env.COUPANG_STOCK_AUTO_CLOSE_CHROME !== '0';
 const DEFAULT_STEPS = [100, 1000, 5000];
-const HELPER_VERSION = '1.5.3';
+const HELPER_VERSION = '1.5.4';
 
 let chromeProcess = null;
 let helperStartedChrome = false;

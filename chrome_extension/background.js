@@ -6,7 +6,8 @@ const MIN_COUPANG_HELPER_VERSION = '1.5.0';
 const COUPANG_MONTHLY_TTL = 12 * 60 * 60 * 1000;
 const COUPANG_VIEWS_TTL = 24 * 60 * 60 * 1000;
 const COUPANG_STOCK_TTL = 3 * 60 * 60 * 1000;
-const COUPANG_HELPER_SKIP_TTL = 24 * 60 * 60 * 1000;
+// 일시 차단(RET9999 등)이 24시간 skip으로 하루 종일 조회 누락되던 문제 — 2시간 쿨다운으로 완화
+const COUPANG_HELPER_SKIP_TTL = 2 * 60 * 60 * 1000;
 const COUPANG_PB_TTL = 30 * 24 * 60 * 60 * 1000;
 const COUPANG_VIEW_FAILURE_TTL = 7 * 24 * 60 * 60 * 1000;
 const COUPANG_PB_BRANDS = ['코멧', '곰곰', '탐사', '비타할로', '홈플래닛', '캐럿', '베이스알파', '줌베이직', '줌 베이직'];
@@ -25,6 +26,11 @@ const COUPANG_STOCK_BLOCK_RULE_BASE = 720000;
 const AUTO_FETCH_ALARM = 'naverMonitorAutoFetch';
 const AUTO_FETCH_SYNC_ALARM = 'naverMonitorAutoFetchSync';
 const AUTO_FETCH_AUTH_WAIT_MS = 10 * 60 * 1000;
+// 쿠팡 차단 감지 시 완전 중단 대신 일정 시간 후 남은 상품을 자동 재개
+const COUPANG_BLOCK_RESUME_ALARM = 'coupangBlockResume';
+const COUPANG_BLOCK_RESUME_KEY = 'coupangBlockResumePayload';
+const COUPANG_BLOCK_RESUME_DELAY_MIN = 25;
+const COUPANG_BLOCK_RESUME_MAX_ATTEMPTS = 3;
 
 function normalizeServerUrl(url) {
   var value = (url || DEFAULT_SERVER).replace(/\/$/, '');
@@ -1473,7 +1479,7 @@ async function readCoupangStockEstimate(productUrl, productId, itemId, vendorIte
       quantity = Math.max(1, Math.floor(Number(quantity) || 1));
       var cacheKey = String(quantity);
       if (Object.prototype.hasOwnProperty.call(probeCache, cacheKey)) return probeCache[cacheKey];
-      if (waitBefore) await delay(220);
+      if (waitBefore) await delay(350);
       var state = extractDeliveryState(await fetchQuantityInfo(quantity));
       probeCache[cacheKey] = state;
       return state;
@@ -2007,7 +2013,7 @@ async function estimateCoupangStockInBackground(comp, parsed) {
     quantity = Math.max(1, Math.floor(Number(quantity) || 1));
     var cacheKey = String(quantity);
     if (Object.prototype.hasOwnProperty.call(probeCache, cacheKey)) return probeCache[cacheKey].state;
-    if (waitBefore) await delay(120);
+    if (waitBefore) await delay(300);
     var data = await fetchCoupangQuantityInfoBackground(productId, vendorItemId, quantity, productUrl);
     var state = extractCoupangDeliveryState(data);
     probeCache[cacheKey] = { state: state, data: data };
@@ -2107,6 +2113,7 @@ async function estimateCoupangStockViaLocalHelper(comp, parsed) {
     fastStockOnly: !!(parsed && parsed.pid && parsed.vendorItemId)
   };
   var lastError = '';
+  var helperResponded = false; // 포트 연결 실패(미실행)와 헬퍼가 응답한 실패를 구분
   for (var i = 0; i < urls.length; i++) {
     var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
     var timer = controller ? setTimeout(function() { controller.abort(); }, 90000) : null;
@@ -2118,6 +2125,7 @@ async function estimateCoupangStockViaLocalHelper(comp, parsed) {
         body: JSON.stringify(payload),
         signal: controller ? controller.signal : undefined
       });
+      helperResponded = true;
       if (!res.ok) {
         // 헬퍼는 실패 시 500 + JSON으로 실제 원인(RET9999 등)을 보내준다 — 버리지 말고 보존
         var errBody = null;
@@ -2159,7 +2167,7 @@ async function estimateCoupangStockViaLocalHelper(comp, parsed) {
       if (timer) clearTimeout(timer);
     }
   }
-  return { ok: false, error: lastError || 'local helper unavailable' };
+  return { ok: false, error: lastError || 'local helper unavailable', helperResponded: helperResponded };
 }
 
 async function readJsonFromCurrentTab(tabId) {
@@ -3266,6 +3274,8 @@ async function collectCoupangStockMetricOnly(comp, parsed, index, total, results
       results
     }, { source: 'local-helper' });
     stock = await estimateCoupangStockViaLocalHelper(comp, parsed);
+    // 포트 연결 자체가 안 되면(미실행) 이번 조회 내내 탭 폴백을 막는다 — 업무 중 탭 간섭 오류 방지
+    if (requestContext) requestContext.coupangHelperOffline = !!(stock && !stock.ok && stock.helperResponded === false);
     if (stock && stock.ok) {
       if (requestContext) requestContext.coupangLocalHelperFailures = 0;
     } else {
@@ -3273,7 +3283,7 @@ async function collectCoupangStockMetricOnly(comp, parsed, index, total, results
       // 연속 실패 카운트에서 제외 — 품절 상품 몇 개 때문에 헬퍼 전체가 꺼지는 것 방지
       var helperErr = String((stock && stock.error) || '');
       if (/RET9999|quantity|시스템 오류/i.test(helperErr)) {
-        // 이 상품은 헬퍼로 조회 불가가 확인됨 — 24시간 동안 헬퍼를 건너뛰어 매번 10초 낭비 방지
+        // 이 상품은 헬퍼로 조회 불가가 확인됨 — 쿨다운 동안 헬퍼를 건너뛰어 매번 10초 낭비 방지
         try { await markCoupangHelperSkip(helperSkipKey, helperErr.slice(0, 200)); } catch(e) {}
       } else if (requestContext) {
         requestContext.coupangLocalHelperFailures = (requestContext.coupangLocalHelperFailures || 0) + 1;
@@ -3320,6 +3330,15 @@ async function collectCoupangStockMetricOnly(comp, parsed, index, total, results
     }, { level: 'ok', source: 'local-helper', stock: stock.stock, apiCalls: stock.apiCalls });
   }
   if (!stock || !stock.ok) {
+    // \uB3C4\uC6B0\uBBF8\uAC00 \uC544\uC608 \uC2E4\uD589\uB418\uC9C0 \uC54A\uC740 \uC0C1\uD0DC\uC5D0\uC11C\uB294 \uD0ED\uC744 \uC5EC\uB294 \uD3F4\uBC31\uC744 \uC4F0\uC9C0 \uC54A\uB294\uB2E4.
+    // \uC9C1\uC6D0\uC774 \uD0ED/\uCC3D\uC744 \uB2EB\uC73C\uBA74 "No tab with id" \uC624\uB958\uAC00 \uB098\uACE0, \uD0ED \uC870\uD68C\uB294 \uCC28\uB2E8\uC5D0\uB3C4 \uB354 \uCDE8\uC57D\uD558\uB2E4.
+    if (requestContext && requestContext.coupangHelperOffline) {
+      return {
+        ok: false,
+        error: '\uCFE0\uD321 \uC7AC\uACE0\uC870\uD68C \uB3C4\uC6B0\uBBF8\uAC00 \uC2E4\uD589\uB418\uC5B4 \uC788\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4 \u2014 \uB3C4\uC6B0\uBBF8\uB97C \uCF20 \uB4A4 \uB2E4\uC2DC \uC870\uD68C\uD574 \uC8FC\uC138\uC694.'
+          + (stock && stock.error ? ' (\uBE60\uB978 \uACBD\uB85C \uC2E4\uD328: ' + String(stock.error).slice(0, 160) + ')' : '')
+      };
+    }
     await reportFetchStatus(requestContext, {
       running: true,
       current: index + 1,
@@ -3595,7 +3614,8 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
         break;
       }
       if (i < competitors.length - 1) {
-        await new Promise(r => setTimeout(r, route === 'coupang_sales' ? 200 : (market === 'naver' ? 3000 : 900)));
+        // coupang_stock은 상품당 API 호출이 많아 간격을 넉넉히 둬야 차단(RET9999/403) 확률이 줄어든다
+        await new Promise(r => setTimeout(r, route === 'coupang_stock' ? 2000 : route === 'coupang_sales' ? 200 : (market === 'naver' ? 3000 : 900)));
       }
     }
 
@@ -3622,12 +3642,48 @@ async function runFetchSeparated(competitors, fetchMode, requestedMarket, reques
       } catch (e) {}
     }
 
+    // 차단 감지로 중단된 경우 — 남은 상품(+차단 패턴으로 실패한 상품)을 저장해 두고 자동 재개 예약
+    var blockResumeCount = 0;
+    if (blockSuspected && route === 'coupang_stock') {
+      var resumeAttempt = Number((requestContext && requestContext.blockResumeAttempt) || 0);
+      if (resumeAttempt < COUPANG_BLOCK_RESUME_MAX_ATTEMPTS) {
+        var blockErrRe = /Access Denied|RET9999|HTTP 403|quantity=1 failed|vendorItemId not found/i;
+        var blockedIds = {};
+        results.forEach(function(r) {
+          if (r && r.id && r.error && blockErrRe.test(String(r.error))) blockedIds[r.id] = true;
+        });
+        var lastIndex = i; // 루프가 중단된 시점의 인덱스
+        var resumeList = competitors.filter(function(c, idx) {
+          return idx > lastIndex || (c && c.id && blockedIds[c.id]);
+        });
+        if (resumeList.length) {
+          try {
+            var resumePayload = {};
+            resumePayload[COUPANG_BLOCK_RESUME_KEY] = {
+              competitors: resumeList,
+              fetchMode: route,
+              market: requestedMarket || '',
+              attempt: resumeAttempt + 1,
+              scheduledAt: Date.now()
+            };
+            await chrome.storage.local.set(resumePayload);
+            chrome.alarms.create(COUPANG_BLOCK_RESUME_ALARM, { delayInMinutes: COUPANG_BLOCK_RESUME_DELAY_MIN });
+            blockResumeCount = resumeList.length;
+          } catch (e) {}
+        }
+      }
+    }
+
     var okCount = results.filter(r => !r.error).length;
     var errItems = results.filter(r => r.error);
     var msg = authRequired
       ? authMessage
       : blockSuspected
-      ? '⛔ 쿠팡 일시 차단 감지 — 연속 3개 상품이 차단 패턴(Access Denied 등)으로 실패해 조회를 중단했습니다. 30분~1시간 후 다시 시도하세요. 저장된 결과 ' + okCount + '/' + results.length
+      ? '⛔ 쿠팡 일시 차단 감지 — 연속 3개 상품이 차단 패턴(Access Denied 등)으로 실패해 조회를 일시 중단했습니다. '
+        + (blockResumeCount
+          ? '남은 상품 ' + blockResumeCount + '개는 ' + COUPANG_BLOCK_RESUME_DELAY_MIN + '분 후 자동으로 이어서 조회합니다. '
+          : '30분~1시간 후 다시 시도하세요. ')
+        + '저장된 결과 ' + okCount + '/' + results.length
       : stopped
       ? `STOP\uC73C\uB85C \uC911\uB2E8\uB428. \uC800\uC7A5\uB41C \uACB0\uACFC ${okCount}/${results.length} \uC131\uACF5`
       : `\uC870\uD68C \uC644\uB8CC! ${okCount}/${results.length} \uC131\uACF5`;
@@ -3752,12 +3808,44 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return false;
 });
 
+// 쿠팡 차단으로 일시 중단된 조회를 이어서 재개
+async function runCoupangBlockResume() {
+  var data = await chrome.storage.local.get(COUPANG_BLOCK_RESUME_KEY);
+  var payload = data && data[COUPANG_BLOCK_RESUME_KEY];
+  await chrome.storage.local.remove(COUPANG_BLOCK_RESUME_KEY);
+  if (!payload || !Array.isArray(payload.competitors) || !payload.competitors.length) return;
+  if (fetchRunning || fetchStarting) {
+    // 다른 조회가 진행 중 — 페이로드를 되살리고 5분 후 다시 시도
+    var retryPayload = {};
+    retryPayload[COUPANG_BLOCK_RESUME_KEY] = payload;
+    await chrome.storage.local.set(retryPayload);
+    chrome.alarms.create(COUPANG_BLOCK_RESUME_ALARM, { delayInMinutes: 5 });
+    return;
+  }
+  var token = await ensureServiceToken(8000);
+  if (!token) return; // 로그인 세션 없이는 결과 저장이 불가능하므로 재개하지 않음
+  setStatus({
+    running: true,
+    current: 0,
+    total: payload.competitors.length,
+    msg: '쿠팡 차단 대기 후 자동 재개 중...',
+    results: []
+  });
+  runFetchSeparated(payload.competitors, payload.fetchMode || 'coupang_stock', payload.market || '', {
+    scheduled: true,
+    schedulePhase: 'block-resume',
+    blockResumeAttempt: Number(payload.attempt || 1)
+  });
+}
+
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (!alarm || !alarm.name) return;
   if (alarm.name === AUTO_FETCH_ALARM) {
     runScheduledAutoFetch();
   } else if (alarm.name === AUTO_FETCH_SYNC_ALARM) {
     syncAutoFetchScheduleFromServer();
+  } else if (alarm.name === COUPANG_BLOCK_RESUME_ALARM) {
+    runCoupangBlockResume();
   }
 });
 
